@@ -7,6 +7,7 @@
 #define MSG_LOGIN_RESULT 0x03 /* ok(1) + 文本消息 */
 #define MSG_CLOSE 0x04        /* 文本原因 */
 #define MSG_SESSION_EXISTS 0x05 /* 该账户已有活跃会话（询问是否注销接管） */
+#define MSG_CURSOR 0x06       /* 光标图像：w(2) h(2) hx(2) hy(2) + RGBA */
 
 /* ---------- 客户端 -> 服务端 ---------- */
 #define MSG_LOGIN 0x10    /* userLen(2) user passLen(2) pass w(2) h(2) */

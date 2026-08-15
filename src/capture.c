@@ -14,6 +14,7 @@
 #include <time.h>
 #include <X11/Xlib.h>
 #include <X11/extensions/XShm.h>
+#include <X11/extensions/Xfixes.h>
 #include <sys/shm.h>
 
 int init_shm(capture_ctx *cap, int width, int height)
@@ -137,6 +138,75 @@ static int frame_changed(capture_ctx *cap, video_buf *vb)
     return 1;
 }
 
+/* 订阅并同步远程光标：XFixesCursorNotify 事件携带光标 serial，
+ * serial 变化时取光标图像（XRender ARGB，premultiplied）转为直通 RGBA
+ * 推送前端，前端据此设置 CSS cursor（手型/文本/调整大小等） */
+static void cursor_check(runtime *rt)
+{
+    capture_ctx *cap = &rt->cap;
+    if (!cap->cursor_event_base)
+        return;
+    XPending(cap->dpy); /* 读 socket，事件入队列 */
+    XEvent ev;
+    while (XCheckTypedEvent(cap->dpy, cap->cursor_event_base + XFixesCursorNotify,
+                            &ev))
+    {
+        XFixesCursorNotifyEvent *ce = (XFixesCursorNotifyEvent *)&ev;
+        cap->cursor_serial = ce->cursor_serial;
+    }
+    if (cap->cursor_serial == 0 || cap->cursor_serial == cap->cursor_sent)
+        return;
+    cap->cursor_sent = cap->cursor_serial;
+
+    XFixesCursorImage *ci = XFixesGetCursorImage(cap->dpy);
+    if (!ci)
+        return;
+    if (ci->width <= 0 || ci->height <= 0 ||
+        ci->width > 256 || ci->height > 256)
+    {
+        XFree(ci);
+        return;
+    }
+    size_t px = (size_t)ci->width * ci->height;
+    uint8_t *buf = malloc(9 + px * 4);
+    if (!buf)
+    {
+        XFree(ci);
+        return;
+    }
+    uint8_t *p = buf;
+    *p++ = MSG_CURSOR;
+    wr_u16(p, (uint16_t)ci->width); p += 2;
+    wr_u16(p, (uint16_t)ci->height); p += 2;
+    wr_u16(p, (uint16_t)ci->xhot); p += 2;
+    wr_u16(p, (uint16_t)ci->yhot); p += 2;
+    /* XRender ARGB32（premultiplied alpha）→ 直通 RGBA */
+    for (size_t i = 0; i < px; i++)
+    {
+        unsigned long v = ci->pixels[i];
+        unsigned a = (v >> 24) & 0xff;
+        unsigned r = (v >> 16) & 0xff;
+        unsigned g = (v >> 8) & 0xff;
+        unsigned b = v & 0xff;
+        if (a && a != 255)
+        {
+            r = r * 255 / a;
+            g = g * 255 / a;
+            b = b * 255 / a;
+        }
+        *p++ = (uint8_t)r;
+        *p++ = (uint8_t)g;
+        *p++ = (uint8_t)b;
+        *p++ = (uint8_t)a;
+    }
+    XFree(ci);
+    conn *c = atomic_load(&rt->conn);
+    if (c)
+        net_push_take(c, buf, 9 + px * 4, 0);
+    else
+        free(buf);
+}
+
 void *capture_thread(void *arg)
 {
     runtime *rt = arg;
@@ -145,12 +215,21 @@ void *capture_thread(void *arg)
     struct timespec next;
     clock_gettime(CLOCK_MONOTONIC, &next);
 
+    /* 订阅远程光标变化（XFixes） */
+    int cev = 0, cerr = 0;
+    if (XFixesQueryExtension(cap->dpy, &cev, &cerr))
+    {
+        cap->cursor_event_base = cev;
+        XFixesSelectCursorInput(cap->dpy, cap->root, XFixesDisplayCursorNotifyMask);
+    }
+
     while (atomic_load(&cap->running))
     {
         /* 帧率可在运行期调整（MSG_SET_FPS），每次循环读取 */
         uint64_t interval_ns = 1000000000ull / (uint64_t)(atomic_load(&rt->fps) > 0 ? atomic_load(&rt->fps) : 30);
         pthread_mutex_lock(&cap->xlock);
         int ok = XShmGetImage(cap->dpy, cap->root, cap->img, 0, 0, AllPlanes);
+        cursor_check(rt); /* 光标变化检查（同一 X 连接，xlock 内） */
         pthread_mutex_unlock(&cap->xlock);
 
         if (ok)

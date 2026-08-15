@@ -5,8 +5,10 @@ import {
     MSG_LOGIN_RESULT,
     parseConfig,
     parseLoginResult,
+    parseCursor,
     MSG_CLOSE,
     MSG_SESSION_EXISTS,
+    MSG_CURSOR,
     msgLogin,
     msgResize,
     msgKeyframe,
@@ -18,6 +20,7 @@ import {
 } from './protocol';
 import { VideoRenderer } from './decoder';
 import { InputRelay } from './input';
+import type { CursorImage } from './protocol';
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string): T =>
     document.querySelector(s) as T;
@@ -214,7 +217,9 @@ function connect(): void {
 
 function handleMessage(b: Uint8Array): void {
     const t = b[0];
-    if (t === MSG_LOGIN_RESULT) {
+    if (t === MSG_CURSOR) {
+        applyCursor(parseCursor(b));
+    } else if (t === MSG_LOGIN_RESULT) {
         const r = parseLoginResult(b);
         if (r.ok) {
             loginBtn.hidden = true;
@@ -246,6 +251,24 @@ function handleMessage(b: Uint8Array): void {
         bwBytes += b.byteLength;
     } else if (t === MSG_CLOSE) {
         onDisconnect();
+    }
+}
+
+/* 应用远程光标：转成 data URL 后设为 canvas 的 CSS cursor（含热点） */
+function applyCursor(c: CursorImage): void {
+    try {
+        const cv = document.createElement('canvas');
+        cv.width = c.width;
+        cv.height = c.height;
+        const ctx = cv.getContext('2d');
+        if (!ctx) return;
+        const img = ctx.createImageData(c.width, c.height);
+        img.data.set(c.pixels);
+        ctx.putImageData(img, 0, 0);
+        const url = cv.toDataURL('image/png');
+        canvas.style.cursor = `url(${url}) ${c.hx} ${c.hy}, auto`;
+    } catch {
+        /* 忽略：光标设置失败时保持默认 */
     }
 }
 

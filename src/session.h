@@ -34,6 +34,9 @@ typedef struct capture_ctx
     Window root;
     XShmSegmentInfo shminfo;
     XImage *img;
+    int cursor_event_base;   /* XFixes 光标事件基号（0=不可用） */
+    unsigned long cursor_serial;   /* 最近一次收到事件的光标 serial */
+    unsigned long cursor_sent;     /* 已推送给前端的光标 serial */
     pthread_mutex_t xlock; /* 保护 X 调用（抓帧线程 + 输入注入） */
     pthread_t cap_thread;
     _Atomic int running;

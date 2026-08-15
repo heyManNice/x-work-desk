@@ -5,6 +5,7 @@ export const MSG_CONFIG = 0x02;
 export const MSG_LOGIN_RESULT = 0x03;
 export const MSG_CLOSE = 0x04;
 export const MSG_SESSION_EXISTS = 0x05;
+export const MSG_CURSOR = 0x06;
 
 export const MSG_LOGIN = 0x10;
 export const MSG_MOUSE = 0x11;
@@ -31,6 +32,14 @@ export interface VideoConfig {
 export interface LoginResult {
     ok: boolean;
     text: string;
+}
+
+export interface CursorImage {
+    width: number;
+    height: number;
+    hx: number;
+    hy: number;
+    pixels: Uint8Array; /* RGBA 直通格式 */
 }
 
 const enc = new TextEncoder();
@@ -60,6 +69,16 @@ export function parseConfig(b: Uint8Array): VideoConfig {
     const pl = rdU16(b, o); o += 2;
     const pps = b.subarray(o, o + pl);
     return { width, height, sps, pps };
+}
+
+export function parseCursor(b: Uint8Array): CursorImage {
+    let o = 1;
+    const width = rdU16(b, o); o += 2;
+    const height = rdU16(b, o); o += 2;
+    const hx = rdU16(b, o); o += 2;
+    const hy = rdU16(b, o); o += 2;
+    const pixels = b.subarray(o, o + width * height * 4);
+    return { width, height, hx, hy, pixels };
 }
 
 /* ---------- 客户端 -> 服务端消息构造 ---------- */

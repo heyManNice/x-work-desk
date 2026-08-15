@@ -11,7 +11,7 @@ x264_lib = cc.find_library('x264', dirs: [x264_dir])
 
 # ---- X11 / 系统库 ----
 deps = []
-foreach p : ['x11', 'xext', 'xtst']
+foreach p : ['x11', 'xext', 'xtst', 'xfixes']
   d = dependency(p, required: false)
   if not d.found()
     d = cc.find_library(p, required: true)
