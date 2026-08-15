@@ -47,6 +47,9 @@ typedef struct capture_ctx
 typedef struct encoder_ctx
 {
     x264_t *enc;
+    x264_param_t param; /* 当前编码参数（运行期 reconfig 用） */
+    int cur_kbps;       /* 当前生效码率（0=CRF 质量模式） */
+    int cur_crf;        /* 当前生效 CRF */
     uint8_t *sps;
     size_t sps_len;
     uint8_t *pps;
@@ -74,6 +77,9 @@ struct runtime
     char pass[256]; /* 登录密码：用于解锁会话 GNOME Keyring，teardown 时清零 */
     int req_w, req_h; /* 登录请求的分辨率（接管确认后重建会话用） */
     int _Atomic fps;  /* 最大抓帧帧率（前端可调） */
+    int _Atomic static_skip;   /* 静态帧优化开关（画面无变化跳过编码） */
+    int _Atomic bitrate_kbps;  /* 目标码率上限（0=自动/CRF 质量模式） */
+    int _Atomic crf;           /* CRF 质量档（码率为自动时生效） */
 
     video_buf video;
     proc_ctx proc;

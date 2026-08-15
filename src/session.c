@@ -169,6 +169,9 @@ void vdi_on_open(conn *c)
     atomic_store(&rt->conn, c);
     atomic_init(&rt->state, S_LOGIN);
     atomic_init(&rt->fps, g_cfg.fps > 0 ? g_cfg.fps : 30);
+    atomic_init(&rt->static_skip, 1);
+    atomic_init(&rt->bitrate_kbps, 0);
+    atomic_init(&rt->crf, 23);
     rt->proc.display = -1;
     pthread_mutex_init(&rt->lock, NULL);
     c->vdi = rt;
@@ -507,6 +510,20 @@ void vdi_on_message(conn *c, const uint8_t *data, size_t len)
     case MSG_SET_FPS:
         if (len >= 2 && data[1] >= 1 && data[1] <= 120)
             atomic_store(&rt->fps, data[1]);
+        break;
+    case MSG_SET_CODEC:
+        /* 格式: [type][staticSkip(1)][bitrateKbps(2)][crf(1)]
+         * 仅更新原子参数，编码器在抓帧线程里按需 reconfig，避免跨线程调用 */
+        if (len >= 5)
+        {
+            atomic_store(&rt->static_skip, data[1] ? 1 : 0);
+            int kbps = data[2] | (data[3] << 8);
+            atomic_store(&rt->bitrate_kbps, kbps);
+            int crf = data[4];
+            if (crf > 51)
+                crf = 51;
+            atomic_store(&rt->crf, crf);
+        }
         break;
     default:
         break;

@@ -13,6 +13,7 @@ import {
     msgTakeover,
     msgTakeoverCancel,
     msgSetFps,
+    msgSetCodec,
 } from './protocol';
 import { VideoRenderer } from './decoder';
 import { InputRelay } from './input';
@@ -34,6 +35,10 @@ const disconnectBtn = $('#disconnect-btn');
 const settingsBtn = $('#settings-btn') as HTMLButtonElement;
 const settingsPanel = $('#settings-panel') as HTMLElement;
 const setDebug = $('#set-debug') as HTMLInputElement;
+const setStatic = $('#set-static') as HTMLInputElement;
+const setBitrate = $('#set-bitrate') as HTMLSelectElement;
+const setQuality = $('#set-quality') as HTMLSelectElement;
+const rowQuality = $('#row-quality') as HTMLElement;
 const setFps = $('#set-fps') as HTMLSelectElement;
 const setRes = $('#set-res') as HTMLSelectElement;
 const setRatio = $('#set-ratio') as HTMLSelectElement;
@@ -64,6 +69,9 @@ const PREFS_KEY = 'xwd-prefs';
 
 interface Prefs {
     debug?: boolean;
+    static?: boolean;
+    bitrate?: number;
+    quality?: number;
     fps?: number;
     res?: string;
     ratio?: string;
@@ -92,6 +100,18 @@ function applyDebugPref(show: boolean): void {
 function applyFpsPref(): void {
     const fps = parseInt(setFps.value, 10) || 30;
     if (active) send(msgSetFps(fps));
+}
+
+/* 码率质量行仅在码率=自动时显示；应用编码设置 */
+function applyCodecPref(): void {
+    const auto = setBitrate.value === '0';
+    rowQuality.hidden = !auto;
+    setQuality.disabled = !auto; /* 非自动时码率质量不可修改 */
+    const staticSkip = setStatic.checked;
+    const kbps = auto ? 0 : parseInt(setBitrate.value, 10) || 0;
+    const q = parseInt(setQuality.value, 10);
+    const crf = Number.isFinite(q) ? q : 23; /* 注意 0（无损）是合法值，不能用 || 兜底 */
+    if (active) send(msgSetCodec(staticSkip, kbps, crf));
 }
 
 /* 固定分辨率（设置面板选择）；返回 null 表示自动跟随视口 */
@@ -235,6 +255,7 @@ function showDesktop(): void {
     dbgDec.textContent = '0.0 ms';
     applyDebugPref(setDebug.checked); /* 应用调试信息显示偏好 */
     applyFpsPref();                   /* 应用最大帧率设置 */
+    applyCodecPref();                 /* 应用静态帧/码率/质量设置 */
     relay?.setActive(true);
     canvas.focus();
     sendResize(); /* 进入桌面后按当前视口同步分辨率 */
@@ -317,10 +338,14 @@ function onDisconnect(): void {
 {
     const prefs = loadPrefs();
     setDebug.checked = prefs.debug !== false;
+    setStatic.checked = prefs.static !== false;
+    setBitrate.value = String(prefs.bitrate ?? 0);
+    setQuality.value = String(prefs.quality ?? 23);
     setFps.value = String(prefs.fps && prefs.fps > 0 ? prefs.fps : 30);
     setRes.value = prefs.res && prefs.res !== 'auto' ? prefs.res : 'auto';
     setRatio.value = prefs.ratio || 'fit';
     applyDebugPref(setDebug.checked);
+    applyCodecPref();
 }
 
 settingsBtn.addEventListener('click', () => {
@@ -342,6 +367,22 @@ document.addEventListener('click', (e) => {
 setDebug.addEventListener('change', () => {
     savePrefs({ ...loadPrefs(), debug: setDebug.checked });
     applyDebugPref(setDebug.checked);
+});
+
+setStatic.addEventListener('change', () => {
+    savePrefs({ ...loadPrefs(), static: setStatic.checked });
+    applyCodecPref();
+});
+
+setBitrate.addEventListener('change', () => {
+    savePrefs({ ...loadPrefs(), bitrate: parseInt(setBitrate.value, 10) || 0 });
+    applyCodecPref();
+});
+
+setQuality.addEventListener('change', () => {
+    const q = parseInt(setQuality.value, 10);
+    savePrefs({ ...loadPrefs(), quality: Number.isFinite(q) ? q : 23 });
+    applyCodecPref();
 });
 
 setFps.addEventListener('change', () => {

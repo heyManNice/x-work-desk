@@ -51,6 +51,31 @@
                     <input type="checkbox" id="set-debug" />
                 </label>
                 <label class="setting-row">
+                    <span>静态帧优化</span>
+                    <input type="checkbox" id="set-static" />
+                </label>
+                <label class="setting-row">
+                    <span>码率</span>
+                    <select id="set-bitrate">
+                        <option value="0">自动</option>
+                        <option value="1000">1 Mbps</option>
+                        <option value="2000">2 Mbps</option>
+                        <option value="4000">4 Mbps</option>
+                        <option value="8000">8 Mbps</option>
+                        <option value="16000">16 Mbps</option>
+                    </select>
+                </label>
+                <label class="setting-row" id="row-quality">
+                    <span>码率质量</span>
+                    <select id="set-quality">
+                        <option value="28">最差</option>
+                        <option value="25">较低</option>
+                        <option value="23">默认</option>
+                        <option value="18">较高</option>
+                        <option value="0">无损</option>
+                    </select>
+                </label>
+                <label class="setting-row">
                     <span>最大帧率</span>
                     <select id="set-fps">
                         <option value="15">15 FPS</option>

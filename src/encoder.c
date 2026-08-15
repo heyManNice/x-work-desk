@@ -27,6 +27,17 @@ int init_encoder(encoder_ctx *enc, video_buf *vb, int fps)
     p.rc.i_lookahead = 0;
     p.i_log_level = X264_LOG_ERROR;
     x264_param_apply_profile(&p, "baseline");
+    /* 码率上限走 VBV 约束：初始化即开启（默认 50Mbps 高上限），
+     * 运行期 reconfig 只允许调整 vbv 值（不能从关闭切到开启）。
+     * 自动=高上限（质量由 CRF 决定），选码率=具体上限。 */
+    p.rc.i_rc_method = X264_RC_CRF;
+    p.rc.f_rf_constant = 23;
+    p.rc.i_vbv_max_bitrate = 50000;
+    p.rc.i_vbv_buffer_size = 50000;
+
+    enc->param = p; /* 保存参数，供运行期 reconfig */
+    enc->cur_kbps = 0;
+    enc->cur_crf = 23;
 
     enc->enc = x264_encoder_open(&p);
     if (!enc->enc)
@@ -84,6 +95,33 @@ void encode_frame(runtime *rt)
     if (!atomic_load(&rt->conn))
         return;
     encoder_ctx *enc = &rt->enc;
+    /* 运行期码率/质量调整：参数变化时在抓帧线程内 reconfig，
+     * 避免跨线程调用 x264（capture 线程与事件循环线程并发） */
+    {
+        int kbps = atomic_load(&rt->bitrate_kbps);
+        int crf = atomic_load(&rt->crf);
+        if (kbps != enc->cur_kbps || crf != enc->cur_crf)
+        {
+            enc->cur_kbps = kbps;
+            enc->cur_crf = crf;
+            x264_param_t p = enc->param;
+            p.rc.f_rf_constant = (float)crf; /* CRF 质量档 */
+            if (kbps > 0)
+            {
+                /* 码率上限：VBV 约束（1 秒缓冲） */
+                p.rc.i_vbv_max_bitrate = kbps;
+                p.rc.i_vbv_buffer_size = kbps;
+            }
+            else
+            {
+                /* 自动：恢复高上限，质量完全由 CRF 决定 */
+                p.rc.i_vbv_max_bitrate = 50000;
+                p.rc.i_vbv_buffer_size = 50000;
+            }
+            x264_encoder_reconfig(enc->enc, &p);
+            log_info("编码器 reconfig: bitrate=%d crf=%d", kbps, crf);
+        }
+    }
     video_buf *vb = &rt->video;
     x264_picture_t pic, pic_out;
     x264_picture_init(&pic);

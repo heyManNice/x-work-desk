@@ -157,7 +157,8 @@ void *capture_thread(void *arg)
         {
             /* 静止帧跳过转换与编码；有 keyframe 请求时强制编码一帧 */
             int need_key = atomic_load(&cap->req_keyframe) != 0;
-            if (need_key || frame_changed(cap, &rt->video))
+            int skip_static = atomic_load(&rt->static_skip) != 0;
+            if (need_key || !skip_static || frame_changed(cap, &rt->video))
             {
                 bgra_to_i420((const uint8_t *)cap->img->data, &rt->video);
                 encode_frame(rt);
