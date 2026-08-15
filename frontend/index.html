@@ -25,15 +25,16 @@
                 </div>
                 <h1 class="brand">XWorkDesk</h1>
                 <p class="subtitle">登录以访问您的桌面</p>
-                <form id="login-form" autocomplete="on" novalidate>
+                <!-- autocomplete=off + 唯一字段名：避免浏览器弹出"推荐账号"等自动填充建议 -->
+                <form id="login-form" autocomplete="off" novalidate>
                     <div class="field">
-                        <label for="username">用户名</label>
-                        <input id="username" name="username" type="text" placeholder="输入用户名" autocomplete="username"
+                        <label for="xwd-account">用户名</label>
+                        <input id="xwd-account" name="xwd-account" type="text" placeholder="输入用户名" autocomplete="off"
                             spellcheck="false" required />
                     </div>
                     <div class="field">
-                        <label for="password">密码</label>
-                        <input id="password" name="password" type="password" placeholder="输入密码"
+                        <label for="xwd-pass">密码</label>
+                        <input id="xwd-pass" name="xwd-pass" type="password" placeholder="输入密码"
                             autocomplete="current-password" required />
                     </div>
                     <div id="login-error" class="login-error" hidden></div>

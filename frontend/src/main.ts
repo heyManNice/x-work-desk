@@ -16,8 +16,8 @@ const $ = <T extends HTMLElement = HTMLElement>(s: string): T =>
 
 const loginScreen = $('#login-screen');
 const deskScreen = $('#desk-screen');
-const userInput = $('#username') as HTMLInputElement;
-const passInput = $('#password') as HTMLInputElement;
+const userInput = $('#xwd-account') as HTMLInputElement;
+const passInput = $('#xwd-pass') as HTMLInputElement;
 const loginForm = $('#login-form') as HTMLFormElement;
 const loginBtn = $('#login-btn') as HTMLButtonElement;
 const btnLabel = $('.btn-label');
@@ -145,7 +145,9 @@ function showDesktop(): void {
     triggerPasswordSave(); /* 登录成功后触发浏览器保存密码 */
 }
 
-/* 通过隐藏 iframe 提交带用户名/密码的表单，触发浏览器"保存密码"提示（无页面跳转） */
+/* 触发浏览器原生"保存密码"提示（无页面跳转、应用不保存任何密码）。
+ * 隐藏 iframe 里的表单使用标准的 username/password 字段名，让浏览器识别为登录表单。
+ * 页面内可见表单使用唯一字段名，仅用于避免自动填充建议，与保存无关。 */
 function triggerPasswordSave(): void {
     try {
         let frame = document.getElementById('pw-save-frame') as HTMLIFrameElement | null;
