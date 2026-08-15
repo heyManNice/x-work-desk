@@ -23,7 +23,6 @@ const loginBtn = $('#login-btn') as HTMLButtonElement;
 const btnLabel = $('.btn-label');
 const btnSpinner = $('.spinner');
 const loginErr = $('#login-error');
-const connStatus = $('#conn-status');
 const canvas = $('#screen') as HTMLCanvasElement;
 const disconnectBtn = $('#disconnect-btn');
 const connectingOverlay = $('#connecting-overlay');
@@ -68,11 +67,6 @@ function requestKeyframe(): void {
     send(msgKeyframe());
 }
 
-function setConnStatus(text: string, color?: string): void {
-    connStatus.textContent = text;
-    connStatus.style.color = color ?? '';
-}
-
 function connect(): void {
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -80,7 +74,6 @@ function connect(): void {
     ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
-        setConnStatus('已连接', '#34d399');
         if (pendingLogin) {
             send(msgLogin(pendingLogin.user, pendingLogin.pass, pendingLogin.w, pendingLogin.h));
             pendingLogin = null;
@@ -92,7 +85,6 @@ function connect(): void {
     };
 
     ws.onclose = () => {
-        setConnStatus('未连接');
         if (active) onDisconnect('连接已断开');
     };
 

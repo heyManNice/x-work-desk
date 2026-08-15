@@ -9,20 +9,15 @@
 
 <body>
     <div id="app">
-        <!-- 登录界面（仿登录管理器） -->
+        <!-- 登录界面 -->
         <div id="login-screen" class="screen active">
-            <div class="login-bg">
-                <div class="grid-overlay"></div>
-            </div>
-            <div class="login-card">
+            <div class="login-wrap">
                 <div class="avatar">
                     <svg viewBox="0 0 24 24" width="44" height="44" fill="currentColor">
                         <path
                             d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 2c-3.9 0-7 2.02-7 4.5V20h14v-1.5c0-2.48-3.1-4.5-7-4.5Z" />
                     </svg>
                 </div>
-                <h1 class="brand">XWorkDesk</h1>
-                <p class="subtitle">登录以访问您的桌面</p>
                 <!-- autocomplete=off + 唯一字段名：避免浏览器弹出"推荐账号"等自动填充建议 -->
                 <form id="login-form" autocomplete="off" novalidate>
                     <div class="field">
@@ -40,7 +35,6 @@
                         <span class="btn-label">登录</span>
                         <span class="spinner" hidden></span>
                     </button>
-                    <p class="hint">连接状态：<span id="conn-status" class="conn-dot">未连接</span></p>
                 </form>
             </div>
         </div>
