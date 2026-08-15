@@ -418,17 +418,24 @@ static pid_t run_cmd_bg(char *const argv[])
 static void exec_keyring_session(const char *inner_cmd, int do_unlock)
 {
     char wrap[2048];
+    /* snap 等桌面应用依赖 systemd 用户总线来创建自己的 cgroup scope：
+     * 优先使用 /run/user/<uid>/bus（正常 GNOME 会话即如此），
+     * 无 systemd 实例时退回 dbus-run-session 的私有总线 */
+    const char *bus_setup =
+        "if [ -S \"$XDG_RUNTIME_DIR/bus\" ]; then "
+        "export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus; fi; ";
     if (do_unlock)
     {
         snprintf(wrap, sizeof wrap,
+                 "%s"
                  "eval \"$(gnome-keyring-daemon --start --components=secrets 2>/dev/null)\"; "
                  "printf '%%s' \"$XWD_KEYRING_PASS\" | gnome-keyring-daemon --unlock 2>/dev/null; "
                  "unset XWD_KEYRING_PASS; exec %s",
-                 inner_cmd);
+                 bus_setup, inner_cmd);
     }
     else
     {
-        snprintf(wrap, sizeof wrap, "exec %s", inner_cmd);
+        snprintf(wrap, sizeof wrap, "%sexec %s", bus_setup, inner_cmd);
     }
     execl("/usr/bin/dbus-run-session", "dbus-run-session", "--",
           "/bin/sh", "-c", wrap, (char *)NULL);
@@ -497,7 +504,9 @@ static void spawn_session_app(runtime *rt, const char *user)
         setenv("USER", run_name, 1);
         setenv("LOGNAME", run_name, 1);
         setenv("SHELL", run_shell, 1);
-        setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1);
+        setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin", 1);
+        /* snap 应用的桌面图标位于 /var/lib/snapd/desktop，必须加入 XDG_DATA_DIRS */
+        setenv("XDG_DATA_DIRS", "/usr/share/gnome:/usr/local/share:/usr/share:/var/lib/snapd/desktop", 1);
         setenv("XDG_RUNTIME_DIR", rt_dir, 1);
         setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME", 1);
         setenv("XDG_SESSION_TYPE", "x11", 1);
@@ -659,6 +668,19 @@ static int session_bring_up(runtime *rt, const char *user, int w, int h)
         return -1;
     if (init_encoder(&rt->enc, &rt->video, g_cfg.fps) != 0)
         return -1;
+    /* 确保目标用户的 systemd 实例在运行，提供 /run/user/<uid>/bus
+     * （snap 等应用依赖；启动失败时桌面仍可用 dbus-run-session 兜底） */
+    if (geteuid() == 0)
+    {
+        struct passwd *pw = getpwnam(user);
+        if (pw)
+        {
+            char unit[64];
+            snprintf(unit, sizeof unit, "user@%u.service", pw->pw_uid);
+            char *args[] = {"systemctl", "start", unit, NULL};
+            run_cmd_wait(args);
+        }
+    }
     spawn_session_app(rt, user);
 
     atomic_store(&rt->cap.running, 1);
