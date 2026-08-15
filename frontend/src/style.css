@@ -40,7 +40,7 @@ body,
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 24px;
+    gap: 44px;
 }
 
 .login-wrap form {
@@ -65,13 +65,13 @@ body,
 
 .field input {
     width: 100%;
-    padding: 12px 14px;
+    padding: 8px 12px;
     border-radius: 10px;
     border: none;
     outline: 2px solid transparent;
     background: #3d3938;
     color: var(--text);
-    font-size: 15px;
+    font-size: 14px;
     transition: outline-color 0.25s ease;
 }
 
@@ -93,12 +93,12 @@ body,
 #login-btn {
     width: 100%;
     margin-top: 4px;
-    padding: 12px;
+    padding: 9px;
     border: none;
     border-radius: 10px;
     background: var(--accent);
     color: #fff;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     display: flex;
