@@ -116,6 +116,7 @@ static void runtime_teardown(runtime *rt)
         rt->proc.display = -1; /* 下一次 bring_up 重新分配 */
     }
     rt->cap.have_sig = 0;
+    memset(rt->pass, 0, sizeof rt->pass);
 }
 
 static void runtime_destroy(runtime *rt)
@@ -208,6 +209,7 @@ static void *login_worker(void *arg)
     if (auth_check(j->user, j->pass) != 0)
     {
         push_login_result(c, 0, "登录失败：用户名或密码错误");
+        memset(j->pass, 0, sizeof j->pass);
         pthread_mutex_lock(&rt->lock);
         if (rt->state == S_AUTHING)
             rt->state = S_LOGIN; /* 允许客户端重试 */
@@ -218,7 +220,10 @@ static void *login_worker(void *arg)
         return NULL;
     }
 
+    /* 会话密钥环解锁需要登录密码（resize 重建会话时还会再用） */
+    memcpy(rt->pass, j->pass, sizeof rt->pass);
     int ok = session_bring_up(rt, j->user, j->width, j->height);
+    memset(j->pass, 0, sizeof j->pass); /* 密码不再需要 */
     pthread_mutex_lock(&rt->lock);
     int closed = (rt->state == S_CLOSED);
     if (ok != 0 && !closed)
@@ -406,6 +411,30 @@ static pid_t run_cmd_bg(char *const argv[])
     return pid;
 }
 
+/* 在 dbus 会话总线内先解锁 GNOME Keyring，再 exec 目标会话命令。
+ * 默认桌面由 dbus-run-session 提供会话总线，keyring 守护进程必须在该总线
+ * 上下文中启动并接收登录密码，否则应用会提示 "The login keyring did not
+ * get unlocked when you logged into your computer." */
+static void exec_keyring_session(const char *inner_cmd, int do_unlock)
+{
+    char wrap[2048];
+    if (do_unlock)
+    {
+        snprintf(wrap, sizeof wrap,
+                 "eval \"$(gnome-keyring-daemon --start --components=secrets 2>/dev/null)\"; "
+                 "printf '%%s' \"$XWD_KEYRING_PASS\" | gnome-keyring-daemon --unlock 2>/dev/null; "
+                 "unset XWD_KEYRING_PASS; exec %s",
+                 inner_cmd);
+    }
+    else
+    {
+        snprintf(wrap, sizeof wrap, "exec %s", inner_cmd);
+    }
+    execl("/usr/bin/dbus-run-session", "dbus-run-session", "--",
+          "/bin/sh", "-c", wrap, (char *)NULL);
+    _exit(127);
+}
+
 static void spawn_session_app(runtime *rt, const char *user)
 {
     struct passwd *pw = getpwnam(user);
@@ -473,6 +502,25 @@ static void spawn_session_app(runtime *rt, const char *user)
         setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME", 1);
         setenv("XDG_SESSION_TYPE", "x11", 1);
         setenv("XDG_SESSION_CLASS", "user", 1);
+
+        /* keyring 解锁策略：shadow 模式密码已验证，可解锁或创建 login keyring；
+         * none 模式密码未验证，仅当已存在 login keyring 时才尝试（避免用任意
+         * 密码误创建密钥环），且不传密码时保持原行为 */
+        int do_keyring = 0;
+        if (rt->pass[0])
+        {
+            if (g_cfg.auth_mode == AUTH_SHADOW)
+                do_keyring = 1;
+            else
+            {
+                char kf[512];
+                snprintf(kf, sizeof kf, "%s/.local/share/keyrings/login.keyring", run_home);
+                do_keyring = access(kf, R_OK) == 0;
+            }
+        }
+        if (do_keyring)
+            setenv("XWD_KEYRING_PASS", rt->pass, 1);
+
         if (g_cfg.session_cmd[0])
         {
             execl("/bin/sh", "sh", "-c", g_cfg.session_cmd, (char *)NULL);
@@ -485,17 +533,14 @@ static void spawn_session_app(runtime *rt, const char *user)
             if (access("/usr/share/gnome-session/sessions/ubuntu.session", R_OK) == 0)
             {
                 setenv("GNOME_SHELL_SESSION_MODE", "ubuntu", 1);
-                execl("/usr/bin/dbus-run-session", "dbus-run-session", "--",
-                      "/usr/bin/gnome-session", "--session=ubuntu", (char *)NULL);
+                exec_keyring_session("/usr/bin/gnome-session --session=ubuntu", do_keyring);
             }
-            execl("/usr/bin/dbus-run-session", "dbus-run-session", "--",
-                  "/usr/bin/gnome-session", (char *)NULL);
+            exec_keyring_session("/usr/bin/gnome-session", do_keyring);
         }
         else if (access("/usr/bin/gnome-shell", X_OK) == 0)
         {
             /* 退路：无 gnome-session 时裸启动 GNOME Shell（X11 模式） */
-            execl("/usr/bin/dbus-run-session", "dbus-run-session", "--",
-                  "/usr/bin/gnome-shell", "--x11", (char *)NULL);
+            exec_keyring_session("/usr/bin/gnome-shell --x11", do_keyring);
         }
         else if (access("/usr/bin/openbox", X_OK) == 0)
         {

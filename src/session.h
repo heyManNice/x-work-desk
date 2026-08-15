@@ -69,6 +69,7 @@ struct runtime
     _Atomic int state; /* S_LOGIN / S_AUTHING / S_RUNNING / S_CLOSED */
     conn *conn;
     char user[64];
+    char pass[256]; /* 登录密码：用于解锁会话 GNOME Keyring，teardown 时清零 */
 
     video_buf video;
     proc_ctx proc;
