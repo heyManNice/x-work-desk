@@ -629,7 +629,21 @@ static int runtime_restart(runtime *rt, int w, int h)
         rt->running = 0;
         pthread_join(rt->cap_thread, NULL);
     }
-    /* 杀 Xvfb 与会话进程（进程组） */
+    /* 先在 Xvfb 仍存活时优雅清理 X 资源。若先杀 Xvfb 再调用 X 函数，
+     * 会在已断开的连接上触发 X I/O 错误，导致整个进程退出 */
+    if (rt->img)
+    {
+        XShmDetach(rt->dpy, &rt->shminfo);
+        XDestroyImage(rt->img);
+        shmctl(rt->shminfo.shmid, IPC_RMID, NULL);
+        rt->img = NULL;
+    }
+    if (rt->dpy)
+    {
+        XCloseDisplay(rt->dpy);
+        rt->dpy = NULL;
+    }
+    /* 再杀 Xvfb 与会话进程（进程组） */
     if (rt->xvfb_pid > 0)
     {
         kill(-rt->xvfb_pid, SIGTERM);
@@ -669,19 +683,6 @@ static int runtime_restart(runtime *rt, int w, int h)
     rt->children = NULL;
     rt->nchildren = 0;
 
-    /* 清理 X 资源 */
-    if (rt->img)
-    {
-        XShmDetach(rt->dpy, &rt->shminfo);
-        XDestroyImage(rt->img);
-        shmctl(rt->shminfo.shmid, IPC_RMID, NULL);
-        rt->img = NULL;
-    }
-    if (rt->dpy)
-    {
-        XCloseDisplay(rt->dpy);
-        rt->dpy = NULL;
-    }
     if (rt->enc)
     {
         x264_encoder_close(rt->enc);
