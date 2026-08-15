@@ -9,6 +9,7 @@ export class InputRelay {
     private height = 720;
     private pressedKeys = new Set<string>();
     private active = false; // 仅桌面激活时才转发输入并拦截默认行为
+    private ratio: 'fit' | 'stretch' | 'pixel' = 'fit';
 
     constructor(canvas: HTMLCanvasElement, send: (d: Uint8Array) => void) {
         this.canvas = canvas;
@@ -25,13 +26,33 @@ export class InputRelay {
         this.height = h;
     }
 
+    setRatio(mode: 'fit' | 'stretch' | 'pixel'): void {
+        this.ratio = mode;
+    }
+
     private scale(e: MouseEvent): [number, number] {
         const r = this.canvas.getBoundingClientRect();
-        const x = Math.round(((e.clientX - r.left) / r.width) * this.width);
-        const y = Math.round(((e.clientY - r.top) / r.height) * this.height);
+        let x = e.clientX - r.left;
+        let y = e.clientY - r.top;
+
+        if (this.ratio === 'fit') {
+            /* 适应模式：画面等比缩放居中，canvas 四周可能有黑边，
+             * 需先去掉黑边偏移再按画面比例映射 */
+            const s = Math.min(r.width / this.width, r.height / this.height);
+            const vw = this.width * s;
+            const vh = this.height * s;
+            x -= (r.width - vw) / 2;
+            y -= (r.height - vh) / 2;
+            return [
+                Math.max(0, Math.min(this.width - 1, Math.round(x / s))),
+                Math.max(0, Math.min(this.height - 1, Math.round(y / s))),
+            ];
+        }
+
+        /* 拉伸 / 点对点：按 canvas 显示区域比例映射 */
         return [
-            Math.max(0, Math.min(this.width - 1, x)),
-            Math.max(0, Math.min(this.height - 1, y)),
+            Math.max(0, Math.min(this.width - 1, Math.round((x / r.width) * this.width))),
+            Math.max(0, Math.min(this.height - 1, Math.round((y / r.height) * this.height))),
         ];
     }
 

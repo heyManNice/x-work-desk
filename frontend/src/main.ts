@@ -35,6 +35,8 @@ const settingsBtn = $('#settings-btn') as HTMLButtonElement;
 const settingsPanel = $('#settings-panel') as HTMLElement;
 const setDebug = $('#set-debug') as HTMLInputElement;
 const setFps = $('#set-fps') as HTMLSelectElement;
+const setRes = $('#set-res') as HTMLSelectElement;
+const setRatio = $('#set-ratio') as HTMLSelectElement;
 const debugHud = $('#debug-hud') as HTMLElement;
 const connectingOverlay = $('#connecting-overlay');
 const dbgRes = $('#dbg-res');
@@ -63,6 +65,8 @@ const PREFS_KEY = 'xwd-prefs';
 interface Prefs {
     debug?: boolean;
     fps?: number;
+    res?: string;
+    ratio?: string;
 }
 
 function loadPrefs(): Prefs {
@@ -90,10 +94,41 @@ function applyFpsPref(): void {
     if (active) send(msgSetFps(fps));
 }
 
+/* 固定分辨率（设置面板选择）；返回 null 表示自动跟随视口 */
+function fixedResolution(): [number, number] | null {
+    const v = setRes.value;
+    if (v === 'auto') return null;
+    const [w, h] = v.split('x').map((x) => parseInt(x, 10));
+    return [w, h];
+}
+
+type RatioMode = 'fit' | 'stretch' | 'pixel';
+
+/* 应用屏幕比例显示模式；点对点需要视频像素尺寸（canvas.width/height） */
+function applyRatio(mode: RatioMode, vw?: number, vh?: number): void {
+    canvas.classList.remove('fit', 'stretch', 'pixel');
+    relay?.setRatio(mode); /* 鼠标坐标按显示模式映射（适应需去黑边） */
+    if (mode === 'stretch') {
+        canvas.classList.add('stretch');
+        canvas.style.width = '';
+        canvas.style.height = '';
+    } else if (mode === 'pixel') {
+        canvas.classList.add('pixel');
+        canvas.style.width = `${vw || canvas.width}px`;
+        canvas.style.height = `${vh || canvas.height}px`;
+    } else {
+        canvas.classList.add('fit');
+        canvas.style.width = '';
+        canvas.style.height = '';
+    }
+}
+
 /* 前端可视区域物理分辨率：innerWidth/Height 是视口 CSS 像素（随窗口大小变化，
  * 已含系统显示缩放），乘 devicePixelRatio 得到设备像素。这样浏览器窗口调整时
  * 桌面分辨率跟随重建，且在 150%/200% 缩放下画面 1:1 对应物理像素、不发糊。 */
 function viewportSize(): [number, number] {
+    const fixed = fixedResolution();
+    if (fixed) return fixed;
     const dpr = window.devicePixelRatio || 1;
     const w = Math.round(window.innerWidth * dpr);
     const h = Math.round(window.innerHeight * dpr);
@@ -165,6 +200,7 @@ function handleMessage(b: Uint8Array): void {
         renderer?.configure(cfg);
         relay?.setSize(cfg.width, cfg.height);
         dbgRes.textContent = `${cfg.width}x${cfg.height}`;
+        applyRatio(setRatio.value as RatioMode, cfg.width, cfg.height);
         requestKeyframe();
     } else if (t === MSG_SESSION_EXISTS) {
         /* 该账户已有活跃会话：询问是否注销旧会话并接管 */
@@ -282,6 +318,8 @@ function onDisconnect(): void {
     const prefs = loadPrefs();
     setDebug.checked = prefs.debug !== false;
     setFps.value = String(prefs.fps && prefs.fps > 0 ? prefs.fps : 30);
+    setRes.value = prefs.res && prefs.res !== 'auto' ? prefs.res : 'auto';
+    setRatio.value = prefs.ratio || 'fit';
     applyDebugPref(setDebug.checked);
 }
 
@@ -310,6 +348,16 @@ setFps.addEventListener('change', () => {
     const fps = parseInt(setFps.value, 10) || 30;
     savePrefs({ ...loadPrefs(), fps });
     applyFpsPref();
+});
+
+setRes.addEventListener('change', () => {
+    savePrefs({ ...loadPrefs(), res: setRes.value });
+    if (active) sendResize(); /* 运行中立即按新分辨率重建会话 */
+});
+
+setRatio.addEventListener('change', () => {
+    savePrefs({ ...loadPrefs(), ratio: setRatio.value });
+    applyRatio(setRatio.value as RatioMode, canvas.width, canvas.height);
 });
 
 loginForm.addEventListener('submit', (e) => {
@@ -363,7 +411,8 @@ fpsTimer = window.setInterval(() => {
 renderer = new VideoRenderer(canvas);
 renderer.onKeyframeRequest = () => requestKeyframe();
 renderer.onResize = () => {
-    connectingOverlay.hidden = true;
+    /* 不再在这里隐藏提示层：等收到第一帧实际渲染的画面再隐藏，
+     * 避免编码器就绪（CONFIG）但桌面还在启动时出现无提示的黑屏等待 */
 };
 renderer.onError = (msg) => {
     connectingOverlay.hidden = false;
@@ -373,6 +422,9 @@ renderer.onError = (msg) => {
 renderer.onDecodeTime = (ms) => {
     decSum += ms;
     decCount++;
+    if (!connectingOverlay.hidden) {
+        connectingOverlay.hidden = true; /* 首帧渲染完成，桌面已出画面 */
+    }
 };
 
 relay = new InputRelay(canvas, send);
