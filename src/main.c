@@ -11,6 +11,13 @@
 #include "protocol.h"
 
 config g_cfg;
+volatile int g_server_shutdown = 0;
+
+static void on_signal(int sig)
+{
+    (void)sig;
+    g_server_shutdown = 1;
+}
 
 /* 防止单个会话的 X 故障（如 Xvfb 异常退出）导致整个多用户进程崩溃 */
 static int x_io_error_handler(Display *d)
@@ -88,6 +95,8 @@ int main(int argc, char **argv)
     }
 
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGTERM, on_signal);
+    signal(SIGINT, on_signal);
     XInitThreads();
     XSetIOErrorHandler(x_io_error_handler);
     XSetErrorHandler(x_error_handler);

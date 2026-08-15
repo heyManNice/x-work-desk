@@ -123,6 +123,12 @@ int net_run(void)
 
         /* 会话看护：系统注销（gnome-session 退出）或 Xvfb 崩溃时清理会话 */
         session_sweep();
+        if (g_server_shutdown)
+        {
+            log_info("收到退出信号，清理所有会话...");
+            session_shutdown_all();
+            break;
+        }
 
         /* 唤醒：刷新所有连接出站队列 */
         if (fds[1].revents & POLLIN)

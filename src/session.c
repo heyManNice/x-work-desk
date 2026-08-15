@@ -794,6 +794,29 @@ void session_sweep(void)
     }
 }
 
+/* 服务退出前（SIGTERM/SIGINT）清理所有会话：关闭连接、释放 Xvfb/进程，
+ * 避免 pkill 后旧会话成为孤儿继续占用总线与 display */
+void session_shutdown_all(void)
+{
+    runtime *all[MAX_SESSIONS];
+    int n = 0;
+    pthread_mutex_lock(&g_sess_lock);
+    for (int i = 0; i < MAX_SESSIONS; i++)
+        if (g_sessions[i].rt)
+            all[n++] = g_sessions[i].rt;
+    pthread_mutex_unlock(&g_sess_lock);
+
+    for (int i = 0; i < n; i++)
+    {
+        runtime *rt = all[i];
+        conn *c = atomic_exchange(&rt->conn, NULL);
+        if (c)
+            net_close_conn(c);
+        session_unregister(rt);
+        /* 若 refs 尚未归零（如登录线程在跑），teardown 由最后一次 unref 触发 */
+    }
+}
+
 /* 在 dbus 会话总线内先解锁 GNOME Keyring，再 exec 目标会话命令。
  * 默认桌面由 dbus-run-session 提供会话总线，keyring 守护进程必须在该总线
  * 上下文中启动并接收登录密码，否则应用会提示 "The login keyring did not

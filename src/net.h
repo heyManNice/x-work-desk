@@ -53,6 +53,7 @@ extern int net_wake_fds[2];
 extern conn *net_conns;
 extern int net_nconns;
 extern char net_www_root[1024];
+extern volatile int g_server_shutdown; /* SIGTERM/SIGINT 时置位（main.c） */
 
 /* net.c 公共 API */
 int net_init(int port, const char *www_root);

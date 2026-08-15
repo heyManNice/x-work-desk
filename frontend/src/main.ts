@@ -153,6 +153,11 @@ function showDesktop(): void {
     deskScreen.classList.add('active');
     /* 接管空闲会话时 CONFIG 可能已先到达（渲染器已配置），直接隐藏提示层 */
     connectingOverlay.hidden = renderer?.isConfigured ?? false;
+    /* 指标占位显示 0，避免进入桌面后内容跳动 */
+    dbgFps.textContent = '0 FPS';
+    dbgLat.textContent = '0 ms';
+    dbgBw.textContent = '0 kbps';
+    dbgDec.textContent = '0.0 ms';
     relay?.setActive(true);
     canvas.focus();
     sendResize(); /* 进入桌面后按当前视口同步分辨率 */
@@ -209,6 +214,11 @@ function onDisconnect(): void {
     renderer?.destroy();
     relay?.releaseAll();
     passInput.value = ''; /* 注销后清空密码 */
+    /* 指标保持占位显示 0，避免下次进入桌面时内容跳动 */
+    dbgFps.textContent = '0 FPS';
+    dbgLat.textContent = '0 ms';
+    dbgBw.textContent = '0 kbps';
+    dbgDec.textContent = '0.0 ms';
     deskScreen.classList.remove('active');
     loginScreen.classList.add('active');
     loginBtn.disabled = false;
@@ -222,10 +232,6 @@ function onDisconnect(): void {
     bwBytes = 0;
     decSum = 0;
     decCount = 0;
-    dbgFps.textContent = '';
-    dbgLat.textContent = '';
-    dbgBw.textContent = '';
-    dbgDec.textContent = '';
     keyReqTime = 0;
 }
 
@@ -265,14 +271,14 @@ window.addEventListener('resize', () => {
 fpsTimer = window.setInterval(() => {
     lastFps = frameCount;
     frameCount = 0;
-    if (active) dbgFps.textContent = `${lastFps} FPS`;
+    dbgFps.textContent = `${active ? lastFps : 0} FPS`;
 
     const kbps = (bwBytes * 8) / 1000;
     dbgBw.textContent = kbps >= 1000 ? `${(kbps / 1000).toFixed(2)} Mbps` : `${Math.round(kbps)} kbps`;
     bwBytes = 0;
 
     const avgDec = decCount > 0 ? decSum / decCount : 0;
-    dbgDec.textContent = decCount > 0 ? `${avgDec.toFixed(1)} ms` : '';
+    dbgDec.textContent = `${avgDec.toFixed(1)} ms`;
     decSum = 0;
     decCount = 0;
 }, 1000);
