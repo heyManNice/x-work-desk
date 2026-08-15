@@ -304,6 +304,17 @@ static int run_cmd_wait(char *const argv[])
     return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
 }
 
+/* 清理非 root 模式的会话运行时目录。root 用系统 /run/user 目录，不删除 */
+static void cleanup_rt_dir(runtime *rt)
+{
+    if (!rt || getuid() == 0)
+        return;
+    char rt_dir[160];
+    snprintf(rt_dir, sizeof rt_dir, "/tmp/xdg-runtime-%u-%d", getuid(), rt->display);
+    char *rm[] = {"rm", "-rf", rt_dir, NULL};
+    run_cmd_wait(rm);
+}
+
 static pid_t run_cmd_bg(char *const argv[])
 {
     pid_t pid = fork();
@@ -338,12 +349,14 @@ static void spawn_session_app(runtime *rt, const char *user)
         }
     }
 
-    /* 准备 XDG_RUNTIME_DIR（fork 前创建；root 时 chown 给目标用户） */
+    /* 准备 XDG_RUNTIME_DIR（fork 前创建；root 时 chown 给目标用户）
+     * 非 root 时每个会话用独立目录（含 display），避免并发会话共享
+     * XDG_RUNTIME_DIR 导致 GNOME Shell 状态冲突（桌面无法加载） */
     char rt_dir[160];
     if (pw && is_root)
         snprintf(rt_dir, sizeof rt_dir, "/run/user/%u", pw->pw_uid);
     else
-        snprintf(rt_dir, sizeof rt_dir, "/tmp/xdg-runtime-%u", getuid());
+        snprintf(rt_dir, sizeof rt_dir, "/tmp/xdg-runtime-%u-%d", getuid(), rt->display);
     if (mkdir(rt_dir, 0700) != 0 && errno != EEXIST)
         log_info("mkdir %s: %s", rt_dir, strerror(errno));
     if (is_root && pw)
@@ -594,6 +607,7 @@ void runtime_stop(runtime *rt)
     }
     free(rt->children);
     unlink(rt->authfile);
+    cleanup_rt_dir(rt);
     log_info("会话结束: %s", rt->user);
     conn_unref(rt->conn);
     free(rt);
@@ -678,6 +692,7 @@ static int runtime_restart(runtime *rt, int w, int h)
     free(rt->sps);
     free(rt->pps);
     unlink(rt->authfile);
+    cleanup_rt_dir(rt); /* 清理旧会话的运行时目录 */
 
     /* 换新 display 号，避免旧 socket 残留冲突 */
     rt->display = find_free_display();
