@@ -22,7 +22,6 @@ const loginForm = $('#login-form') as HTMLFormElement;
 const loginBtn = $('#login-btn') as HTMLButtonElement;
 const btnLabel = $('.btn-label');
 const btnSpinner = $('.spinner');
-const loginErr = $('#login-error');
 const canvas = $('#screen') as HTMLCanvasElement;
 const disconnectBtn = $('#disconnect-btn');
 const connectingOverlay = $('#connecting-overlay');
@@ -85,7 +84,7 @@ function connect(): void {
     };
 
     ws.onclose = () => {
-        if (active) onDisconnect('连接已断开');
+        if (active) onDisconnect();
     };
 
     ws.onerror = () => { };
@@ -116,13 +115,16 @@ function handleMessage(b: Uint8Array): void {
         requestKeyframe();
     } else if (t === MSG_VIDEO) {
         const flags = b[1];
+        /* 只在收到"本次请求对应的关键帧"时更新延迟，并清除标记，
+         * 避免服务端周期性关键帧把过期请求时间显示成错误延迟 */
         if ((flags & 0x01) !== 0 && keyReqTime) {
             dbgLat.textContent = `${Math.round(performance.now() - keyReqTime)} ms`;
+            keyReqTime = 0;
         }
         renderer?.feed(b.subarray(2), (flags & 0x01) !== 0);
         frameCount++;
     } else if (t === MSG_CLOSE) {
-        onDisconnect(new TextDecoder().decode(b.subarray(1)));
+        onDisconnect();
     }
 }
 
@@ -172,30 +174,25 @@ function triggerPasswordSave(): void {
     }
 }
 
-function loginFail(txt: string): void {
+function loginFail(): void {
     loginBtn.disabled = false;
     loginBtn.classList.remove('loading');
     btnSpinner.hidden = true;
     btnLabel.textContent = '登录';
-    loginErr.hidden = false;
-    loginErr.textContent = txt || '登录失败';
 }
 
-function onDisconnect(msg: string): void {
+function onDisconnect(): void {
     active = false;
     relay?.setActive(false);
     renderer?.destroy();
     relay?.releaseAll();
+    passInput.value = ''; /* 注销后清空密码 */
     deskScreen.classList.remove('active');
     loginScreen.classList.add('active');
     loginBtn.disabled = false;
     loginBtn.classList.remove('loading');
     btnSpinner.hidden = true;
     btnLabel.textContent = '登录';
-    if (msg) {
-        loginErr.hidden = false;
-        loginErr.textContent = msg;
-    }
     connectingOverlay.hidden = true;
 }
 
@@ -205,11 +202,8 @@ loginForm.addEventListener('submit', (e) => {
     const user = userInput.value.trim();
     const pass = passInput.value;
     if (!user || !pass) {
-        loginErr.hidden = false;
-        loginErr.textContent = '请输入用户名和密码';
         return;
     }
-    loginErr.hidden = true;
     loginBtn.disabled = true;
     loginBtn.classList.add('loading');
     btnSpinner.hidden = false;
@@ -222,7 +216,7 @@ loginForm.addEventListener('submit', (e) => {
 disconnectBtn.addEventListener('click', (e) => {
     e.preventDefault();
     if (ws) { ws.close(); ws = null; }
-    onDisconnect('已主动断开');
+    onDisconnect();
 });
 
 /* 窗口尺寸变化：防抖后按新视口重建会话分辨率 */

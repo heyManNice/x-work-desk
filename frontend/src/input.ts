@@ -52,6 +52,12 @@ export class InputRelay {
             cv.focus();
         });
 
+        /* 远程桌面内右键时不弹出浏览器上下文菜单 */
+        cv.addEventListener('contextmenu', (e) => {
+            if (!this.active) return;
+            e.preventDefault();
+        });
+
         window.addEventListener('mouseup', (e) => {
             if (!this.active) return;
             const [x, y] = this.scale(e);

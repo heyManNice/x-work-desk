@@ -8,7 +8,6 @@
     --accent: #ea580c;
     --text: #e2e8f0;
     --muted: #94a3b8;
-    --err: #f87171;
 }
 
 html,
@@ -80,17 +79,6 @@ body,
     outline-color: var(--accent);
 }
 
-.login-error {
-    color: var(--err);
-    font-size: 13px;
-    text-align: left;
-    margin: -4px 0 12px;
-    background: rgba(248, 113, 113, 0.1);
-    border: 1px solid rgba(248, 113, 113, 0.25);
-    border-radius: 4px;
-    padding: 8px 12px;
-}
-
 #login-btn {
     width: 100%;
     height: 38px;
@@ -136,7 +124,6 @@ body,
 }
 
 /* ---------- 桌面界面 ---------- */
-/* Linux 风格鼠标光标（X11 默认箭头，热点在左上角） */
 .desk-stage {
     position: absolute;
     inset: 0;
@@ -144,10 +131,9 @@ body,
     align-items: center;
     justify-content: center;
     background: #05070c;
-    cursor: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='24'%20height='24'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M4%201%20L20%2012%20L13%2013%20L8.5%2020%20Z'%20fill='white'%20stroke='black'%20stroke-width='1.5'/%3E%3C/svg%3E") 0 0, default;
 }
 
-/* 左上角调试信息（开发阶段）：简单文字，除断开链接外不拦截桌面鼠标 */
+/* 左上角调试信息（开发阶段）：简单文字，除注销链接外不拦截桌面鼠标 */
 #debug-hud {
     position: absolute;
     top: 8px;
