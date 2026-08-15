@@ -428,8 +428,12 @@ static void exec_keyring_session(const char *inner_cmd, int do_unlock)
     {
         snprintf(wrap, sizeof wrap,
                  "%s"
+                 /* --login 是 pam_gnome_keyring 使用的标准入口：把登录密码
+                  * 交给 keyring 守护进程；随后 --start 完成初始化并自动解锁
+                  * login keyring（等价于正常桌面登录的 PAM 流程） */
+                 "printf '%%s' \"$XWD_KEYRING_PASS\" | gnome-keyring-daemon --login --components=secrets 2>/dev/null; "
+                 "sleep 1; "
                  "eval \"$(gnome-keyring-daemon --start --components=secrets 2>/dev/null)\"; "
-                 "printf '%%s' \"$XWD_KEYRING_PASS\" | gnome-keyring-daemon --unlock 2>/dev/null; "
                  "unset XWD_KEYRING_PASS; exec %s",
                  bus_setup, inner_cmd);
     }
@@ -511,7 +515,6 @@ static void spawn_session_app(runtime *rt, const char *user)
         setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME", 1);
         setenv("XDG_SESSION_TYPE", "x11", 1);
         setenv("XDG_SESSION_CLASS", "user", 1);
-
         /* keyring 解锁策略：shadow 模式密码已验证，可解锁或创建 login keyring；
          * none 模式密码未验证，仅当已存在 login keyring 时才尝试（避免用任意
          * 密码误创建密钥环），且不传密码时保持原行为 */
