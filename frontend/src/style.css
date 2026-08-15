@@ -233,60 +233,7 @@ body,
 }
 
 /* ---------- 桌面界面 ---------- */
-.desk-topbar {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 10;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 16px;
-    background: rgba(15, 23, 42, 0.85);
-    backdrop-filter: blur(10px);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-    font-size: 13px;
-}
-
-.live-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: #34d399;
-    box-shadow: 0 0 8px #34d399;
-    animation: pulse 1.6s ease infinite;
-}
-
-@keyframes pulse {
-    50% {
-        opacity: 0.4;
-    }
-}
-
-.spacer {
-    flex: 1;
-}
-
-.fps {
-    color: var(--muted);
-    font-variant-numeric: tabular-nums;
-}
-
-.ghost-btn {
-    padding: 6px 14px;
-    border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: transparent;
-    color: var(--text);
-    cursor: pointer;
-    font-size: 13px;
-}
-
-.ghost-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-}
-
+/* Linux 风格鼠标光标（X11 默认箭头，热点在左上角） */
 .desk-stage {
     position: absolute;
     inset: 0;
@@ -294,12 +241,42 @@ body,
     align-items: center;
     justify-content: center;
     background: #05070c;
-    cursor: crosshair;
+    cursor: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='24'%20height='24'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M4%201%20L20%2012%20L13%2013%20L8.5%2020%20Z'%20fill='white'%20stroke='black'%20stroke-width='1.5'/%3E%3C/svg%3E") 0 0, default;
+}
+
+/* 左上角调试信息（开发阶段）：简单文字，除断开链接外不拦截桌面鼠标 */
+#debug-hud {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.55);
+    color: rgba(226, 232, 240, 0.9);
+    font-family: "JetBrains Mono", "Fira Code", Consolas, "Courier New", monospace;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+}
+
+#debug-hud a {
+    pointer-events: auto;
+    color: #f87171;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+#debug-hud a:hover {
+    color: #fca5a5;
 }
 
 #screen {
     max-width: calc(100vw - 8px);
-    max-height: calc(100vh - 52px);
+    max-height: calc(100vh - 8px);
     box-shadow: 0 0 40px rgba(0, 0, 0, 0.6);
     background: #000;
 }

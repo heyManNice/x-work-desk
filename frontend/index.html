@@ -28,13 +28,13 @@
                 <form id="login-form" autocomplete="on" novalidate>
                     <div class="field">
                         <label for="username">用户名</label>
-                        <input id="username" type="text" placeholder="输入用户名" autocomplete="username" spellcheck="false"
-                            required />
+                        <input id="username" name="username" type="text" placeholder="输入用户名" autocomplete="username"
+                            spellcheck="false" required />
                     </div>
                     <div class="field">
                         <label for="password">密码</label>
-                        <input id="password" type="password" placeholder="输入密码" autocomplete="current-password"
-                            required />
+                        <input id="password" name="password" type="password" placeholder="输入密码"
+                            autocomplete="current-password" required />
                     </div>
                     <div id="login-error" class="login-error" hidden></div>
                     <button id="login-btn" type="submit">
@@ -48,15 +48,15 @@
 
         <!-- 桌面界面 -->
         <div id="desk-screen" class="screen">
-            <div class="desk-topbar">
-                <span class="live-dot"></span>
-                <span id="status">正在连接…</span>
-                <span class="spacer"></span>
-                <span id="fps" class="fps"></span>
-                <button id="disconnect-btn" class="ghost-btn">断开</button>
-            </div>
             <div class="desk-stage">
                 <canvas id="screen" width="1280" height="720"></canvas>
+                <!-- 左上角调试信息（开发阶段） -->
+                <div id="debug-hud">
+                    <span id="dbg-res"></span>
+                    <span id="dbg-fps"></span>
+                    <span id="dbg-lat"></span>
+                    <a id="disconnect-btn" href="#">断开</a>
+                </div>
                 <div id="connecting-overlay" class="connecting-overlay">
                     <div class="spinner big"></div>
                     <p>正在建立桌面会话…</p>

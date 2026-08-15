@@ -24,11 +24,12 @@ const btnLabel = $('.btn-label');
 const btnSpinner = $('.spinner');
 const loginErr = $('#login-error');
 const connStatus = $('#conn-status');
-const statusEl = $('#status');
-const fpsEl = $('#fps');
 const canvas = $('#screen') as HTMLCanvasElement;
 const disconnectBtn = $('#disconnect-btn');
 const connectingOverlay = $('#connecting-overlay');
+const dbgRes = $('#dbg-res');
+const dbgFps = $('#dbg-fps');
+const dbgLat = $('#dbg-lat');
 
 let ws: WebSocket | null = null;
 let renderer: VideoRenderer | null = null;
@@ -39,6 +40,7 @@ let frameCount = 0;
 let fpsTimer = 0;
 let lastFps = 0;
 let resizeTimer = 0;
+let keyReqTime = 0; /* 关键帧请求时间，用于估算往返延迟 */
 
 /* 前端视口尺寸（扣除顶栏高度，与桌面可视区域 1:1 对应） */
 function viewportSize(): [number, number] {
@@ -58,6 +60,12 @@ function sendResize(): void {
 
 function send(data: Uint8Array): void {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
+}
+
+/* 请求关键帧并记录时间，用于估算往返延迟 */
+function requestKeyframe(): void {
+    keyReqTime = performance.now();
+    send(msgKeyframe());
 }
 
 function setConnStatus(text: string, color?: string): void {
@@ -112,9 +120,13 @@ function handleMessage(b: Uint8Array): void {
         const pps = b.subarray(o, o + pl);
         renderer?.configure({ width: w, height: h, sps, pps });
         relay?.setSize(w, h);
-        send(msgKeyframe());
+        dbgRes.textContent = `${w}x${h}`;
+        requestKeyframe();
     } else if (t === MSG_VIDEO) {
         const flags = b[1];
+        if ((flags & 0x01) !== 0 && keyReqTime) {
+            dbgLat.textContent = `${Math.round(performance.now() - keyReqTime)} ms`;
+        }
         renderer?.feed(b.subarray(2), (flags & 0x01) !== 0);
         frameCount++;
     } else if (t === MSG_CLOSE) {
@@ -126,11 +138,44 @@ function showDesktop(): void {
     active = true;
     loginScreen.classList.remove('active');
     deskScreen.classList.add('active');
-    statusEl.textContent = '正在启动桌面会话…';
     connectingOverlay.hidden = false;
     relay?.setActive(true);
     canvas.focus();
     sendResize(); /* 进入桌面后按当前视口同步分辨率 */
+    triggerPasswordSave(); /* 登录成功后触发浏览器保存密码 */
+}
+
+/* 通过隐藏 iframe 提交带用户名/密码的表单，触发浏览器"保存密码"提示（无页面跳转） */
+function triggerPasswordSave(): void {
+    try {
+        let frame = document.getElementById('pw-save-frame') as HTMLIFrameElement | null;
+        if (!frame) {
+            frame = document.createElement('iframe');
+            frame.id = 'pw-save-frame';
+            frame.name = 'pw-save-frame';
+            frame.style.display = 'none';
+            document.body.appendChild(frame);
+        }
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/';
+        form.target = 'pw-save-frame';
+        const u = document.createElement('input');
+        u.type = 'text';
+        u.name = 'username';
+        u.value = userInput.value.trim();
+        const p = document.createElement('input');
+        p.type = 'password';
+        p.name = 'password';
+        p.value = passInput.value;
+        form.appendChild(u);
+        form.appendChild(p);
+        document.body.appendChild(form);
+        form.submit();
+        form.remove();
+    } catch {
+        /* 忽略：某些环境不提示也不影响使用 */
+    }
 }
 
 function loginFail(txt: string): void {
@@ -180,7 +225,8 @@ loginForm.addEventListener('submit', (e) => {
     connect();
 });
 
-disconnectBtn.addEventListener('click', () => {
+disconnectBtn.addEventListener('click', (e) => {
+    e.preventDefault();
     if (ws) { ws.close(); ws = null; }
     onDisconnect('已主动断开');
 });
@@ -197,20 +243,20 @@ window.addEventListener('resize', () => {
 fpsTimer = window.setInterval(() => {
     lastFps = frameCount;
     frameCount = 0;
-    if (active && lastFps > 0) fpsEl.textContent = `${lastFps} FPS`;
-    else if (active) fpsEl.textContent = '';
+    if (active && lastFps > 0) dbgFps.textContent = `${lastFps} FPS`;
+    else if (active) dbgFps.textContent = '';
 }, 1000);
 
 /* 初始化渲染器与输入 */
 renderer = new VideoRenderer(canvas);
-renderer.onKeyframeRequest = () => send(msgKeyframe());
+renderer.onKeyframeRequest = () => requestKeyframe();
 renderer.onResize = () => {
-    statusEl.textContent = '桌面已连接';
     connectingOverlay.hidden = true;
 };
 renderer.onError = (msg) => {
-    statusEl.textContent = msg;
     connectingOverlay.hidden = false;
+    const p = connectingOverlay.querySelector('p');
+    if (p) p.textContent = msg;
 };
 
 relay = new InputRelay(canvas, send);
