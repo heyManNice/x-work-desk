@@ -100,8 +100,13 @@ sudo ./build/xworkd --www-root ./frontend/dist --port 5268
 ## 目录
 
 ```
-src/        后端 C 源码（meson 管理）
-frontend/   前端 Vite + 原生 TS
+src/                后端 C 源码（meson 管理）
+frontend/           前端 Vite + 原生 TS
+deploy/             systemd 单元、安装脚本、nginx TLS 反代示例
+docs/DEPLOYMENT.md  生产部署指南（权限、用户管理、资源规划、运维）
 third_party/x264   x264 源码（自建）
-test/       冒烟测试脚本（node WebSocket 客户端等）
+test/               冒烟测试脚本（node WebSocket 客户端等）
 ```
+
+生产部署（root + shadow 认证）请先阅读 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)：
+`sudo ./deploy/install.sh` 即可安装为 systemd 服务并开机自启。

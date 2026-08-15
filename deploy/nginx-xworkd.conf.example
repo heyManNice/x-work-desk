@@ -1,0 +1,28 @@
+# XWorkDesk 可选 TLS 反代示例（把 5268 的明文 HTTP/WS 包成 HTTPS/WSS）
+# 用法: 替换 server_name 与证书路径后放入 /etc/nginx/sites-available/ 并启用
+
+server {
+    listen 443 ssl;
+    server_name desktop.example.com;
+
+    ssl_certificate     /etc/ssl/certs/desktop.example.com.pem;
+    ssl_certificate_key /etc/ssl/private/desktop.example.com.key;
+
+    # 静态页面 + 登录页
+    location / {
+        proxy_pass http://127.0.0.1:5268;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # WebSocket（远程桌面数据通道，必须升级）
+    location /ws {
+        proxy_pass http://127.0.0.1:5268;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 3600s;
+    }
+}

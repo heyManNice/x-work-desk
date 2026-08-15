@@ -1,0 +1,26 @@
+[Unit]
+Description=XWorkDesk 多用户远程桌面服务器 (shadow 认证)
+Documentation=file://__XWORKD_HOME__/docs/DEPLOYMENT.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# shadow 认证需要读 /etc/shadow，且要 setuid/setgid 到登录用户，必须 root
+User=root
+Group=root
+ExecStart=__XWORKD_HOME__/build/xworkd --auth shadow --www-root __XWORKD_HOME__/frontend/dist --port __XWORKD_PORT__
+WorkingDirectory=__XWORKD_HOME__
+Restart=on-failure
+RestartSec=3
+# 多用户场景：每个连接 + X 会话都占用 fd，放宽默认上限
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xworkd
+# 会话子进程需要 setuid/setgid 切换到登录用户，保持默认权限模型
+NoNewPrivileges=no
+PrivateTmp=no
+
+[Install]
+WantedBy=multi-user.target
