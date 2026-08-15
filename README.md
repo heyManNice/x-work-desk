@@ -97,6 +97,59 @@ sudo ./build/xworkd --www-root ./frontend/dist --port 5268
 - **认证失败**：`--auth shadow` 必须以 root 运行才能读 `/etc/shadow`。
 - **端口被占**：换 `--port`。
 
+### 应用提示 "The login keyring did not get unlocked"（GNOME Keyring 未解锁）
+
+**现象**：登录桌面后打开 VSCode 等应用，弹窗要求手动输入 keyring 密码；
+即使输入正确密码，下次登录仍会再次弹出。
+
+**原因**（`src/session.c` 会话启动包装脚本）：
+
+1. 早期实现用 `gnome-keyring-daemon --start` + `--unlock` 解锁 keyring。实测
+   这两个子命令在该环境下并不可靠：`--start` 新建守护进程时不输出环境变量，
+   `--unlock` 往往自己再拉一个守护进程，密码送不到持有
+   `org.freedesktop.secrets` 的那个守护进程上。
+2. systemd 用户实例（`user@UID.service`，为 snap 应用提供 cgroup/用户总线）
+   默认启用 `gnome-keyring-daemon.socket`，会抢占 `%t/keyring/control` 路径
+   并再激活一个没有密码的 keyring 守护进程；应用连到的这个守护进程始终是
+   锁定的，所以每次都弹窗。
+3. 曾尝试给 gnome-session 加 `--builtin` 强制走内置会话管理（不向 systemd
+   注册），但 Ubuntu 的 gnome-session 47 没有该选项，会导致桌面直接黑屏。
+
+**方案**：改用与 `pam_gnome_keyring` 相同的标准流程，把登录密码交给 keyring
+守护进程并让其自动解锁 login keyring（等价于正常桌面登录的 PAM 流程）：
+
+```sh
+printf '%s' "$XWD_KEYRING_PASS" | gnome-keyring-daemon --login --components=secrets
+sleep 1
+eval "$(gnome-keyring-daemon --start --components=secrets)"
+```
+
+该方案即使 systemd 的 `gnome-keyring-daemon.socket` 处于 active 状态也有效：
+`--login` 的守护进程会抢到 secrets 服务名字，后续 socket 激活的守护进程无法
+注册同名服务，应用连到的始终是已解锁的守护进程。
+
+**注意**：keyring 密码是用户自己的登录密码（`--auth shadow` 模式）。若某用户
+的 `login.keyring` 曾用其他密码创建，首次仍会弹窗让用户输入一次正确密码，
+之后即自动解锁。
+
+### 重启服务后新登录黑屏（旧会话残留）
+
+**现象**：`sudo pkill xworkd` 后重启服务，新登录显示黑屏；日志出现
+`Session manager already running`。
+
+**原因**：重启服务时旧会话（Xvfb + gnome-session + gnome-shell）不会自动退出，
+它仍占用 systemd 用户总线上的 `org.gnome.SessionManager` 名字；新会话的
+gnome-session 检测到同名实例后立即退出。
+
+**处理**：重启服务前先清理该用户的残留会话进程：
+
+```sh
+sudo pkill -u <uid> gnome-session; sudo pkill -u <uid> gnome-shell
+sudo pkill -f "Xvfb :10"; sudo pkill -u <uid> gnome-keyring-daemon
+```
+
+确认 `org.gnome.SessionManager` 已无持有者后，再让用户重新登录。
+
 ## 目录
 
 ```
