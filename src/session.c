@@ -388,9 +388,10 @@ static void spawn_session_app(runtime *rt, const char *user)
         }
         else if (access("/usr/bin/gnome-shell", X_OK) == 0)
         {
-            /* GNOME Shell 作为 X11 会话：dbus-run-session 提供会话总线 */
+            /* GNOME Shell 作为 X11 会话：dbus-run-session 提供会话总线。
+             * mutter 48+ 默认以 Wayland 原生后端启动，在 Xvfb 上必须显式 --x11 */
             execl("/usr/bin/dbus-run-session", "dbus-run-session", "--",
-                  "/usr/bin/gnome-shell", (char *)NULL);
+                  "/usr/bin/gnome-shell", "--x11", (char *)NULL);
         }
         else if (access("/usr/bin/openbox", X_OK) == 0)
         {

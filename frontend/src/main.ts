@@ -44,9 +44,10 @@ let resizeTimer = 0;
 function viewportSize(): [number, number] {
     const w = Math.floor(window.innerWidth);
     const h = Math.floor(window.innerHeight - 52); // 顶栏约 52px
+    /* H.264 要求宽高均为偶数（16x16 宏块），向下取偶，避免服务端 x264 打开失败 */
     return [
-        Math.max(320, Math.min(4096, w)),
-        Math.max(200, Math.min(4096, h)),
+        Math.max(320, Math.min(4096, w)) & ~1,
+        Math.max(200, Math.min(4096, h)) & ~1,
     ];
 }
 
