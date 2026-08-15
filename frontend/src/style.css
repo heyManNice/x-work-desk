@@ -12,7 +12,7 @@
     --text: #e2e8f0;
     --muted: #94a3b8;
     --err: #f87171;
-    --card: rgba(30, 41, 59, 0.72);
+    --card: rgba(30, 41, 59, 0.9);
 }
 
 html,
@@ -54,29 +54,6 @@ body,
     background-size: 48px 48px;
 }
 
-.blob {
-    position: absolute;
-    border-radius: 50%;
-    filter: blur(90px);
-    opacity: 0.5;
-}
-
-.blob-1 {
-    width: 420px;
-    height: 420px;
-    background: #6366f1;
-    top: -120px;
-    left: -80px;
-}
-
-.blob-2 {
-    width: 380px;
-    height: 380px;
-    background: #22d3ee;
-    bottom: -140px;
-    right: -60px;
-}
-
 .login-card {
     position: relative;
     z-index: 2;
@@ -84,25 +61,10 @@ body,
     margin: 0 auto;
     margin-top: 12vh;
     background: var(--card);
-    backdrop-filter: blur(18px);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 18px;
     padding: 40px 36px 30px;
-    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
     text-align: center;
-    animation: fadeUp 0.5s ease;
-}
-
-@keyframes fadeUp {
-    from {
-        opacity: 0;
-        transform: translateY(14px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
 }
 
 .avatar {
@@ -115,7 +77,6 @@ body,
     align-items: center;
     justify-content: center;
     color: #fff;
-    box-shadow: 0 8px 24px rgba(99, 102, 241, 0.45);
 }
 
 .brand {
@@ -151,12 +112,10 @@ body,
     color: var(--text);
     font-size: 15px;
     outline: none;
-    transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .field input:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
 }
 
 .login-error {
@@ -181,19 +140,10 @@ body,
     font-size: 15px;
     font-weight: 600;
     cursor: pointer;
-    transition: filter 0.15s, transform 0.1s;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-}
-
-#login-btn:hover {
-    filter: brightness(1.1);
-}
-
-#login-btn:active {
-    transform: scale(0.99);
 }
 
 #login-btn:disabled {
@@ -277,7 +227,6 @@ body,
 #screen {
     max-width: calc(100vw - 8px);
     max-height: calc(100vh - 8px);
-    box-shadow: 0 0 40px rgba(0, 0, 0, 0.6);
     background: #000;
 }
 
