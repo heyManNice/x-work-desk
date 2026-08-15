@@ -140,7 +140,6 @@ static int frame_changed(capture_ctx *cap, video_buf *vb)
 void *capture_thread(void *arg)
 {
     runtime *rt = arg;
-    uint64_t interval_ns = 1000000000ull / (uint64_t)(g_cfg.fps > 0 ? g_cfg.fps : 30);
     capture_ctx *cap = &rt->cap;
 
     struct timespec next;
@@ -148,6 +147,8 @@ void *capture_thread(void *arg)
 
     while (atomic_load(&cap->running))
     {
+        /* 帧率可在运行期调整（MSG_SET_FPS），每次循环读取 */
+        uint64_t interval_ns = 1000000000ull / (uint64_t)(atomic_load(&rt->fps) > 0 ? atomic_load(&rt->fps) : 30);
         pthread_mutex_lock(&cap->xlock);
         int ok = XShmGetImage(cap->dpy, cap->root, cap->img, 0, 0, AllPlanes);
         pthread_mutex_unlock(&cap->xlock);

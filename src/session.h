@@ -73,6 +73,7 @@ struct runtime
     char user[64];
     char pass[256]; /* 登录密码：用于解锁会话 GNOME Keyring，teardown 时清零 */
     int req_w, req_h; /* 登录请求的分辨率（接管确认后重建会话用） */
+    int _Atomic fps;  /* 最大抓帧帧率（前端可调） */
 
     video_buf video;
     proc_ctx proc;

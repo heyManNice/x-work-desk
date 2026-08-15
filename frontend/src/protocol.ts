@@ -13,6 +13,7 @@ export const MSG_KEYFRAME = 0x13;
 export const MSG_RESIZE = 0x14;
 export const MSG_TAKEOVER = 0x15;
 export const MSG_TAKEOVER_CANCEL = 0x16;
+export const MSG_SET_FPS = 0x17;
 
 export const VIDEO_FLAG_KEY = 0x01;
 export const MOUSE_FLAG_MOTION = 0x01;
@@ -133,4 +134,8 @@ export function msgTakeover(): Uint8Array {
 
 export function msgTakeoverCancel(): Uint8Array {
     return new Uint8Array([MSG_TAKEOVER_CANCEL]);
+}
+
+export function msgSetFps(fps: number): Uint8Array {
+    return new Uint8Array([MSG_SET_FPS, fps & 0xff]);
 }

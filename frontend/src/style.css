@@ -65,6 +65,103 @@ body,
     color: #fff;
 }
 
+/* ---------- 设置按钮 / 配置面板 ---------- */
+.settings-btn {
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: none;
+    background: #343434;
+    color: #e2e8f0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    transition: background 0.15s ease;
+    z-index: 20;
+}
+
+.settings-btn:hover {
+    background: #404040;
+}
+
+.settings-btn.active {
+    background: #ea580c;
+}
+
+.settings-panel {
+    position: fixed;
+    right: 12px;
+    bottom: 42px;
+    width: 260px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    background: #2a2a2a;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+    z-index: 21;
+}
+
+.settings-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #e2e8f0;
+    margin-bottom: 12px;
+}
+
+.setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+    font-size: 13px;
+    color: #cbd5e1;
+    cursor: pointer;
+}
+
+.setting-row select {
+    background: #3a3a3a;
+    color: #e2e8f0;
+    border: 1px solid #4a4a4a;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 13px;
+}
+
+.setting-row input[type="checkbox"] {
+    width: 34px;
+    height: 18px;
+    appearance: none;
+    border-radius: 9px;
+    background: #555;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.setting-row input[type="checkbox"]::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    transition: left 0.15s ease;
+}
+
+.setting-row input[type="checkbox"]:checked {
+    background: #ea580c;
+}
+
+.setting-row input[type="checkbox"]:checked::after {
+    left: 18px;
+}
+
 .field {
     text-align: left;
     margin-bottom: 16px;

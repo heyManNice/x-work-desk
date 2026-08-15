@@ -168,6 +168,7 @@ void vdi_on_open(conn *c)
     rt->refs = 1; /* 由连接持有 */
     atomic_store(&rt->conn, c);
     atomic_init(&rt->state, S_LOGIN);
+    atomic_init(&rt->fps, g_cfg.fps > 0 ? g_cfg.fps : 30);
     rt->proc.display = -1;
     pthread_mutex_init(&rt->lock, NULL);
     c->vdi = rt;
@@ -502,6 +503,10 @@ void vdi_on_message(conn *c, const uint8_t *data, size_t len)
         break;
     case MSG_TAKEOVER_CANCEL:
         net_close_conn(c); /* 取消接管：断开连接，前端回到登录页 */
+        break;
+    case MSG_SET_FPS:
+        if (len >= 2 && data[1] >= 1 && data[1] <= 120)
+            atomic_store(&rt->fps, data[1]);
         break;
     default:
         break;

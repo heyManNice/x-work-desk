@@ -36,6 +36,29 @@
                 </form>
                 <div id="login-error" class="login-error" hidden></div>
             </div>
+            <!-- 右下角设置按钮 + 配置面板 -->
+            <button id="settings-btn" class="settings-btn" aria-label="设置" title="设置">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                    stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+            </button>
+            <div id="settings-panel" class="settings-panel" hidden>
+                <div class="settings-title">设置</div>
+                <label class="setting-row">
+                    <span>显示调试信息</span>
+                    <input type="checkbox" id="set-debug" />
+                </label>
+                <label class="setting-row">
+                    <span>最大帧率</span>
+                    <select id="set-fps">
+                        <option value="15">15 FPS</option>
+                        <option value="30">30 FPS</option>
+                        <option value="60">60 FPS</option>
+                    </select>
+                </label>
+            </div>
         </div>
 
         <!-- 桌面界面 -->

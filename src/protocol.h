@@ -16,6 +16,7 @@
 #define MSG_RESIZE 0x14   /* w(2) h(2)：前端视口变化，重建会话分辨率 */
 #define MSG_TAKEOVER 0x15        /* 确认注销旧会话并接管 */
 #define MSG_TAKEOVER_CANCEL 0x16 /* 取消接管 */
+#define MSG_SET_FPS 0x17         /* 设置最大帧率：fps(1) */
 
 #define VIDEO_FLAG_KEY 0x01    /* MSG_VIDEO flags: 关键帧 */
 #define MOUSE_FLAG_MOTION 0x01 /* MSG_MOUSE flags */

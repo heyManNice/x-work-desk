@@ -12,6 +12,7 @@ import {
     msgKeyframe,
     msgTakeover,
     msgTakeoverCancel,
+    msgSetFps,
 } from './protocol';
 import { VideoRenderer } from './decoder';
 import { InputRelay } from './input';
@@ -30,6 +31,11 @@ const btnSpinner = $('.spinner');
 const loginError = $('#login-error') as HTMLElement;
 const canvas = $('#screen') as HTMLCanvasElement;
 const disconnectBtn = $('#disconnect-btn');
+const settingsBtn = $('#settings-btn') as HTMLButtonElement;
+const settingsPanel = $('#settings-panel') as HTMLElement;
+const setDebug = $('#set-debug') as HTMLInputElement;
+const setFps = $('#set-fps') as HTMLSelectElement;
+const debugHud = $('#debug-hud') as HTMLElement;
 const connectingOverlay = $('#connecting-overlay');
 const dbgRes = $('#dbg-res');
 const dbgFps = $('#dbg-fps');
@@ -50,6 +56,39 @@ let decSum = 0;    /* 本秒解码耗时累计（ms） */
 let decCount = 0;  /* 本秒解码帧数 */
 let resizeTimer = 0;
 let keyReqTime = 0; /* 关键帧请求时间，用于估算往返延迟 */
+
+/* ---------- 设置偏好（localStorage 持久化） ---------- */
+const PREFS_KEY = 'xwd-prefs';
+
+interface Prefs {
+    debug?: boolean;
+    fps?: number;
+}
+
+function loadPrefs(): Prefs {
+    try {
+        return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') as Prefs;
+    } catch {
+        return {};
+    }
+}
+
+function savePrefs(p: Prefs): void {
+    try {
+        localStorage.setItem(PREFS_KEY, JSON.stringify(p));
+    } catch {
+        /* 忽略 */
+    }
+}
+
+function applyDebugPref(show: boolean): void {
+    debugHud.style.display = show ? '' : 'none';
+}
+
+function applyFpsPref(): void {
+    const fps = parseInt(setFps.value, 10) || 30;
+    if (active) send(msgSetFps(fps));
+}
 
 /* 前端可视区域物理分辨率：innerWidth/Height 是视口 CSS 像素（随窗口大小变化，
  * 已含系统显示缩放），乘 devicePixelRatio 得到设备像素。这样浏览器窗口调整时
@@ -158,6 +197,8 @@ function showDesktop(): void {
     dbgLat.textContent = '0 ms';
     dbgBw.textContent = '0 kbps';
     dbgDec.textContent = '0.0 ms';
+    applyDebugPref(setDebug.checked); /* 应用调试信息显示偏好 */
+    applyFpsPref();                   /* 应用最大帧率设置 */
     relay?.setActive(true);
     canvas.focus();
     sendResize(); /* 进入桌面后按当前视口同步分辨率 */
@@ -236,6 +277,41 @@ function onDisconnect(): void {
 }
 
 /* ---------- 事件绑定 ---------- */
+/* 设置面板：初始化偏好 + 交互 */
+{
+    const prefs = loadPrefs();
+    setDebug.checked = prefs.debug !== false;
+    setFps.value = String(prefs.fps && prefs.fps > 0 ? prefs.fps : 30);
+    applyDebugPref(setDebug.checked);
+}
+
+settingsBtn.addEventListener('click', () => {
+    const open = settingsPanel.hidden;
+    settingsPanel.hidden = !open;
+    settingsBtn.classList.toggle('active', open);
+});
+
+/* 点击面板外部关闭 */
+document.addEventListener('click', (e) => {
+    if (!settingsPanel.hidden &&
+        !settingsPanel.contains(e.target as Node) &&
+        !settingsBtn.contains(e.target as Node)) {
+        settingsPanel.hidden = true;
+        settingsBtn.classList.remove('active');
+    }
+});
+
+setDebug.addEventListener('change', () => {
+    savePrefs({ ...loadPrefs(), debug: setDebug.checked });
+    applyDebugPref(setDebug.checked);
+});
+
+setFps.addEventListener('change', () => {
+    const fps = parseInt(setFps.value, 10) || 30;
+    savePrefs({ ...loadPrefs(), fps });
+    applyFpsPref();
+});
+
 loginForm.addEventListener('submit', (e) => {
     e.preventDefault();
     loginError.hidden = true;
