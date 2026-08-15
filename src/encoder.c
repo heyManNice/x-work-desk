@@ -20,7 +20,10 @@ int init_encoder(encoder_ctx *enc, video_buf *vb, int fps)
     p.i_keyint_max = 120;
     p.i_bframe = 0;
     p.b_repeat_headers = 1; /* 每个关键帧前带 SPS/PPS */
-    p.i_threads = 1;
+    /* 大分辨率下单线程编码是瓶颈（2550x1284 约 20fps 上限）。
+     * 使用片级多线程：一帧切多片并行编码，保持低延迟的同时利用多核。 */
+    p.i_threads = 4;
+    p.b_sliced_threads = 1;
     p.rc.i_lookahead = 0;
     p.i_log_level = X264_LOG_ERROR;
     x264_param_apply_profile(&p, "baseline");
