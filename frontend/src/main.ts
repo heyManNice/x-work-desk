@@ -14,6 +14,7 @@ import {
     msgTakeoverCancel,
     msgSetFps,
     msgSetCodec,
+    msgSetAnimations,
 } from './protocol';
 import { VideoRenderer } from './decoder';
 import { InputRelay } from './input';
@@ -36,6 +37,7 @@ const settingsBtn = $('#settings-btn') as HTMLButtonElement;
 const settingsPanel = $('#settings-panel') as HTMLElement;
 const setDebug = $('#set-debug') as HTMLInputElement;
 const setStatic = $('#set-static') as HTMLInputElement;
+const setAnim = $('#set-anim') as HTMLInputElement;
 const setBitrate = $('#set-bitrate') as HTMLSelectElement;
 const setQuality = $('#set-quality') as HTMLSelectElement;
 const rowQuality = $('#row-quality') as HTMLElement;
@@ -70,6 +72,7 @@ const PREFS_KEY = 'xwd-prefs';
 interface Prefs {
     debug?: boolean;
     static?: boolean;
+    anim?: boolean;
     bitrate?: number;
     quality?: number;
     fps?: number;
@@ -112,6 +115,10 @@ function applyCodecPref(): void {
     const q = parseInt(setQuality.value, 10);
     const crf = Number.isFinite(q) ? q : 23; /* 注意 0（无损）是合法值，不能用 || 兜底 */
     if (active) send(msgSetCodec(staticSkip, kbps, crf));
+}
+
+function applyAnimPref(): void {
+    if (active) send(msgSetAnimations(setAnim.checked));
 }
 
 /* 固定分辨率（设置面板选择）；返回 null 表示自动跟随视口 */
@@ -256,6 +263,7 @@ function showDesktop(): void {
     applyDebugPref(setDebug.checked); /* 应用调试信息显示偏好 */
     applyFpsPref();                   /* 应用最大帧率设置 */
     applyCodecPref();                 /* 应用静态帧/码率/质量设置 */
+    applyAnimPref();                  /* 应用桌面动画设置 */
     relay?.setActive(true);
     canvas.focus();
     sendResize(); /* 进入桌面后按当前视口同步分辨率 */
@@ -339,6 +347,7 @@ function onDisconnect(): void {
     const prefs = loadPrefs();
     setDebug.checked = prefs.debug !== false;
     setStatic.checked = prefs.static !== false;
+    setAnim.checked = prefs.anim !== false; /* 默认禁用动画（性能优先） */
     setBitrate.value = String(prefs.bitrate ?? 0);
     setQuality.value = String(prefs.quality ?? 23);
     setFps.value = String(prefs.fps && prefs.fps > 0 ? prefs.fps : 30);
@@ -373,6 +382,12 @@ setStatic.addEventListener('change', () => {
     savePrefs({ ...loadPrefs(), static: setStatic.checked });
     applyCodecPref();
 });
+
+setAnim.addEventListener('change', () => {
+    savePrefs({ ...loadPrefs(), anim: setAnim.checked });
+    applyAnimPref();
+});
+
 
 setBitrate.addEventListener('change', () => {
     savePrefs({ ...loadPrefs(), bitrate: parseInt(setBitrate.value, 10) || 0 });

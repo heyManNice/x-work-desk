@@ -51,6 +51,8 @@ static int session_bring_up(runtime *rt, const char *user, int w, int h);
 static int runtime_restart(runtime *rt, int w, int h);
 static int kill_session_procs_by_display(const char *user, const char *display_str, int use_kill);
 static int session_gone(runtime *rt);
+static void set_user_gsettings(const char *user, const char *schema,
+                               const char *key, const char *value);
 
 static void runtime_ref(runtime *rt) { __sync_add_and_fetch(&rt->refs, 1); }
 
@@ -525,6 +527,11 @@ void vdi_on_message(conn *c, const uint8_t *data, size_t len)
             atomic_store(&rt->crf, crf);
         }
         break;
+    case MSG_SET_ANIMATIONS:
+        if (len >= 2 && rt->user[0])
+            set_user_gsettings(rt->user, "org.gnome.desktop.interface",
+                               "enable-animations", data[1] ? "true" : "false");
+        break;
     default:
         break;
     }
@@ -575,6 +582,38 @@ static int user_bus_ok(uid_t uid)
     int ok = connect(fd, (struct sockaddr *)&sa, sizeof sa) == 0;
     close(fd);
     return ok;
+}
+
+/* 以目标用户身份执行 gsettings（控制 GNOME 动画等运行期设置） */
+static void set_user_gsettings(const char *user, const char *schema,
+                               const char *key, const char *value)
+{
+    struct passwd *pw = getpwnam(user);
+    if (!pw)
+        return;
+    pid_t pid = fork();
+    if (pid == 0)
+    {
+        if (getuid() == 0)
+        {
+            initgroups(pw->pw_name, pw->pw_gid);
+            setgid(pw->pw_gid);
+            setuid(pw->pw_uid);
+        }
+        setenv("HOME", pw->pw_dir, 1);
+        setenv("USER", pw->pw_name, 1);
+        setenv("LOGNAME", pw->pw_name, 1);
+        char rt[64];
+        snprintf(rt, sizeof rt, "/run/user/%u", pw->pw_uid);
+        setenv("XDG_RUNTIME_DIR", rt, 1);
+        char bus[96];
+        snprintf(bus, sizeof bus, "unix:path=/run/user/%u/bus", pw->pw_uid);
+        setenv("DBUS_SESSION_BUS_ADDRESS", bus, 1);
+        execlp("gsettings", "gsettings", "set", schema, key, value, (char *)NULL);
+        _exit(127);
+    }
+    if (pid > 0)
+        waitpid(pid, NULL, 0);
 }
 
 static int run_cmd_wait(char *const argv[])

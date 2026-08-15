@@ -18,6 +18,7 @@
 #define MSG_TAKEOVER_CANCEL 0x16 /* 取消接管 */
 #define MSG_SET_FPS 0x17         /* 设置最大帧率：fps(1) */
 #define MSG_SET_CODEC 0x18       /* 编码设置：staticSkip(1) bitrateKbps(2) crf(1) */
+#define MSG_SET_ANIMATIONS 0x19  /* 桌面动画开关：enable(1) */
 
 #define VIDEO_FLAG_KEY 0x01    /* MSG_VIDEO flags: 关键帧 */
 #define MOUSE_FLAG_MOTION 0x01 /* MSG_MOUSE flags */

@@ -15,6 +15,7 @@ export const MSG_TAKEOVER = 0x15;
 export const MSG_TAKEOVER_CANCEL = 0x16;
 export const MSG_SET_FPS = 0x17;
 export const MSG_SET_CODEC = 0x18;
+export const MSG_SET_ANIMATIONS = 0x19;
 
 export const VIDEO_FLAG_KEY = 0x01;
 export const MOUSE_FLAG_MOTION = 0x01;
@@ -149,4 +150,8 @@ export function msgSetCodec(staticSkip: boolean, bitrateKbps: number, crf: numbe
         (bitrateKbps >> 8) & 0xff,
         crf & 0xff,
     ]);
+}
+
+export function msgSetAnimations(enable: boolean): Uint8Array {
+    return new Uint8Array([MSG_SET_ANIMATIONS, enable ? 1 : 0]);
 }
