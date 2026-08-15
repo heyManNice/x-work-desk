@@ -25,6 +25,7 @@ typedef struct msg_queue
 
 void msgq_init(msg_queue *q, size_t max_bytes);
 void msgq_destroy(msg_queue *q);
+void msgq_set_budget(msg_queue *q, size_t max_bytes); /* 运行期调整预算 */
 /* 推入消息；超过预算时丢弃最旧的 droppable 消息。返回 1。 */
 int msgq_push(msg_queue *q, const uint8_t *data, size_t len, int droppable);
 /* 推入消息并接管 data 的所有权（零拷贝热路径）。返回 1；失败时调用者仍拥有 data。 */

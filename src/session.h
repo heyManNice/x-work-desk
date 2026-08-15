@@ -21,6 +21,7 @@ typedef struct proc_ctx
     int display; /* -1 表示尚未分配 */
     char display_str[16];
     char authfile[512];
+    char user[64]; /* 会话进程的运行用户（清理时按 uid+DISPLAY 匹配） */
     pid_t xvfb_pid;
     pid_t *children;
     int nchildren;

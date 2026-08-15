@@ -25,6 +25,26 @@ void msgq_destroy(msg_queue *q)
     pthread_mutex_destroy(&q->lock);
 }
 
+void msgq_set_budget(msg_queue *q, size_t max_bytes)
+{
+    pthread_mutex_lock(&q->lock);
+    q->max_bytes = max_bytes;
+    /* 收缩预算时立即丢弃超出的可丢帧 */
+    while (q->bytes > q->max_bytes && q->head && q->head->droppable)
+    {
+        msg_node *n = q->head;
+        q->head = n->next;
+        if (!q->head)
+            q->tail = NULL;
+        q->bytes -= n->len;
+        q->count--;
+        q->dropped++;
+        free(n->data);
+        free(n);
+    }
+    pthread_mutex_unlock(&q->lock);
+}
+
 int msgq_push_take(msg_queue *q, uint8_t *data, size_t len, int droppable)
 {
     pthread_mutex_lock(&q->lock);

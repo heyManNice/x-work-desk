@@ -20,6 +20,7 @@
 #include <sys/shm.h>
 #include <pwd.h>
 #include <grp.h>
+#include <dirent.h>
 #include <stdio.h>
 #include <errno.h>
 
@@ -28,6 +29,7 @@ static pthread_mutex_t g_xenv_lock = PTHREAD_MUTEX_INITIALIZER;
 static void cleanup_rt_dir(runtime *rt);
 static int session_bring_up(runtime *rt, const char *user, int w, int h);
 static int runtime_restart(runtime *rt, int w, int h);
+static int kill_session_procs_by_display(const char *user, const char *display_str, int use_kill);
 
 static void runtime_ref(runtime *rt) { __sync_add_and_fetch(&rt->refs, 1); }
 
@@ -73,6 +75,10 @@ static void runtime_teardown(runtime *rt)
         kill(-rt->proc.xvfb_pid, SIGTERM);
         kill(rt->proc.xvfb_pid, SIGTERM);
     }
+    /* systemd 用户实例接管了 gnome-session/gnome-shell 等（不在我们的进程组），
+     * 按「DISPLAY=:N + 用户」扫描 /proc 兜底清理，避免旧会话残留占用总线 */
+    if (rt->proc.user[0])
+        kill_session_procs_by_display(rt->proc.user, rt->proc.display_str, 0);
     for (int i = 0; i < rt->proc.nchildren; i++)
         if (rt->proc.children[i] > 0)
         {
@@ -84,6 +90,8 @@ static void runtime_teardown(runtime *rt)
     {
         int any = 0;
         int st;
+        if (rt->proc.user[0])
+            any |= kill_session_procs_by_display(rt->proc.user, rt->proc.display_str, 1);
         if (rt->proc.xvfb_pid > 0)
         {
             if (waitpid(rt->proc.xvfb_pid, &st, WNOHANG) == rt->proc.xvfb_pid)
@@ -264,6 +272,77 @@ static void *login_worker(void *arg)
 }
 
 /* ---------------- 消息分发 ---------------- */
+/* 在 rt->lock 保护下读取状态（state 是 _Atomic，但登录流程需要与
+ * S_AUTHING 的写入互斥，统一走锁避免竞态） */
+static int rt_state_is(runtime *rt, enum session_state want)
+{
+    int yes;
+    pthread_mutex_lock(&rt->lock);
+    yes = (rt->state == want);
+    pthread_mutex_unlock(&rt->lock);
+    return yes;
+}
+
+static void handle_login_msg(conn *c, runtime *rt, const uint8_t *data, size_t len)
+{
+    /* 格式: [type][userLen(2)][user][passLen(2)][pass][w(2)][h(2)] */
+    if (len < 5)
+        return;
+    size_t ul = rd_u16(data + 1);
+    if (len < 5 + ul + 2) /* passLen 字段越界则丢弃 */
+        return;
+    size_t pl = rd_u16(data + 3 + ul);
+    if (len < 9 + ul + pl)
+        return;
+    if (ul >= 64 || pl >= 256)
+        return;
+
+    if (!rt_state_is(rt, S_LOGIN))
+        return;
+    pthread_mutex_lock(&rt->lock);
+    rt->state = S_AUTHING;
+    pthread_mutex_unlock(&rt->lock);
+
+    login_job *j = calloc(1, sizeof *j);
+    if (!j)
+        return;
+    j->rt = rt;
+    memcpy(j->user, data + 3, ul);
+    j->user[ul] = 0;
+    memcpy(j->pass, data + 5 + ul, pl);
+    j->pass[pl] = 0;
+    size_t o = 5 + ul + pl;
+    j->width = rd_u16(data + o);
+    j->height = rd_u16(data + o + 2);
+    snprintf(rt->user, sizeof rt->user, "%s", j->user);
+    runtime_ref(rt);
+    pthread_t th;
+    pthread_create(&th, NULL, login_worker, j);
+    pthread_detach(th);
+}
+
+static void handle_resize_msg(runtime *rt, const uint8_t *data, size_t len)
+{
+    if (len < 5)
+        return;
+    int w = rd_u16(data + 1);
+    int h = rd_u16(data + 3);
+    if (rt_state_is(rt, S_RUNNING))
+        runtime_restart(rt, w, h);
+}
+
+static void handle_input_msg(runtime *rt, uint8_t t, const uint8_t *data, size_t len)
+{
+    if (!rt_state_is(rt, S_RUNNING))
+        return;
+    if (t == MSG_MOUSE)
+        input_handle_mouse(rt, data, len);
+    else if (t == MSG_KEY)
+        input_handle_key(rt, data, len);
+    else
+        atomic_store(&rt->cap.req_keyframe, 1);
+}
+
 void vdi_on_message(conn *c, const uint8_t *data, size_t len)
 {
     runtime *rt = c->vdi;
@@ -271,73 +350,21 @@ void vdi_on_message(conn *c, const uint8_t *data, size_t len)
         return;
     uint8_t t = data[0];
 
-    if (t == MSG_LOGIN)
+    switch (t)
     {
-        /* 格式: [type][userLen(2)][user][passLen(2)][pass][w(2)][h(2)] */
-        if (len < 5)
-            return;
-        size_t ul = rd_u16(data + 1);
-        if (len < 5 + ul + 2) /* passLen 字段越界则丢弃 */
-            return;
-        size_t pl = rd_u16(data + 3 + ul);
-        if (len < 9 + ul + pl)
-            return;
-        if (ul >= 64 || pl >= 256)
-            return;
-
-        pthread_mutex_lock(&rt->lock);
-        if (rt->state != S_LOGIN)
-        {
-            pthread_mutex_unlock(&rt->lock);
-            return;
-        }
-        rt->state = S_AUTHING;
-        pthread_mutex_unlock(&rt->lock);
-
-        login_job *j = calloc(1, sizeof *j);
-        j->rt = rt;
-        memcpy(j->user, data + 3, ul);
-        j->user[ul] = 0;
-        memcpy(j->pass, data + 5 + ul, pl);
-        j->pass[pl] = 0;
-        size_t o = 5 + ul + pl;
-        j->width = rd_u16(data + o);
-        j->height = rd_u16(data + o + 2);
-        snprintf(rt->user, sizeof rt->user, "%s", j->user);
-        runtime_ref(rt);
-        pthread_t th;
-        pthread_create(&th, NULL, login_worker, j);
-        pthread_detach(th);
-        return;
-    }
-
-    if (t == MSG_RESIZE)
-    {
-        if (len < 5)
-            return;
-        int w = rd_u16(data + 1);
-        int h = rd_u16(data + 3);
-        pthread_mutex_lock(&rt->lock);
-        int running = (rt->state == S_RUNNING);
-        pthread_mutex_unlock(&rt->lock);
-        if (running)
-            runtime_restart(rt, w, h);
-        return;
-    }
-
-    if (t == MSG_MOUSE || t == MSG_KEY || t == MSG_KEYFRAME)
-    {
-        pthread_mutex_lock(&rt->lock);
-        int running = (rt->state == S_RUNNING);
-        pthread_mutex_unlock(&rt->lock);
-        if (!running)
-            return;
-        if (t == MSG_MOUSE)
-            input_handle_mouse(rt, data, len);
-        else if (t == MSG_KEY)
-            input_handle_key(rt, data, len);
-        else
-            atomic_store(&rt->cap.req_keyframe, 1);
+    case MSG_LOGIN:
+        handle_login_msg(c, rt, data, len);
+        break;
+    case MSG_RESIZE:
+        handle_resize_msg(rt, data, len);
+        break;
+    case MSG_MOUSE:
+    case MSG_KEY:
+    case MSG_KEYFRAME:
+        handle_input_msg(rt, t, data, len);
+        break;
+    default:
+        break;
     }
 }
 
@@ -411,6 +438,91 @@ static pid_t run_cmd_bg(char *const argv[])
     return pid;
 }
 
+/* 按「进程环境里的 DISPLAY=:N + 用户 UID」清理会话进程。
+ * gnome-session 被 systemd 用户实例接管后不在我们的进程组里，
+ * 只能靠 DISPLAY 特征兜底；keyring 守护进程无 DISPLAY，单独用 pid 文件。
+ * use_kill=0 时用 SIGTERM，=1 时用 SIGKILL（等待阶段升级）。 */
+/* 返回 1 表示仍存在匹配的会话进程（等待循环据此继续） */
+static int kill_session_procs_by_display(const char *user, const char *display_str, int use_kill)
+{
+    struct passwd *pw = getpwnam(user);
+    if (!pw)
+        return 0;
+    uid_t uid = pw->pw_uid;
+    char want[32];
+    snprintf(want, sizeof want, "DISPLAY=%s", display_str);
+
+    DIR *dir = opendir("/proc");
+    if (!dir)
+        return 0;
+    int any = 0;
+    struct dirent *de;
+    while ((de = readdir(dir)))
+    {
+        if (de->d_name[0] < '0' || de->d_name[0] > '9')
+            continue;
+        pid_t pid = (pid_t)atoi(de->d_name);
+        if (pid <= 1)
+            continue;
+
+        char statusp[64];
+        snprintf(statusp, sizeof statusp, "/proc/%d/status", pid);
+        FILE *fs = fopen(statusp, "rb");
+        if (!fs)
+            continue;
+        uid_t p_uid = (uid_t)-1;
+        char line[256];
+        while (fgets(line, sizeof line, fs))
+        {
+            if (!strncmp(line, "Uid:", 4))
+            {
+                unsigned long u0 = 0;
+                sscanf(line + 4, "%lu", &u0);
+                p_uid = (uid_t)u0;
+                break;
+            }
+        }
+        fclose(fs);
+        if (p_uid != uid)
+            continue;
+
+        char envp[64];
+        snprintf(envp, sizeof envp, "/proc/%d/environ", pid);
+        FILE *fe = fopen(envp, "rb");
+        if (!fe)
+            continue;
+        int match = 0;
+        char ebuf[4096];
+        size_t elen = fread(ebuf, 1, sizeof ebuf - 1, fe);
+        fclose(fe);
+        ebuf[elen] = 0;
+        size_t pos = 0;
+        while (pos < elen)
+        {
+            const char *var = ebuf + pos;
+            size_t vlen = strnlen(var, elen - pos);
+            if (vlen > 0)
+            {
+                if (!strncmp(var, want, strlen(want)))
+                {
+                    match = 1;
+                    break;
+                }
+            }
+            pos += vlen + 1;
+            if (vlen == 0)
+                break;
+        }
+        if (match)
+        {
+            kill(pid, use_kill ? SIGKILL : SIGTERM);
+            any = 1;
+        }
+    }
+    closedir(dir);
+    return any;
+}
+
 /* 在 dbus 会话总线内先解锁 GNOME Keyring，再 exec 目标会话命令。
  * 默认桌面由 dbus-run-session 提供会话总线，keyring 守护进程必须在该总线
  * 上下文中启动并接收登录密码，否则应用会提示 "The login keyring did not
@@ -431,7 +543,7 @@ static void exec_keyring_session(const char *inner_cmd, int do_unlock)
                  /* --login 是 pam_gnome_keyring 使用的标准入口：把登录密码
                   * 交给 keyring 守护进程；随后 --start 完成初始化并自动解锁
                   * login keyring（等价于正常桌面登录的 PAM 流程） */
-                 "printf '%%s' \"$XWD_KEYRING_PASS\" | gnome-keyring-daemon --login --components=secrets 2>/dev/null; "
+                 "printf '%%s' \"$XWD_KEYRING_PASS\" | gnome-keyring-daemon --login --components=secrets 2>/dev/null & "
                  "sleep 1; "
                  "eval \"$(gnome-keyring-daemon --start --components=secrets 2>/dev/null)\"; "
                  "unset XWD_KEYRING_PASS; exec %s",
@@ -483,6 +595,7 @@ static void spawn_session_app(runtime *rt, const char *user)
         }
     }
     chmod(rt_dir, 0700);
+    snprintf(rt->proc.user, sizeof rt->proc.user, "%s", run_name);
 
     pid_t pid = fork();
     if (pid < 0)
@@ -578,6 +691,19 @@ static int session_bring_up(runtime *rt, const char *user, int w, int h)
 {
     rt->video.width = (w > 0 && w <= 8192) ? w : g_cfg.width;
     rt->video.height = (h > 0 && h <= 8192) ? h : g_cfg.height;
+
+    /* 出站队列预算按分辨率/帧率估算：低码率场景小内存，高清场景够缓冲。
+     * 经验估算 ~40KB/百万像素/帧 × 2 帧缓冲，1MB~16MB 区间。 */
+    if (rt->conn)
+    {
+        uint64_t px = (uint64_t)rt->video.width * (uint64_t)rt->video.height;
+        uint64_t budget = px * 2 * 40 + 512 * 1024;
+        if (budget < 1024 * 1024)
+            budget = 1024 * 1024;
+        if (budget > 16 * 1024 * 1024)
+            budget = 16 * 1024 * 1024;
+        msgq_set_budget(&rt->conn->outq, (size_t)budget);
+    }
 
     if (rt->proc.display < 0)
     {
