@@ -77,6 +77,9 @@ int init_encoder(encoder_ctx *enc, video_buf *vb, int fps)
 
 void encode_frame(runtime *rt)
 {
+    /* 无人连接（断开连接后桌面后台保留）时不编码，节省 CPU */
+    if (!atomic_load(&rt->conn))
+        return;
     encoder_ctx *enc = &rt->enc;
     video_buf *vb = &rt->video;
     x264_picture_t pic, pic_out;
@@ -121,8 +124,9 @@ void encode_frame(runtime *rt)
         memcpy(p, nals[i].p_payload, nals[i].i_payload);
         p += nals[i].i_payload;
     }
-    if (rt->conn)
-        net_push_take(rt->conn, buf, (size_t)(p - buf), 1);
+    conn *c = atomic_load(&rt->conn);
+    if (c)
+        net_push_take(c, buf, (size_t)(p - buf), 1);
     else
         free(buf);
 }

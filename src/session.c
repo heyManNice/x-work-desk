@@ -16,6 +16,8 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <pwd.h>
@@ -26,10 +28,29 @@
 
 static pthread_mutex_t g_xenv_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* ---------------- 会话表：按用户名管理桌面会话 ----------------
+ * 会话（runtime）与 WebSocket 连接解耦：
+ *   - 登录成功建立会话后注册到表，即使连接断开也保留（桌面后台运行）；
+ *   - 新连接登录同一账户时：有人连接→询问是否注销接管；无人连接→直接接管；
+ *   - 会话只在用户系统内注销（gnome-session 退出）或 Xvfb 崩溃时结束。 */
+#define MAX_SESSIONS 64
+typedef struct
+{
+    char user[64];
+    runtime *rt;
+} session_entry;
+static session_entry g_sessions[MAX_SESSIONS];
+static pthread_mutex_t g_sess_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static runtime *session_lookup(const char *user);
+static void session_register(runtime *rt, const char *user);
+static void session_unregister(runtime *rt);
+
 static void cleanup_rt_dir(runtime *rt);
 static int session_bring_up(runtime *rt, const char *user, int w, int h);
 static int runtime_restart(runtime *rt, int w, int h);
 static int kill_session_procs_by_display(const char *user, const char *display_str, int use_kill);
+static int session_gone(runtime *rt);
 
 static void runtime_ref(runtime *rt) { __sync_add_and_fetch(&rt->refs, 1); }
 
@@ -145,7 +166,7 @@ void vdi_on_open(conn *c)
 {
     runtime *rt = calloc(1, sizeof *rt);
     rt->refs = 1; /* 由连接持有 */
-    rt->conn = c;
+    atomic_store(&rt->conn, c);
     atomic_init(&rt->state, S_LOGIN);
     rt->proc.display = -1;
     pthread_mutex_init(&rt->lock, NULL);
@@ -159,7 +180,18 @@ void vdi_on_close(conn *c)
     if (!rt)
         return;
     pthread_mutex_lock(&rt->lock);
-    rt->state = S_CLOSED;
+    if (rt->state == S_RUNNING)
+    {
+        /* 桌面会话与连接解耦：断开连接只解绑，会话继续在后台运行。
+         * 若 conn 已被接管顶掉（rt->conn 指向别的连接），无需处理。 */
+        if (atomic_load(&rt->conn) == c)
+            atomic_store(&rt->conn, NULL);
+    }
+    else if (rt->state == S_LOGIN || rt->state == S_AUTHING || rt->state == S_CONFIRM)
+    {
+        /* 会话尚未建立：连接关闭即销毁 */
+        rt->state = S_CLOSED;
+    }
     pthread_mutex_unlock(&rt->lock);
     runtime_unref(rt);
 }
@@ -207,11 +239,30 @@ typedef struct login_job
     int height;
 } login_job;
 
+static void push_session_exists(conn *c, const char *user)
+{
+    size_t ul = strlen(user);
+    uint8_t *buf = malloc(1 + ul);
+    buf[0] = MSG_SESSION_EXISTS;
+    memcpy(buf + 1, user, ul);
+    net_push(c, buf, 1 + ul, 0);
+}
+
+/* 把空闲会话（无连接）绑定到新连接上，推送配置并请求关键帧 */
+static void takeover_session(runtime *sess, conn *c)
+{
+    runtime_ref(sess); /* 新连接持有会话引用 */
+    atomic_store(&sess->conn, c);
+    c->vdi = sess;
+    push_config(c, sess);
+    atomic_store(&sess->cap.req_keyframe, 1);
+}
+
 static void *login_worker(void *arg)
 {
     login_job *j = arg;
     runtime *rt = j->rt;
-    conn *c = rt->conn;
+    conn *c = atomic_load(&rt->conn);
     conn_ref(c);
 
     if (auth_check(j->user, j->pass) != 0)
@@ -230,8 +281,52 @@ static void *login_worker(void *arg)
 
     /* 会话密钥环解锁需要登录密码（resize 重建会话时还会再用） */
     memcpy(rt->pass, j->pass, sizeof rt->pass);
-    int ok = session_bring_up(rt, j->user, j->width, j->height);
     memset(j->pass, 0, sizeof j->pass); /* 密码不再需要 */
+
+    runtime *sess = session_lookup(j->user);
+    if (sess && session_gone(sess))
+    {
+        /* 旧会话的桌面已退出（如刚在系统内注销）：不等每秒的 sweep，
+         * 立即清理，避免新登录撞上"假活跃"会话 */
+        conn *old = atomic_exchange(&sess->conn, NULL);
+        pthread_mutex_lock(&sess->lock);
+        sess->state = S_CLOSED;
+        pthread_mutex_unlock(&sess->lock);
+        if (old)
+            net_close_conn(old);
+        session_unregister(sess);
+        sess = NULL;
+        log_info("清理已结束的旧会话: %s", j->user);
+    }
+    if (sess && atomic_load(&sess->conn) != NULL)
+    {
+        /* 该账户已有活跃会话且正被使用：询问是否注销接管 */
+        rt->req_w = j->width;
+        rt->req_h = j->height;
+        snprintf(rt->user, sizeof rt->user, "%s", j->user);
+        pthread_mutex_lock(&rt->lock);
+        rt->state = S_CONFIRM;
+        pthread_mutex_unlock(&rt->lock);
+        push_session_exists(c, j->user);
+        log_info("账户 %s 已有活跃会话，等待接管确认", j->user);
+        conn_unref(c);
+        runtime_unref(rt);
+        free(j);
+        return NULL;
+    }
+    if (sess)
+    {
+        /* 桌面空闲（无连接）：直接接管，不打扰 */
+        push_login_result(c, 1, "ok");
+        takeover_session(sess, c);
+        log_info("接管空闲会话: %s", j->user);
+        conn_unref(c);
+        runtime_unref(rt);
+        free(j);
+        return NULL;
+    }
+
+    int ok = session_bring_up(rt, j->user, j->width, j->height);
     pthread_mutex_lock(&rt->lock);
     int closed = (rt->state == S_CLOSED);
     if (ok != 0 && !closed)
@@ -259,6 +354,7 @@ static void *login_worker(void *arg)
     }
 
     push_login_result(c, 1, "ok");
+    session_register(rt, j->user);
     /* 与 runtime_restart 互斥，避免读取到被替换的 SPS/PPS */
     pthread_mutex_lock(&rt->lock);
     push_config(c, rt);
@@ -343,6 +439,44 @@ static void handle_input_msg(runtime *rt, uint8_t t, const uint8_t *data, size_t
         atomic_store(&rt->cap.req_keyframe, 1);
 }
 
+/* 确认接管：注销并清理旧会话资源，用当前连接新建会话 */
+static void handle_takeover_msg(conn *c, runtime *rt)
+{
+    if (!rt_state_is(rt, S_CONFIRM))
+        return;
+    runtime *sess = session_lookup(rt->user);
+    if (sess)
+    {
+        conn *old = atomic_exchange(&sess->conn, NULL);
+        pthread_mutex_lock(&sess->lock);
+        sess->state = S_CLOSED;
+        pthread_mutex_unlock(&sess->lock);
+        if (old)
+            net_close_conn(old); /* 旧连接前端回到登录页 */
+        session_unregister(sess); /* 释放表引用，最终销毁并清理资源 */
+    }
+
+    int w = rt->req_w > 0 ? rt->req_w : g_cfg.width;
+    int h = rt->req_h > 0 ? rt->req_h : g_cfg.height;
+    int ok = session_bring_up(rt, rt->user, w, h);
+    pthread_mutex_lock(&rt->lock);
+    if (ok != 0)
+        rt->state = S_LOGIN; /* 启动失败，允许重试 */
+    else
+        rt->state = S_RUNNING;
+    pthread_mutex_unlock(&rt->lock);
+    if (ok != 0)
+    {
+        push_login_result(c, 0, "无法启动桌面会话");
+        return;
+    }
+    session_register(rt, rt->user);
+    push_login_result(c, 1, "ok");
+    push_config(c, rt);
+    atomic_store(&rt->cap.req_keyframe, 1);
+    log_info("接管并重建会话: %s -> %s", rt->user, rt->proc.display_str);
+}
+
 void vdi_on_message(conn *c, const uint8_t *data, size_t len)
 {
     runtime *rt = c->vdi;
@@ -362,6 +496,12 @@ void vdi_on_message(conn *c, const uint8_t *data, size_t len)
     case MSG_KEY:
     case MSG_KEYFRAME:
         handle_input_msg(rt, t, data, len);
+        break;
+    case MSG_TAKEOVER:
+        handle_takeover_msg(c, rt);
+        break;
+    case MSG_TAKEOVER_CANCEL:
+        net_close_conn(c); /* 取消接管：断开连接，前端回到登录页 */
         break;
     default:
         break;
@@ -396,6 +536,23 @@ static int gen_cookie_hex(char *out, size_t outsz)
     fclose(f);
     hex_encode(bytes, 16, out, outsz);
     return 0;
+}
+
+/* 检查用户 systemd 实例的会话总线是否可连接（/run/user/<uid>/bus） */
+static int user_bus_ok(uid_t uid)
+{
+    char path[96];
+    snprintf(path, sizeof path, "/run/user/%u/bus", uid);
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0)
+        return 0;
+    struct sockaddr_un sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sun_family = AF_UNIX;
+    strncpy(sa.sun_path, path, sizeof sa.sun_path - 1);
+    int ok = connect(fd, (struct sockaddr *)&sa, sizeof sa) == 0;
+    close(fd);
+    return ok;
 }
 
 static int run_cmd_wait(char *const argv[])
@@ -523,19 +680,140 @@ static int kill_session_procs_by_display(const char *user, const char *display_s
     return any;
 }
 
+/* ---------------- 会话表 ---------------- */
+static runtime *session_lookup(const char *user)
+{
+    runtime *rt = NULL;
+    pthread_mutex_lock(&g_sess_lock);
+    for (int i = 0; i < MAX_SESSIONS; i++)
+        if (g_sessions[i].rt && !strcmp(g_sessions[i].user, user))
+        {
+            rt = g_sessions[i].rt;
+            break;
+        }
+    pthread_mutex_unlock(&g_sess_lock);
+    return rt;
+}
+
+static void session_register(runtime *rt, const char *user)
+{
+    pthread_mutex_lock(&g_sess_lock);
+    for (int i = 0; i < MAX_SESSIONS; i++)
+    {
+        if (!g_sessions[i].rt)
+        {
+            snprintf(g_sessions[i].user, sizeof g_sessions[i].user, "%s", user);
+            g_sessions[i].rt = rt;
+            runtime_ref(rt); /* 会话表持有 1 份引用 */
+            pthread_mutex_unlock(&g_sess_lock);
+            return;
+        }
+    }
+    pthread_mutex_unlock(&g_sess_lock);
+    log_err("会话表已满，无法注册 %s", user);
+}
+
+static void session_unregister(runtime *rt)
+{
+    pthread_mutex_lock(&g_sess_lock);
+    for (int i = 0; i < MAX_SESSIONS; i++)
+    {
+        if (g_sessions[i].rt == rt)
+        {
+            g_sessions[i].rt = NULL;
+            g_sessions[i].user[0] = 0;
+            pthread_mutex_unlock(&g_sess_lock);
+            runtime_unref(rt); /* 释放会话表引用 */
+            return;
+        }
+    }
+    pthread_mutex_unlock(&g_sess_lock);
+}
+
+/* 进程是否存活：/proc 检查（对僵尸返回 0=已结束），
+ * 避免 waitpid 在多线程（sweep + 登录线程）下互相收割的竞态 */
+static int pid_alive(pid_t pid)
+{
+    char path[64];
+    snprintf(path, sizeof path, "/proc/%d/stat", pid);
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return 0;
+    char state = 0;
+    /* 格式: pid (comm) state ...  comm 可能含空格/括号，用 rfind 定位最后一个 ')' */
+    char buf[512];
+    size_t n = fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    char *rp = strrchr(buf, ')');
+    if (rp && rp[1] == ' ')
+        state = rp[2];
+    return state != 0 && state != 'Z';
+}
+
+/* 判断会话是否已结束：gnome-session（wrapper）或 Xvfb 已退出 */
+static int session_gone(runtime *rt)
+{
+    if (rt->proc.xvfb_pid > 0 && !pid_alive(rt->proc.xvfb_pid))
+        return 1;
+    for (int i = 0; i < rt->proc.nchildren; i++)
+        if (rt->proc.children[i] > 0 && !pid_alive(rt->proc.children[i]))
+            return 1;
+    return 0;
+}
+
+/* 事件循环周期调用：清理已结束的会话（系统注销/Xvfb 崩溃），
+ * 关闭其绑定的连接，让前端回到登录页 */
+void session_sweep(void)
+{
+    runtime *to_close[MAX_SESSIONS];
+    int n = 0;
+    pthread_mutex_lock(&g_sess_lock);
+    for (int i = 0; i < MAX_SESSIONS; i++)
+    {
+        if (g_sessions[i].rt && session_gone(g_sessions[i].rt))
+        {
+            to_close[n++] = g_sessions[i].rt;
+            g_sessions[i].rt = NULL;
+            g_sessions[i].user[0] = 0;
+        }
+    }
+    pthread_mutex_unlock(&g_sess_lock);
+
+    for (int i = 0; i < n; i++)
+    {
+        runtime *rt = to_close[i];
+        pthread_mutex_lock(&rt->lock);
+        if (rt->state != S_CLOSED)
+            rt->state = S_CLOSED;
+        pthread_mutex_unlock(&rt->lock);
+        conn *c = atomic_exchange(&rt->conn, NULL);
+        if (c)
+            net_close_conn(c); /* 触发 vdi_on_close → unref */
+        runtime_unref(rt);     /* 释放会话表引用，最终销毁 */
+    }
+}
+
 /* 在 dbus 会话总线内先解锁 GNOME Keyring，再 exec 目标会话命令。
  * 默认桌面由 dbus-run-session 提供会话总线，keyring 守护进程必须在该总线
  * 上下文中启动并接收登录密码，否则应用会提示 "The login keyring did not
  * get unlocked when you logged into your computer." */
 static void exec_keyring_session(const char *inner_cmd, int do_unlock)
 {
-    char wrap[2048];
+    char wrap[4096];
     /* snap 等桌面应用依赖 systemd 用户总线来创建自己的 cgroup scope：
      * 优先使用 /run/user/<uid>/bus（正常 GNOME 会话即如此），
      * 无 systemd 实例时退回 dbus-run-session 的私有总线 */
     const char *bus_setup =
         "if [ -S \"$XDG_RUNTIME_DIR/bus\" ]; then "
         "export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus; fi; ";
+    /* 会话结束后进程链自然退出：gnome-session（或 gnome-shell）退出 →
+     * wait 返回 → 清理 keyring 守护进程 → 本 shell 退出 → dbus-run-session
+     * 退出。服务端据此可靠检测会话结束（注销），无需依赖总线状态。 */
+    const char *wait_teardown =
+        "trap 'pkill -u \"$UID\" -x gnome-keyring-daemon 2>/dev/null; "
+        "sleep 1; pkill -9 -u \"$UID\" -x gnome-keyring-daemon 2>/dev/null' EXIT; "
+        "%s & GS=$!; wait $GS; rc=$?; exit $rc";
     if (do_unlock)
     {
         snprintf(wrap, sizeof wrap,
@@ -546,12 +824,16 @@ static void exec_keyring_session(const char *inner_cmd, int do_unlock)
                  "printf '%%s' \"$XWD_KEYRING_PASS\" | gnome-keyring-daemon --login --components=secrets 2>/dev/null & "
                  "sleep 1; "
                  "eval \"$(gnome-keyring-daemon --start --components=secrets 2>/dev/null)\"; "
-                 "unset XWD_KEYRING_PASS; exec %s",
-                 bus_setup, inner_cmd);
+                 "unset XWD_KEYRING_PASS; ",
+                 bus_setup);
+        snprintf(wrap + strlen(wrap), sizeof wrap - strlen(wrap),
+                 wait_teardown, inner_cmd);
     }
     else
     {
-        snprintf(wrap, sizeof wrap, "%sexec %s", bus_setup, inner_cmd);
+        snprintf(wrap, sizeof wrap, "%s", bus_setup);
+        snprintf(wrap + strlen(wrap), sizeof wrap - strlen(wrap),
+                 wait_teardown, inner_cmd);
     }
     execl("/usr/bin/dbus-run-session", "dbus-run-session", "--",
           "/bin/sh", "-c", wrap, (char *)NULL);
@@ -694,7 +976,8 @@ static int session_bring_up(runtime *rt, const char *user, int w, int h)
 
     /* 出站队列预算按分辨率/帧率估算：低码率场景小内存，高清场景够缓冲。
      * 经验估算 ~40KB/百万像素/帧 × 2 帧缓冲，1MB~16MB 区间。 */
-    if (rt->conn)
+    conn *outc = atomic_load(&rt->conn);
+    if (outc)
     {
         uint64_t px = (uint64_t)rt->video.width * (uint64_t)rt->video.height;
         uint64_t budget = px * 2 * 40 + 512 * 1024;
@@ -702,7 +985,7 @@ static int session_bring_up(runtime *rt, const char *user, int w, int h)
             budget = 1024 * 1024;
         if (budget > 16 * 1024 * 1024)
             budget = 16 * 1024 * 1024;
-        msgq_set_budget(&rt->conn->outq, (size_t)budget);
+        msgq_set_budget(&outc->outq, (size_t)budget);
     }
 
     if (rt->proc.display < 0)
@@ -808,6 +1091,18 @@ static int session_bring_up(runtime *rt, const char *user, int w, int h)
             snprintf(unit, sizeof unit, "user@%u.service", pw->pw_uid);
             char *args[] = {"systemctl", "start", unit, NULL};
             run_cmd_wait(args);
+            /* 兜底：用户实例的 dbus 可能已停止（VM 上偶发），
+             * 导致 /run/user/<uid>/bus 拒绝连接、gnome-session 起不来。
+             * 检测到总线不可用则重启用户实例恢复。 */
+            if (!user_bus_ok(pw->pw_uid))
+            {
+                log_info("用户 %s 的总线不可用，重启 %s", user, unit);
+                char *restart[] = {"systemctl", "restart", unit, NULL};
+                run_cmd_wait(restart);
+                sleep(1);
+                char *start2[] = {"systemctl", "start", unit, NULL};
+                run_cmd_wait(start2);
+            }
         }
     }
     spawn_session_app(rt, user);
@@ -850,7 +1145,9 @@ static int runtime_restart(runtime *rt, int w, int h)
     }
 
     /* 通知前端新分辨率与新参数集 */
-    push_config(rt->conn, rt);
+    conn *c = atomic_load(&rt->conn);
+    if (c)
+        push_config(c, rt);
     atomic_store(&rt->cap.req_keyframe, 1);
     log_info("会话重建完成: %s (%dx%d)", rt->user, rt->video.width, rt->video.height);
     pthread_mutex_unlock(&rt->lock);

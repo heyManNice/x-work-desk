@@ -6,6 +6,7 @@
 #define MSG_CONFIG 0x02       /* w(2) h(2) spsLen(2) sps ppsLen(2) pps */
 #define MSG_LOGIN_RESULT 0x03 /* ok(1) + 文本消息 */
 #define MSG_CLOSE 0x04        /* 文本原因 */
+#define MSG_SESSION_EXISTS 0x05 /* 该账户已有活跃会话（询问是否注销接管） */
 
 /* ---------- 客户端 -> 服务端 ---------- */
 #define MSG_LOGIN 0x10    /* userLen(2) user passLen(2) pass w(2) h(2) */
@@ -13,6 +14,8 @@
 #define MSG_KEY 0x12      /* pressed(1) + code 字符串 (event.code) */
 #define MSG_KEYFRAME 0x13 /* 请求关键帧 */
 #define MSG_RESIZE 0x14   /* w(2) h(2)：前端视口变化，重建会话分辨率 */
+#define MSG_TAKEOVER 0x15        /* 确认注销旧会话并接管 */
+#define MSG_TAKEOVER_CANCEL 0x16 /* 取消接管 */
 
 #define VIDEO_FLAG_KEY 0x01    /* MSG_VIDEO flags: 关键帧 */
 #define MOUSE_FLAG_MOTION 0x01 /* MSG_MOUSE flags */

@@ -5,6 +5,7 @@
 #define _GNU_SOURCE
 #include "net.h"
 #include "util.h"
+#include "session.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -111,13 +112,17 @@ int net_run(void)
             nfds++;
         }
 
-        if (poll(fds, (nfds_t)nfds, -1) < 0)
+        /* 1 秒周期：兼顾即时性并允许周期性清理已结束的会话 */
+        if (poll(fds, (nfds_t)nfds, 1000) < 0)
         {
             if (errno == EINTR)
                 continue;
             log_err("poll: %s", strerror(errno));
             break;
         }
+
+        /* 会话看护：系统注销（gnome-session 退出）或 Xvfb 崩溃时清理会话 */
+        session_sweep();
 
         /* 唤醒：刷新所有连接出站队列 */
         if (fds[1].revents & POLLIN)

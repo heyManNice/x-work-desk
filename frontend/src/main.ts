@@ -6,9 +6,12 @@ import {
     parseConfig,
     parseLoginResult,
     MSG_CLOSE,
+    MSG_SESSION_EXISTS,
     msgLogin,
     msgResize,
     msgKeyframe,
+    msgTakeover,
+    msgTakeoverCancel,
 } from './protocol';
 import { VideoRenderer } from './decoder';
 import { InputRelay } from './input';
@@ -124,6 +127,10 @@ function handleMessage(b: Uint8Array): void {
         relay?.setSize(cfg.width, cfg.height);
         dbgRes.textContent = `${cfg.width}x${cfg.height}`;
         requestKeyframe();
+    } else if (t === MSG_SESSION_EXISTS) {
+        /* 该账户已有活跃会话：询问是否注销旧会话并接管 */
+        const take = window.confirm('该账户已在其他窗口登录。\n\n是否注销旧会话并接管？');
+        send(take ? msgTakeover() : msgTakeoverCancel());
     } else if (t === MSG_VIDEO) {
         const flags = b[1];
         /* 只在收到"本次请求对应的关键帧"时更新延迟，并清除标记，
@@ -144,7 +151,8 @@ function showDesktop(): void {
     active = true;
     loginScreen.classList.remove('active');
     deskScreen.classList.add('active');
-    connectingOverlay.hidden = false;
+    /* 接管空闲会话时 CONFIG 可能已先到达（渲染器已配置），直接隐藏提示层 */
+    connectingOverlay.hidden = renderer?.isConfigured ?? false;
     relay?.setActive(true);
     canvas.focus();
     sendResize(); /* 进入桌面后按当前视口同步分辨率 */

@@ -4,12 +4,15 @@ export const MSG_VIDEO = 0x01;
 export const MSG_CONFIG = 0x02;
 export const MSG_LOGIN_RESULT = 0x03;
 export const MSG_CLOSE = 0x04;
+export const MSG_SESSION_EXISTS = 0x05;
 
 export const MSG_LOGIN = 0x10;
 export const MSG_MOUSE = 0x11;
 export const MSG_KEY = 0x12;
 export const MSG_KEYFRAME = 0x13;
 export const MSG_RESIZE = 0x14;
+export const MSG_TAKEOVER = 0x15;
+export const MSG_TAKEOVER_CANCEL = 0x16;
 
 export const VIDEO_FLAG_KEY = 0x01;
 export const MOUSE_FLAG_MOTION = 0x01;
@@ -122,4 +125,12 @@ export function msgKey(pressed: boolean, code: string): Uint8Array {
 
 export function msgKeyframe(): Uint8Array {
     return new Uint8Array([MSG_KEYFRAME]);
+}
+
+export function msgTakeover(): Uint8Array {
+    return new Uint8Array([MSG_TAKEOVER]);
+}
+
+export function msgTakeoverCancel(): Uint8Array {
+    return new Uint8Array([MSG_TAKEOVER_CANCEL]);
 }

@@ -57,8 +57,9 @@ enum session_state
 {
     S_LOGIN = 0,
     S_AUTHING = 1,
-    S_RUNNING = 2,
-    S_CLOSED = 3
+    S_CONFIRM = 2, /* 已有活跃会话，等待前端确认接管 */
+    S_RUNNING = 3,
+    S_CLOSED = 4
 };
 
 /* 单个用户的会话：连接状态机 + Xvfb/抓帧/编码等子系统 */
@@ -68,9 +69,10 @@ struct runtime
     int refs; /* 连接持有 1 份，登录/重建工作线程持有 1 份 */
     pthread_mutex_t lock;
     _Atomic int state; /* S_LOGIN / S_AUTHING / S_RUNNING / S_CLOSED */
-    conn *conn;
+    conn *_Atomic conn; /* 当前绑定的活动连接（可换绑；NULL=无人连接） */
     char user[64];
     char pass[256]; /* 登录密码：用于解锁会话 GNOME Keyring，teardown 时清零 */
+    int req_w, req_h; /* 登录请求的分辨率（接管确认后重建会话用） */
 
     video_buf video;
     proc_ctx proc;
@@ -82,3 +84,4 @@ struct runtime
 void vdi_on_open(conn *c);
 void vdi_on_message(conn *c, const uint8_t *data, size_t len);
 void vdi_on_close(conn *c);
+void session_sweep(void); /* 事件循环周期调用：清理已结束的会话 */
