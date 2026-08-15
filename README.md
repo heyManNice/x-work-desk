@@ -71,17 +71,17 @@ cd frontend && npm install && npm run build   # 产出 frontend/dist
 开发/无 root 环境（跳过真实认证，任意账号可登录，桌面以当前用户运行）：
 
 ```bash
-./build/xworkd --auth none --www-root ./frontend/dist --port 8080
+./build/xworkd --auth none --www-root ./frontend/dist --port 5268
 ```
 
 生产（root，shadow 认证，登录后以该用户身份运行 GNOME Shell）：
 
 ```bash
-sudo ./build/xworkd --www-root ./frontend/dist --port 8080
+sudo ./build/xworkd --www-root ./frontend/dist --port 5268
 # 可选：--app "gnome-shell" 显式指定；--width/--height/--fps 调整屏幕与帧率
 ```
 
-打开 `http://<host>:8080/`，输入系统账号密码登录。
+打开 `http://<host>:5268/`，输入系统账号密码登录。
 
 > 说明：`--auth shadow` 会校验真实系统密码（如 `test` / `Test1234`），并以该用户
 > 身份启动会话，需要 root。若提示密码错误，请先 `sudo passwd test` 设置密码。

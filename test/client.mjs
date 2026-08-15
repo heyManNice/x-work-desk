@@ -1,5 +1,5 @@
 /* 后端管线冒烟测试：连接 WS -> 登录 -> 验证 CONFIG + H.264 视频流 */
-const URL = process.env.WS_URL || 'ws://localhost:8080/ws';
+const URL = process.env.WS_URL || 'ws://localhost:5268/ws';
 const USER = process.env.USER || 'cd2';
 
 const MSG_VIDEO = 0x01, MSG_CONFIG = 0x02, MSG_LOGIN_RESULT = 0x03, MSG_CLOSE = 0x04;

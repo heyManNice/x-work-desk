@@ -29,7 +29,7 @@ static void usage(const char *prog)
 {
     fprintf(stderr,
             "用法: %s [选项]\n"
-            "  --port N            监听端口 (默认 8080)\n"
+            "  --port N            监听端口 (默认 5268)\n"
             "  --www-root DIR      前端静态文件目录 (默认 ./frontend/dist)\n"
             "  --auth none|shadow  认证模式 (默认 shadow；开发用 none)\n"
             "  --run-as USER       在 none 模式下以指定用户运行会话\n"
@@ -41,7 +41,7 @@ static void usage(const char *prog)
 
 int main(int argc, char **argv)
 {
-    g_cfg.port = 8080;
+    g_cfg.port = 5268;
     snprintf(g_cfg.www_root, sizeof g_cfg.www_root, "%s", "./frontend/dist");
     g_cfg.auth_mode = AUTH_SHADOW;
     g_cfg.run_as[0] = 0;

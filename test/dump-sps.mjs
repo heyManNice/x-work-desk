@@ -11,7 +11,7 @@ function msgLogin(user, pass) {
     b.set(p, o);
     return b;
 }
-const ws = new WebSocket('ws://localhost:8080/ws');
+const ws = new WebSocket('ws://localhost:5268/ws');
 ws.binaryType = 'arraybuffer';
 ws.onopen = () => ws.send(msgLogin('cd2', 'x'));
 ws.onmessage = (ev) => {
