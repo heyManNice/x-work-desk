@@ -393,16 +393,30 @@ static void spawn_session_app(runtime *rt, const char *user)
         setenv("SHELL", run_shell, 1);
         setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1);
         setenv("XDG_RUNTIME_DIR", rt_dir, 1);
-        setenv("XDG_CURRENT_DESKTOP", "GNOME", 1);
+        setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME", 1);
         setenv("XDG_SESSION_TYPE", "x11", 1);
+        setenv("XDG_SESSION_CLASS", "user", 1);
         if (g_cfg.session_cmd[0])
         {
             execl("/bin/sh", "sh", "-c", g_cfg.session_cmd, (char *)NULL);
         }
+        else if (access("/usr/bin/gnome-session", X_OK) == 0)
+        {
+            /* 完整 GNOME/Ubuntu 会话：gnome-session 会启动 gnome-shell 与
+             * gnome-settings-daemon，从而正确继承用户的主题/扩展/输入法等配置。
+             * mutter 48+ 默认以 Wayland 原生后端启动，在 Xvfb 上需走 X11 会话 */
+            if (access("/usr/share/gnome-session/sessions/ubuntu.session", R_OK) == 0)
+            {
+                setenv("GNOME_SHELL_SESSION_MODE", "ubuntu", 1);
+                execl("/usr/bin/dbus-run-session", "dbus-run-session", "--",
+                      "/usr/bin/gnome-session", "--session=ubuntu", (char *)NULL);
+            }
+            execl("/usr/bin/dbus-run-session", "dbus-run-session", "--",
+                  "/usr/bin/gnome-session", (char *)NULL);
+        }
         else if (access("/usr/bin/gnome-shell", X_OK) == 0)
         {
-            /* GNOME Shell 作为 X11 会话：dbus-run-session 提供会话总线。
-             * mutter 48+ 默认以 Wayland 原生后端启动，在 Xvfb 上必须显式 --x11 */
+            /* 退路：无 gnome-session 时裸启动 GNOME Shell（X11 模式） */
             execl("/usr/bin/dbus-run-session", "dbus-run-session", "--",
                   "/usr/bin/gnome-shell", "--x11", (char *)NULL);
         }

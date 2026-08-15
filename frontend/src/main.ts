@@ -41,10 +41,10 @@ let lastFps = 0;
 let resizeTimer = 0;
 let keyReqTime = 0; /* 关键帧请求时间，用于估算往返延迟 */
 
-/* 前端视口尺寸（扣除顶栏高度，与桌面可视区域 1:1 对应） */
+/* 前端视口尺寸（与桌面可视区域 1:1 对应） */
 function viewportSize(): [number, number] {
     const w = Math.floor(window.innerWidth);
-    const h = Math.floor(window.innerHeight - 52); // 顶栏约 52px
+    const h = Math.floor(window.innerHeight);
     /* H.264 要求宽高均为偶数（16x16 宏块），向下取偶，避免服务端 x264 打开失败 */
     return [
         Math.max(320, Math.min(4096, w)) & ~1,

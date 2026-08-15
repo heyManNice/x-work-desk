@@ -66,7 +66,9 @@ cd frontend && npm install && npm run build   # 产出 frontend/dist
 
 ## 运行
 
-默认桌面会话为 **GNOME Shell**（自动用 `dbus-run-session` 提供会话总线）。
+默认桌面会话为 **完整 GNOME/Ubuntu 会话**（`gnome-session --session=ubuntu`，
+自动用 `dbus-run-session` 提供会话总线），会继承登录用户的主题、扩展、
+输入法等配置；无 `gnome-session` 的系统退化为裸 GNOME Shell / openbox / xterm。
 
 开发/无 root 环境（跳过真实认证，任意账号可登录，桌面以当前用户运行）：
 
