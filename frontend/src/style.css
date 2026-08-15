@@ -67,17 +67,16 @@ body,
     width: 100%;
     padding: 12px 14px;
     border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: none;
+    outline: 2px solid transparent;
     background: #3d3938;
     color: var(--text);
     font-size: 15px;
-    outline: none;
-    transition: border-color 0.25s ease, border-width 0.25s ease;
+    transition: outline-color 0.25s ease;
 }
 
 .field input:focus {
-    border-color: var(--accent);
-    border-width: 2px;
+    outline-color: var(--accent);
 }
 
 .login-error {
