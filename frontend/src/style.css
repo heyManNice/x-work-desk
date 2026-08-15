@@ -152,7 +152,7 @@ body,
     gap: 12px;
     padding: 4px 10px;
     border-radius: 6px;
-    background: rgba(15, 23, 42, 0.55);
+    background: transparent;
     color: rgba(226, 232, 240, 0.9);
     font-family: "JetBrains Mono", "Fira Code", Consolas, "Courier New", monospace;
     font-size: 12px;

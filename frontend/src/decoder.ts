@@ -15,6 +15,7 @@ export class VideoRenderer {
     onKeyframeRequest: (() => void) | null = null;
     onResize: ((w: number, h: number) => void) | null = null;
     onError: ((msg: string) => void) | null = null;
+    onDecodeTime: ((ms: number) => void) | null = null;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -76,6 +77,10 @@ export class VideoRenderer {
     }
 
     private draw(frame: VideoFrame): void {
+        /* 解码耗时：从 chunk 喂入（timestamp）到输出帧 */
+        if (frame.timestamp > 0) {
+            this.onDecodeTime?.(performance.now() - frame.timestamp / 1000);
+        }
         try {
             this.ctx.drawImage(frame, 0, 0, this.canvas.width, this.canvas.height);
         } catch {

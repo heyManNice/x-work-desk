@@ -31,6 +31,8 @@ const connectingOverlay = $('#connecting-overlay');
 const dbgRes = $('#dbg-res');
 const dbgFps = $('#dbg-fps');
 const dbgLat = $('#dbg-lat');
+const dbgBw = $('#dbg-bw');
+const dbgDec = $('#dbg-dec');
 
 let ws: WebSocket | null = null;
 let renderer: VideoRenderer | null = null;
@@ -40,13 +42,19 @@ let active = false;
 let frameCount = 0;
 let fpsTimer = 0;
 let lastFps = 0;
+let bwBytes = 0;   /* 本秒收到的字节数（带宽统计） */
+let decSum = 0;    /* 本秒解码耗时累计（ms） */
+let decCount = 0;  /* 本秒解码帧数 */
 let resizeTimer = 0;
 let keyReqTime = 0; /* 关键帧请求时间，用于估算往返延迟 */
 
-/* 前端视口尺寸（与桌面可视区域 1:1 对应） */
+/* 前端可视区域物理分辨率：innerWidth/Height 是视口 CSS 像素（随窗口大小变化，
+ * 已含系统显示缩放），乘 devicePixelRatio 得到设备像素。这样浏览器窗口调整时
+ * 桌面分辨率跟随重建，且在 150%/200% 缩放下画面 1:1 对应物理像素、不发糊。 */
 function viewportSize(): [number, number] {
-    const w = Math.floor(window.innerWidth);
-    const h = Math.floor(window.innerHeight);
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.round(window.innerWidth * dpr);
+    const h = Math.round(window.innerHeight * dpr);
     /* H.264 要求宽高均为偶数（16x16 宏块），向下取偶，避免服务端 x264 打开失败 */
     return [
         Math.max(320, Math.min(4096, w)) & ~1,
@@ -126,6 +134,7 @@ function handleMessage(b: Uint8Array): void {
         }
         renderer?.feed(b.subarray(2), (flags & 0x01) !== 0);
         frameCount++;
+        bwBytes += b.byteLength;
     } else if (t === MSG_CLOSE) {
         onDisconnect();
     }
@@ -200,6 +209,16 @@ function onDisconnect(): void {
     btnLabel.textContent = '登录';
     connectingOverlay.hidden = true;
     loginError.hidden = true;
+    frameCount = 0;
+    lastFps = 0;
+    bwBytes = 0;
+    decSum = 0;
+    decCount = 0;
+    dbgFps.textContent = '';
+    dbgLat.textContent = '';
+    dbgBw.textContent = '';
+    dbgDec.textContent = '';
+    keyReqTime = 0;
 }
 
 /* ---------- 事件绑定 ---------- */
@@ -234,12 +253,20 @@ window.addEventListener('resize', () => {
     }, 400);
 });
 
-/* FPS 统计 */
+/* 每 1 秒刷新 FPS / 带宽 / 解码耗时统计 */
 fpsTimer = window.setInterval(() => {
     lastFps = frameCount;
     frameCount = 0;
-    if (active && lastFps > 0) dbgFps.textContent = `${lastFps} FPS`;
-    else if (active) dbgFps.textContent = '';
+    if (active) dbgFps.textContent = `${lastFps} FPS`;
+
+    const kbps = (bwBytes * 8) / 1000;
+    dbgBw.textContent = kbps >= 1000 ? `${(kbps / 1000).toFixed(2)} Mbps` : `${Math.round(kbps)} kbps`;
+    bwBytes = 0;
+
+    const avgDec = decCount > 0 ? decSum / decCount : 0;
+    dbgDec.textContent = decCount > 0 ? `${avgDec.toFixed(1)} ms` : '';
+    decSum = 0;
+    decCount = 0;
 }, 1000);
 
 /* 初始化渲染器与输入 */
@@ -252,6 +279,10 @@ renderer.onError = (msg) => {
     connectingOverlay.hidden = false;
     const p = connectingOverlay.querySelector('p');
     if (p) p.textContent = msg;
+};
+renderer.onDecodeTime = (ms) => {
+    decSum += ms;
+    decCount++;
 };
 
 relay = new InputRelay(canvas, send);
