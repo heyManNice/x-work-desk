@@ -13,22 +13,21 @@
         <div id="login-screen" class="screen active">
             <div class="login-wrap">
                 <div class="avatar">
-                    <svg viewBox="0 0 24 24" width="44" height="44" fill="currentColor">
-                        <path
-                            d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 2c-3.9 0-7 2.02-7 4.5V20h14v-1.5c0-2.48-3.1-4.5-7-4.5Z" />
+                    <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor"
+                        stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="8" r="4" />
+                        <path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" />
                     </svg>
                 </div>
                 <!-- autocomplete=off + 唯一字段名：避免浏览器弹出"推荐账号"等自动填充建议 -->
                 <form id="login-form" autocomplete="off" novalidate>
                     <div class="field">
-                        <label for="xwd-account">用户名</label>
                         <input id="xwd-account" name="xwd-account" type="text" placeholder="输入用户名" autocomplete="off"
-                            spellcheck="false" required />
+                            spellcheck="false" aria-label="用户名" required />
                     </div>
                     <div class="field">
-                        <label for="xwd-pass">密码</label>
                         <input id="xwd-pass" name="xwd-pass" type="password" placeholder="输入密码"
-                            autocomplete="current-password" required />
+                            autocomplete="current-password" aria-label="密码" required />
                     </div>
                     <div id="login-error" class="login-error" hidden></div>
                     <button id="login-btn" type="submit">

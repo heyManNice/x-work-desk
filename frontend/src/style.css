@@ -5,8 +5,7 @@
 }
 
 :root {
-    --accent: #6366f1;
-    --accent-hover: #4f46e5;
+    --accent: #f97316;
     --text: #e2e8f0;
     --muted: #94a3b8;
     --err: #f87171;
@@ -21,7 +20,7 @@ body,
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
         "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
     color: var(--text);
-    background: #222222;
+    background: #3d3d3d;
 }
 
 .screen {
@@ -52,7 +51,7 @@ body,
     width: 84px;
     height: 84px;
     border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), #8b5cf6);
+    background: var(--accent);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -62,13 +61,6 @@ body,
 .field {
     text-align: left;
     margin-bottom: 16px;
-}
-
-.field label {
-    display: block;
-    font-size: 12px;
-    color: var(--muted);
-    margin-bottom: 6px;
 }
 
 .field input {
@@ -103,7 +95,7 @@ body,
     padding: 12px;
     border: none;
     border-radius: 10px;
-    background: linear-gradient(135deg, var(--accent), #7c3aed);
+    background: var(--accent);
     color: #fff;
     font-size: 15px;
     font-weight: 600;
