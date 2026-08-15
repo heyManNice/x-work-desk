@@ -15,12 +15,48 @@ export const VIDEO_FLAG_KEY = 0x01;
 export const MOUSE_FLAG_MOTION = 0x01;
 export const MOUSE_FLAG_BUTTON = 0x02;
 
+export interface VideoConfig {
+    width: number;
+    height: number;
+    sps: Uint8Array;
+    pps: Uint8Array;
+}
+
+export interface LoginResult {
+    ok: boolean;
+    text: string;
+}
+
 const enc = new TextEncoder();
 
 function u16(v: number): [number, number] {
     return [v & 0xff, (v >> 8) & 0xff];
 }
 
+function rdU16(b: Uint8Array, o: number): number {
+    return b[o] | (b[o + 1] << 8);
+}
+
+/* ---------- 服务端 -> 客户端消息解析 ---------- */
+export function parseLoginResult(b: Uint8Array): LoginResult {
+    return {
+        ok: b[1] === 1,
+        text: new TextDecoder().decode(b.subarray(2)),
+    };
+}
+
+export function parseConfig(b: Uint8Array): VideoConfig {
+    let o = 1;
+    const width = rdU16(b, o); o += 2;
+    const height = rdU16(b, o); o += 2;
+    const sl = rdU16(b, o); o += 2;
+    const sps = b.subarray(o, o + sl); o += sl;
+    const pl = rdU16(b, o); o += 2;
+    const pps = b.subarray(o, o + pl);
+    return { width, height, sps, pps };
+}
+
+/* ---------- 客户端 -> 服务端消息构造 ---------- */
 export function msgLogin(user: string, pass: string, w: number, h: number): Uint8Array {
     const u = enc.encode(user);
     const p = enc.encode(pass);

@@ -16,41 +16,41 @@
 #include <X11/extensions/XShm.h>
 #include <sys/shm.h>
 
-int init_shm(runtime *rt)
+int init_shm(capture_ctx *cap, int width, int height)
 {
-    int scr = DefaultScreen(rt->dpy);
-    rt->img = XShmCreateImage(rt->dpy, DefaultVisual(rt->dpy, scr),
-                              DefaultDepth(rt->dpy, scr), ZPixmap, NULL,
-                              &rt->shminfo, rt->width, rt->height);
-    if (!rt->img)
+    int scr = DefaultScreen(cap->dpy);
+    cap->img = XShmCreateImage(cap->dpy, DefaultVisual(cap->dpy, scr),
+                               DefaultDepth(cap->dpy, scr), ZPixmap, NULL,
+                               &cap->shminfo, width, height);
+    if (!cap->img)
     {
         log_err("XShmCreateImage 失败");
         return -1;
     }
 
-    rt->shminfo.shmid = shmget(IPC_PRIVATE,
-                               (size_t)rt->img->bytes_per_line * (size_t)rt->img->height,
-                               IPC_CREAT | 0600);
-    if (rt->shminfo.shmid < 0)
+    cap->shminfo.shmid = shmget(IPC_PRIVATE,
+                                (size_t)cap->img->bytes_per_line * (size_t)cap->img->height,
+                                IPC_CREAT | 0600);
+    if (cap->shminfo.shmid < 0)
     {
         log_err("shmget: %s", strerror(errno));
         return -1;
     }
 
-    rt->shminfo.shmaddr = rt->img->data = shmat(rt->shminfo.shmid, NULL, 0);
-    rt->shminfo.readOnly = False;
-    if (rt->shminfo.shmaddr == (char *)-1)
+    cap->shminfo.shmaddr = cap->img->data = shmat(cap->shminfo.shmid, NULL, 0);
+    cap->shminfo.readOnly = False;
+    if (cap->shminfo.shmaddr == (char *)-1)
     {
         log_err("shmat: %s", strerror(errno));
         return -1;
     }
 
-    if (!XShmAttach(rt->dpy, &rt->shminfo))
+    if (!XShmAttach(cap->dpy, &cap->shminfo))
     {
         log_err("XShmAttach 失败");
         return -1;
     }
-    XSync(rt->dpy, False);
+    XSync(cap->dpy, False);
     return 0;
 }
 
@@ -59,8 +59,10 @@ static inline uint8_t rgb2y(int r, int g, int b) { return (uint8_t)((66 * r + 12
 static inline uint8_t rgb2u(int r, int g, int b) { return (uint8_t)((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128; }
 static inline uint8_t rgb2v(int r, int g, int b) { return (uint8_t)((112 * r - 94 * g - 18 * b + 128) >> 8) + 128; }
 
-static void bgra_to_i420(const uint8_t *bgra, uint8_t *yuv, int w, int h)
+static void bgra_to_i420(const uint8_t *bgra, video_buf *vb)
 {
+    int w = vb->width, h = vb->height;
+    uint8_t *yuv = vb->yuv;
     uint8_t *Y = yuv;
     uint8_t *U = yuv + (size_t)w * h;
     uint8_t *V = yuv + (size_t)w * h + (size_t)(w / 2) * (h / 2);
@@ -91,24 +93,74 @@ static void bgra_to_i420(const uint8_t *bgra, uint8_t *yuv, int w, int h)
     }
 }
 
+/* 折叠 64 位混合，两个独立累加器，碰撞可忽略 */
+static inline uint64_t mix64(uint64_t h, uint64_t v)
+{
+    h ^= v;
+    h *= 0xff51afd7ed558ccdull;
+    h ^= h >> 32;
+    return h;
+}
+
+/* 对 BGRA 帧做快速签名；返回 1 表示内容发生变化（或首次抓取） */
+static int frame_changed(capture_ctx *cap, video_buf *vb)
+{
+    const uint8_t *p = (const uint8_t *)cap->img->data;
+    size_t stride = (size_t)cap->img->bytes_per_line;
+    size_t row_bytes = (size_t)vb->width * 4;
+    uint64_t h0 = 1469598103934665603ull; /* FNV offset basis ×2 */
+    uint64_t h1 = 0xcbf29ce484222325ull;
+
+    for (int y = 0; y < vb->height; y++)
+    {
+        const uint8_t *row = p + (size_t)y * stride;
+        size_t i = 0;
+        for (; i + 8 <= row_bytes; i += 8)
+        {
+            uint64_t v;
+            memcpy(&v, row + i, 8);
+            h0 = mix64(h0, v);
+            h1 = mix64(h1, ~v);
+        }
+        for (; i < row_bytes; i++)
+        {
+            h0 = mix64(h0, row[i]);
+            h1 = mix64(h1, row[i] ^ 0xa5);
+        }
+    }
+
+    if (cap->have_sig && cap->sig[0] == h0 && cap->sig[1] == h1)
+        return 0;
+    cap->sig[0] = h0;
+    cap->sig[1] = h1;
+    cap->have_sig = 1;
+    return 1;
+}
+
 void *capture_thread(void *arg)
 {
     runtime *rt = arg;
     uint64_t interval_ns = 1000000000ull / (uint64_t)(g_cfg.fps > 0 ? g_cfg.fps : 30);
+    capture_ctx *cap = &rt->cap;
 
     struct timespec next;
     clock_gettime(CLOCK_MONOTONIC, &next);
 
-    while (rt->running)
+    while (atomic_load(&cap->running))
     {
-        pthread_mutex_lock(&rt->xlock);
-        int ok = XShmGetImage(rt->dpy, rt->root, rt->img, 0, 0, AllPlanes);
-        pthread_mutex_unlock(&rt->xlock);
+        pthread_mutex_lock(&cap->xlock);
+        int ok = XShmGetImage(cap->dpy, cap->root, cap->img, 0, 0, AllPlanes);
+        pthread_mutex_unlock(&cap->xlock);
 
         if (ok)
         {
-            bgra_to_i420((const uint8_t *)rt->img->data, rt->yuv, rt->width, rt->height);
-            encode_frame(rt);
+            /* 静止帧跳过转换与编码；有 keyframe 请求时强制编码一帧 */
+            int need_key = atomic_load(&cap->req_keyframe) != 0;
+            if (need_key || frame_changed(cap, &rt->video))
+            {
+                bgra_to_i420((const uint8_t *)cap->img->data, &rt->video);
+                encode_frame(rt);
+            }
         }
 
         /* 节流到目标帧率 */

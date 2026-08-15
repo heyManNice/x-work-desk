@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
@@ -317,9 +318,9 @@ static void handle_http(conn *c)
 /* ---------------- WebSocket 帧 ---------------- */
 static int ws_write_frame(conn *c, int opcode, const uint8_t *payload, size_t len)
 {
-    size_t hdr;
     uint8_t h[10];
     h[0] = (uint8_t)(0x80 | opcode);
+    size_t hdr;
     if (len < 126)
     {
         h[1] = (uint8_t)len;
@@ -339,26 +340,45 @@ static int ws_write_frame(conn *c, int opcode, const uint8_t *payload, size_t le
             h[2 + i] = (uint8_t)((uint64_t)len >> (8 * (7 - i)));
         hdr = 10;
     }
-    uint8_t *buf = malloc(hdr + len);
-    memcpy(buf, h, hdr);
-    memcpy(buf + hdr, payload, len);
 
-    ssize_t n = send(c->fd, buf, hdr + len, MSG_NOSIGNAL);
+    /* 帧头 + 载荷一次 writev，避免拼接缓冲的额外拷贝 */
+    struct iovec iov[2] = {{h, hdr}, {(void *)payload, len}};
+    ssize_t n = writev(c->fd, iov, 2);
     if (n < 0)
     {
-        free(buf);
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            /* 套接字已满：整帧缓存，等待 POLLOUT（而非断开连接） */
+            uint8_t *buf = malloc(hdr + len);
+            memcpy(buf, h, hdr);
+            memcpy(buf + hdr, payload, len);
+            free(c->snd);
+            c->snd = buf;
+            c->snd_len = hdr + len;
+            c->snd_off = 0;
+            return 0;
+        }
         return -1;
     }
     if ((size_t)n == hdr + len)
-    {
-        free(buf);
         return 0;
+
+    /* 部分发送：缓存剩余部分 */
+    size_t sent = (size_t)n;
+    uint8_t *rest = malloc(hdr + len - sent);
+    if (sent < hdr)
+    {
+        memcpy(rest, h + sent, hdr - sent);
+        memcpy(rest + (hdr - sent), payload, len);
     }
-    /* 部分发送：保留待发 */
+    else
+    {
+        memcpy(rest, payload + (sent - hdr), hdr + len - sent);
+    }
     free(c->snd);
-    c->snd = buf;
-    c->snd_len = hdr + len;
-    c->snd_off = (size_t)n;
+    c->snd = rest;
+    c->snd_len = hdr + len - sent;
+    c->snd_off = 0;
     return 0;
 }
 
@@ -397,6 +417,7 @@ static void flush_conn(conn *c)
         if (!n)
             break;
         int r = ws_write_frame(c, 0x2, n->data, n->len);
+        free(n->data);
         free(n);
         if (r < 0)
         {
@@ -413,6 +434,19 @@ void net_push(conn *c, const uint8_t *data, size_t len, int droppable)
     if (!c || c->closing)
         return;
     msgq_push(&c->outq, data, len, droppable);
+    net_wake();
+}
+
+/* 零拷贝热路径：接管 data 所有权（失败或连接已关闭时释放） */
+void net_push_take(conn *c, uint8_t *data, size_t len, int droppable)
+{
+    if (!c || c->closing)
+    {
+        free(data);
+        return;
+    }
+    if (!msgq_push_take(&c->outq, data, len, droppable))
+        free(data);
     net_wake();
 }
 
@@ -557,9 +591,26 @@ void net_close_conn(conn *c)
 /* ---------------- 事件循环 ---------------- */
 int net_run(void)
 {
-    struct pollfd fds[128];
+    struct pollfd *fds = NULL;
+    size_t fds_cap = 0;
     while (1)
     {
+        size_t need = 2; /* listen + wake */
+        for (conn *c = conns; c; c = c->next)
+            if (!c->closing)
+                need++;
+        if (need > fds_cap)
+        {
+            fds_cap = need + 16;
+            struct pollfd *nf = realloc(fds, fds_cap * sizeof *fds);
+            if (!nf)
+            {
+                log_err("realloc poll 数组失败");
+                break;
+            }
+            fds = nf;
+        }
+
         int nfds = 0;
         fds[nfds].fd = listen_fd;
         fds[nfds].events = POLLIN;
@@ -574,8 +625,6 @@ int net_run(void)
         {
             if (c->closing)
                 continue;
-            if (nfds >= 128)
-                break;
             fds[nfds].fd = c->fd;
             fds[nfds].events = POLLIN;
             if (c->snd)
@@ -628,6 +677,7 @@ int net_run(void)
                 conn *c = calloc(1, sizeof *c);
                 c->fd = fd;
                 c->refs = 1;
+                atomic_init(&c->closing, false);
                 c->is_ws = 0;
                 c->ws_hdr = 1;
                 c->snd = NULL;
@@ -685,5 +735,6 @@ int net_run(void)
             c = nx;
         }
     }
+    free(fds);
     return 0;
 }

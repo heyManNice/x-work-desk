@@ -7,6 +7,18 @@ void log_err(const char *fmt, ...);
 
 void hex_encode(const uint8_t *in, size_t inlen, char *out, size_t outsz);
 
+/* 协议小端 u16 打包/解包 */
+static inline void wr_u16(uint8_t *p, uint16_t v)
+{
+    p[0] = (uint8_t)(v & 0xff);
+    p[1] = (uint8_t)((v >> 8) & 0xff);
+}
+
+static inline uint16_t rd_u16(const uint8_t *p)
+{
+    return (uint16_t)(p[0] | ((uint16_t)p[1] << 8));
+}
+
 /* SHA-1 (RFC 3174) —— 用于 WebSocket 握手 */
 typedef struct
 {

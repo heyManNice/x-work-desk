@@ -103,35 +103,39 @@ void input_handle_mouse(runtime *rt, const uint8_t *data, size_t len)
 {
     if (len < 6)
         return;
+    if (!rt->cap.dpy)
+        return; /* 会话重建/未就绪 */
     int flags = data[1];
     int x = data[2] | (data[3] << 8);
     int y = data[4] | (data[5] << 8);
 
-    pthread_mutex_lock(&rt->xlock);
+    pthread_mutex_lock(&rt->cap.xlock);
     if (flags & MOUSE_FLAG_BUTTON)
     {
         if (len < 8)
         {
-            pthread_mutex_unlock(&rt->xlock);
+            pthread_mutex_unlock(&rt->cap.xlock);
             return;
         }
         int button = data[6];
         int pressed = data[7];
-        XTestFakeMotionEvent(rt->dpy, 0, x, y, 0);
-        XTestFakeButtonEvent(rt->dpy, button, pressed, 0);
+        XTestFakeMotionEvent(rt->cap.dpy, 0, x, y, 0);
+        XTestFakeButtonEvent(rt->cap.dpy, button, pressed, 0);
     }
     else
     {
-        XTestFakeMotionEvent(rt->dpy, 0, x, y, 0);
+        XTestFakeMotionEvent(rt->cap.dpy, 0, x, y, 0);
     }
-    XFlush(rt->dpy);
-    pthread_mutex_unlock(&rt->xlock);
+    XFlush(rt->cap.dpy);
+    pthread_mutex_unlock(&rt->cap.xlock);
 }
 
 void input_handle_key(runtime *rt, const uint8_t *data, size_t len)
 {
     if (len < 2)
         return;
+    if (!rt->cap.dpy)
+        return; /* 会话重建/未就绪 */
     int pressed = data[1];
     char code[64];
     size_t cl = len - 2;
@@ -143,12 +147,12 @@ void input_handle_key(runtime *rt, const uint8_t *data, size_t len)
     KeySym ks = keysym_from_code(code);
     if (ks == NoSymbol)
         return;
-    KeyCode kc = XKeysymToKeycode(rt->dpy, ks);
+    KeyCode kc = XKeysymToKeycode(rt->cap.dpy, ks);
     if (!kc)
         return;
 
-    pthread_mutex_lock(&rt->xlock);
-    XTestFakeKeyEvent(rt->dpy, kc, pressed, 0);
-    XFlush(rt->dpy);
-    pthread_mutex_unlock(&rt->xlock);
+    pthread_mutex_lock(&rt->cap.xlock);
+    XTestFakeKeyEvent(rt->cap.dpy, kc, pressed, 0);
+    XFlush(rt->cap.dpy);
+    pthread_mutex_unlock(&rt->cap.xlock);
 }

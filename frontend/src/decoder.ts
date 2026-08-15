@@ -1,11 +1,5 @@
 /* 使用 WebCodecs 解码 H.264 (avc1) 并渲染到 canvas */
-
-export interface VideoConfig {
-    width: number;
-    height: number;
-    sps: Uint8Array;
-    pps: Uint8Array;
-}
+import type { VideoConfig } from './protocol';
 
 function hex(v: number): string {
     return v.toString(16).padStart(2, '0');

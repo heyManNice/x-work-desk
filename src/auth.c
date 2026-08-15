@@ -7,13 +7,10 @@
 #include <pwd.h>
 
 static int g_mode = AUTH_SHADOW;
-static char g_run_as[64] = "";
 
-void auth_init(int mode, const char *run_as)
+void auth_init(int mode)
 {
     g_mode = mode;
-    if (run_as && run_as[0])
-        snprintf(g_run_as, sizeof g_run_as, "%s", run_as);
 }
 
 /* 返回 0 = 成功 */

@@ -46,6 +46,14 @@ body,
     width: min(320px, 92vw);
 }
 
+.login-error {
+    width: min(320px, 92vw);
+    margin-top: -28px;
+    color: #f87171;
+    font-size: 13px;
+    text-align: center;
+}
+
 .avatar {
     width: 168px;
     height: 168px;

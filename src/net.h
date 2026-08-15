@@ -1,6 +1,8 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
+#include <stdatomic.h>
 #include <pthread.h>
 #include "msgqueue.h"
 
@@ -9,7 +11,7 @@ typedef struct conn
 {
     int fd;
     int refs; /* 引用计数（事件循环 + worker/运行时） */
-    volatile int closing;
+    _Atomic bool closing;
     int is_ws;
     int pindex; /* poll 数组中的下标 */
 
@@ -36,7 +38,7 @@ typedef struct conn
     uint8_t *snd;
     size_t snd_len, snd_off;
 
-    struct vdi_session *vdi;
+    struct runtime *vdi; /* 会话（session.c 管理） */
     struct conn *next;
 } conn;
 
@@ -44,6 +46,7 @@ int net_init(int port, const char *www_root);
 int net_run(void);
 void net_wake(void);
 void net_push(conn *c, const uint8_t *data, size_t len, int droppable);
+void net_push_take(conn *c, uint8_t *data, size_t len, int droppable);
 void conn_ref(conn *c);
 void conn_unref(conn *c);
 

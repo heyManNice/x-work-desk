@@ -3,6 +3,8 @@ import {
     MSG_VIDEO,
     MSG_CONFIG,
     MSG_LOGIN_RESULT,
+    parseConfig,
+    parseLoginResult,
     MSG_CLOSE,
     msgLogin,
     msgResize,
@@ -22,6 +24,7 @@ const loginForm = $('#login-form') as HTMLFormElement;
 const loginBtn = $('#login-btn') as HTMLButtonElement;
 const btnLabel = $('.btn-label');
 const btnSpinner = $('.spinner');
+const loginError = $('#login-error') as HTMLElement;
 const canvas = $('#screen') as HTMLCanvasElement;
 const disconnectBtn = $('#disconnect-btn');
 const connectingOverlay = $('#connecting-overlay');
@@ -67,7 +70,14 @@ function requestKeyframe(): void {
 }
 
 function connect(): void {
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        /* 连接已就绪（如登录失败后重试）：直接发送，避免等 onopen 不触发 */
+        if (pendingLogin && ws.readyState === WebSocket.OPEN) {
+            send(msgLogin(pendingLogin.user, pendingLogin.pass, pendingLogin.w, pendingLogin.h));
+            pendingLogin = null;
+        }
+        return;
+    }
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     ws = new WebSocket(`${proto}://${location.host}/ws`);
     ws.binaryType = 'arraybuffer';
@@ -93,25 +103,18 @@ function connect(): void {
 function handleMessage(b: Uint8Array): void {
     const t = b[0];
     if (t === MSG_LOGIN_RESULT) {
-        const ok = b[1] === 1;
-        const txt = new TextDecoder().decode(b.subarray(2));
-        if (ok) {
+        const r = parseLoginResult(b);
+        if (r.ok) {
             loginBtn.hidden = true;
             showDesktop();
         } else {
-            loginFail(txt);
+            loginFail(r.text);
         }
     } else if (t === MSG_CONFIG) {
-        let o = 1;
-        const w = b[o] | (b[o + 1] << 8); o += 2;
-        const h = b[o] | (b[o + 1] << 8); o += 2;
-        const sl = b[o] | (b[o + 1] << 8); o += 2;
-        const sps = b.subarray(o, o + sl); o += sl;
-        const pl = b[o] | (b[o + 1] << 8); o += 2;
-        const pps = b.subarray(o, o + pl);
-        renderer?.configure({ width: w, height: h, sps, pps });
-        relay?.setSize(w, h);
-        dbgRes.textContent = `${w}x${h}`;
+        const cfg = parseConfig(b);
+        renderer?.configure(cfg);
+        relay?.setSize(cfg.width, cfg.height);
+        dbgRes.textContent = `${cfg.width}x${cfg.height}`;
         requestKeyframe();
     } else if (t === MSG_VIDEO) {
         const flags = b[1];
@@ -174,11 +177,13 @@ function triggerPasswordSave(): void {
     }
 }
 
-function loginFail(): void {
+function loginFail(text?: string): void {
     loginBtn.disabled = false;
     loginBtn.classList.remove('loading');
     btnSpinner.hidden = true;
     btnLabel.textContent = '登录';
+    loginError.hidden = !text;
+    loginError.textContent = text ?? '';
 }
 
 function onDisconnect(): void {
@@ -194,11 +199,13 @@ function onDisconnect(): void {
     btnSpinner.hidden = true;
     btnLabel.textContent = '登录';
     connectingOverlay.hidden = true;
+    loginError.hidden = true;
 }
 
 /* ---------- 事件绑定 ---------- */
 loginForm.addEventListener('submit', (e) => {
     e.preventDefault();
+    loginError.hidden = true;
     const user = userInput.value.trim();
     const pass = passInput.value;
     if (!user || !pass) {

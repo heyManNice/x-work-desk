@@ -32,8 +32,7 @@ static void usage(const char *prog)
             "  --port N            监听端口 (默认 5268)\n"
             "  --www-root DIR      前端静态文件目录 (默认 ./frontend/dist)\n"
             "  --auth none|shadow  认证模式 (默认 shadow；开发用 none)\n"
-            "  --run-as USER       在 none 模式下以指定用户运行会话\n"
-            "  --app CMD           在桌面上启动的会话命令 (默认 gnome-shell)"
+            "  --app CMD           在桌面上启动的会话命令 (默认 gnome-shell)\n"
             "  --width W --height H  虚拟屏幕尺寸 (默认 1280x720)\n"
             "  --fps N             抓帧帧率 (默认 30)\n",
             prog);
@@ -44,7 +43,6 @@ int main(int argc, char **argv)
     g_cfg.port = 5268;
     snprintf(g_cfg.www_root, sizeof g_cfg.www_root, "%s", "./frontend/dist");
     g_cfg.auth_mode = AUTH_SHADOW;
-    g_cfg.run_as[0] = 0;
     g_cfg.session_cmd[0] = 0;
     g_cfg.width = DEFAULT_WIDTH;
     g_cfg.height = DEFAULT_HEIGHT;
@@ -69,8 +67,6 @@ int main(int argc, char **argv)
                 return 1;
             }
         }
-        else if (!strcmp(argv[i], "--run-as") && i + 1 < argc)
-            snprintf(g_cfg.run_as, sizeof g_cfg.run_as, "%s", argv[++i]);
         else if (!strcmp(argv[i], "--app") && i + 1 < argc)
             snprintf(g_cfg.session_cmd, sizeof g_cfg.session_cmd, "%s", argv[++i]);
         else if (!strcmp(argv[i], "--width") && i + 1 < argc)
@@ -95,7 +91,7 @@ int main(int argc, char **argv)
     XInitThreads();
     XSetIOErrorHandler(x_io_error_handler);
     XSetErrorHandler(x_error_handler);
-    auth_init(g_cfg.auth_mode, g_cfg.run_as);
+    auth_init(g_cfg.auth_mode);
 
     log_info("XWorkDesk 服务启动: 端口=%d www-root=%s auth=%s",
              g_cfg.port, g_cfg.www_root, g_cfg.auth_mode == AUTH_NONE ? "none(dev)" : "shadow");

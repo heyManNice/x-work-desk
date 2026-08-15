@@ -8,14 +8,14 @@
 #include <string.h>
 #include <x264.h>
 
-int init_encoder(runtime *rt)
+int init_encoder(encoder_ctx *enc, video_buf *vb, int fps)
 {
     x264_param_t p;
     x264_param_default_preset(&p, "ultrafast", "zerolatency");
-    p.i_width = rt->width;
-    p.i_height = rt->height;
+    p.i_width = vb->width;
+    p.i_height = vb->height;
     p.i_csp = X264_CSP_I420;
-    p.i_fps_num = g_cfg.fps > 0 ? g_cfg.fps : 30;
+    p.i_fps_num = fps > 0 ? fps : 30;
     p.i_fps_den = 1;
     p.i_keyint_max = 120;
     p.i_bframe = 0;
@@ -25,8 +25,8 @@ int init_encoder(runtime *rt)
     p.i_log_level = X264_LOG_ERROR;
     x264_param_apply_profile(&p, "baseline");
 
-    rt->enc = x264_encoder_open(&p);
-    if (!rt->enc)
+    enc->enc = x264_encoder_open(&p);
+    if (!enc->enc)
     {
         log_err("x264_encoder_open 失败");
         return -1;
@@ -35,7 +35,7 @@ int init_encoder(runtime *rt)
     /* 取 SPS/PPS 用于 CONFIG 消息 */
     x264_nal_t *nal;
     int i_nal;
-    if (x264_encoder_headers(rt->enc, &nal, &i_nal) < 0)
+    if (x264_encoder_headers(enc->enc, &nal, &i_nal) < 0)
     {
         log_err("x264_encoder_headers 失败");
         return -1;
@@ -52,52 +52,51 @@ int init_encoder(runtime *rt)
         }
         if (nal[i].i_type == NAL_SPS)
         {
-            rt->sps = malloc(n);
-            memcpy(rt->sps, d, n);
-            rt->sps_len = n;
+            enc->sps = malloc(n);
+            memcpy(enc->sps, d, n);
+            enc->sps_len = n;
         }
         else if (nal[i].i_type == NAL_PPS)
         {
-            rt->pps = malloc(n);
-            memcpy(rt->pps, d, n);
-            rt->pps_len = n;
+            enc->pps = malloc(n);
+            memcpy(enc->pps, d, n);
+            enc->pps_len = n;
         }
     }
-    if (!rt->sps || !rt->pps)
+    if (!enc->sps || !enc->pps)
     {
         log_err("未取到 SPS/PPS");
         return -1;
     }
 
-    rt->yuv = malloc((size_t)rt->width * rt->height * 3 / 2);
-    if (!rt->yuv)
+    vb->yuv = malloc((size_t)vb->width * vb->height * 3 / 2);
+    if (!vb->yuv)
         return -1;
     return 0;
 }
 
 void encode_frame(runtime *rt)
 {
+    encoder_ctx *enc = &rt->enc;
+    video_buf *vb = &rt->video;
     x264_picture_t pic, pic_out;
     x264_picture_init(&pic);
     x264_picture_init(&pic_out);
     pic.img.i_csp = X264_CSP_I420;
     pic.img.i_plane = 3;
-    pic.img.plane[0] = rt->yuv;
-    pic.img.plane[1] = rt->yuv + (size_t)rt->width * rt->height;
-    pic.img.plane[2] = rt->yuv + (size_t)rt->width * rt->height * 5 / 4;
-    pic.img.i_stride[0] = rt->width;
-    pic.img.i_stride[1] = rt->width / 2;
-    pic.img.i_stride[2] = rt->width / 2;
-    pic.i_pts = rt->frame_index++;
-    if (rt->req_keyframe)
-    {
+    pic.img.plane[0] = vb->yuv;
+    pic.img.plane[1] = vb->yuv + (size_t)vb->width * vb->height;
+    pic.img.plane[2] = vb->yuv + (size_t)vb->width * vb->height * 5 / 4;
+    pic.img.i_stride[0] = vb->width;
+    pic.img.i_stride[1] = vb->width / 2;
+    pic.img.i_stride[2] = vb->width / 2;
+    pic.i_pts = rt->cap.frame_index++;
+    if (atomic_exchange(&rt->cap.req_keyframe, 0))
         pic.i_type = X264_TYPE_IDR;
-        rt->req_keyframe = 0;
-    }
 
     x264_nal_t *nals;
     int i_nals;
-    int sz = x264_encoder_encode(rt->enc, &nals, &i_nals, &pic, &pic_out);
+    int sz = x264_encoder_encode(enc->enc, &nals, &i_nals, &pic, &pic_out);
     if (sz <= 0)
         return;
 
@@ -123,6 +122,7 @@ void encode_frame(runtime *rt)
         p += nals[i].i_payload;
     }
     if (rt->conn)
-        net_push(rt->conn, buf, (size_t)(p - buf), 1);
-    free(buf);
+        net_push_take(rt->conn, buf, (size_t)(p - buf), 1);
+    else
+        free(buf);
 }
