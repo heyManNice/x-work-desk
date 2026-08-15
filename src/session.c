@@ -589,6 +589,19 @@ static int session_bring_up(runtime *rt, const char *user, int w, int h)
         log_err("xauth 失败");
         return -1;
     }
+    /* xauth 由服务进程创建（默认 0600）。root 模式下会话子进程会 setuid 到
+     * 目标用户，必须把 cookie 文件交给该用户，否则桌面进程无法连接 X，
+     * gnome-session 的加速检查会失败并整体退出（表现为黑屏）。 */
+    if (geteuid() == 0)
+    {
+        struct passwd *pw = getpwnam(user);
+        if (pw)
+        {
+            if (chown(rt->proc.authfile, pw->pw_uid, pw->pw_gid) != 0)
+            { /* 忽略：非关键路径，失败时桌面会话仍可尝试连接 */
+            }
+        }
+    }
 
     char geom[32];
     snprintf(geom, sizeof geom, "%dx%dx24", rt->video.width, rt->video.height);
