@@ -590,10 +590,14 @@ void vdi_on_message(conn *c, const uint8_t *data, size_t len)
         net_close_conn(c); /* 取消接管：断开连接，前端回到登录页 */
         break;
     case MSG_SET_FPS:
+        if (!rt_state_is(rt, S_RUNNING))
+            break;
         if (len >= 2 && data[1] >= 1 && data[1] <= 120)
             atomic_store(&rt->fps, data[1]);
         break;
     case MSG_SET_CODEC:
+        if (!rt_state_is(rt, S_RUNNING))
+            break;
         /* 格式: [type][staticSkip(1)][bitrateKbps(2)][crf(1)]
          * 仅更新原子参数，编码器在抓帧线程里按需 reconfig，避免跨线程调用 */
         if (len >= 5)
@@ -608,11 +612,17 @@ void vdi_on_message(conn *c, const uint8_t *data, size_t len)
         }
         break;
     case MSG_SET_ANIMATIONS:
+        /* 未认证连接也能伪造登录尝试里的用户名，这里必须校验已登录，
+         * 否则未鉴权即可给任意账户改 gsettings */
+        if (!rt_state_is(rt, S_RUNNING))
+            break;
         if (len >= 2 && rt->user[0])
             set_user_gsettings(rt->user, "org.gnome.desktop.interface",
                                "enable-animations", data[1] ? "true" : "false");
         break;
     case MSG_SET_AUDIO:
+        if (!rt_state_is(rt, S_RUNNING))
+            break;
         if (len >= 2)
         {
             atomic_store(&rt->audio_enabled, data[1] ? 1 : 0);
@@ -623,10 +633,14 @@ void vdi_on_message(conn *c, const uint8_t *data, size_t len)
         }
         break;
     case MSG_SET_CLIPBOARD:
+        if (!rt_state_is(rt, S_RUNNING))
+            break;
         /* 剪贴板共享在当前 Xvfb+GNOME 环境不可用（GNOME 剪贴板管理
          * 会破坏 CLIPBOARD owner 并造成事件死循环），暂时禁用 */
         break;
     case MSG_CLIPBOARD:
+        if (!rt_state_is(rt, S_RUNNING))
+            break;
         /* 前端剪贴板内容 → 注入 X11 剪贴板 */
         clip_set(rt, data + 1, len - 1);
         break;
