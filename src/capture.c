@@ -221,7 +221,7 @@ void *capture_thread(void *arg)
     {
         cap->cursor_event_base = cev;
         XFixesSelectCursorInput(cap->dpy, cap->root, XFixesDisplayCursorNotifyMask);
-        clip_init(rt, cev); /* 订阅 CLIPBOARD owner 变化 */
+        clip_init(rt, cev); /* 订阅 CLIPBOARD owner 变化（功能禁用时无副作用） */
     }
 
     while (atomic_load(&cap->running))

@@ -108,6 +108,9 @@ void input_handle_mouse(runtime *rt, const uint8_t *data, size_t len)
     int flags = data[1];
     int x = data[2] | (data[3] << 8);
     int y = data[4] | (data[5] << 8);
+    if (flags & MOUSE_FLAG_BUTTON)
+        log_info("[input] mouse btn x=%d y=%d btn=%d %s", x, y, data[6],
+                 data[7] ? "按下" : "释放");
 
     pthread_mutex_lock(&rt->cap.xlock);
     if (flags & MOUSE_FLAG_BUTTON)
@@ -150,6 +153,7 @@ void input_handle_key(runtime *rt, const uint8_t *data, size_t len)
     KeyCode kc = XKeysymToKeycode(rt->cap.dpy, ks);
     if (!kc)
         return;
+    log_info("[input] key %s %s", code, pressed ? "按下" : "释放");
 
     pthread_mutex_lock(&rt->cap.xlock);
     XTestFakeKeyEvent(rt->cap.dpy, kc, pressed, 0);

@@ -544,6 +544,13 @@ int session_bring_up(runtime *rt, const char *user, int w, int h)
         }
     }
     spawn_session_app(rt, user);
+    /* 禁用 GNOME 自动锁屏：Xvfb 环境下锁屏界面存在输入异常，
+     * 登录后直接进桌面，避免锁屏无法输入密码 */
+    set_user_gsettings(user, "org.gnome.desktop.screensaver",
+                       "lock-enabled", "false");
+    set_user_gsettings(user, "org.gnome.desktop.screensaver",
+                       "idle-activation-enabled", "false");
+    set_user_gsettings(user, "org.gnome.desktop.session", "idle-delay", "0");
 
     atomic_store(&rt->cap.running, 1);
     if (pthread_create(&rt->cap.cap_thread, NULL, capture_thread, rt) != 0)
