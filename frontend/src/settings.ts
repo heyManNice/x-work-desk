@@ -1,6 +1,6 @@
 /* 登录页设置面板：偏好持久化（localStorage）+ 控件交互 + 各设置下发 */
 
-import { msgSetFps, msgSetCodec, msgSetAnimations, msgSetAudio } from './protocol';
+import { msgSetFps, msgSetCodec, msgSetAnimations, msgSetAudio, msgSetClipboard } from './protocol';
 
 export type RatioMode = 'fit' | 'stretch' | 'pixel';
 
@@ -11,6 +11,7 @@ export interface SettingsContext {
     debugHud: HTMLElement;
     isActive: () => boolean;
     onAudioToggle: (enable: boolean) => void; /* 打开/关闭前端音频播放 */
+    onClipboardToggle: (enable: boolean) => void; /* 打开/关闭前端剪贴板监听 */
 }
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string): T =>
@@ -22,6 +23,7 @@ const setDebug = $('#set-debug') as HTMLInputElement;
 const setStatic = $('#set-static') as HTMLInputElement;
 const setAnim = $('#set-anim') as HTMLInputElement;
 const setAudio = $('#set-audio') as HTMLInputElement;
+const setClipboard = $('#set-clipboard') as HTMLInputElement;
 const setBitrate = $('#set-bitrate') as HTMLSelectElement;
 const setQuality = $('#set-quality') as HTMLSelectElement;
 const rowQuality = $('#row-quality') as HTMLElement;
@@ -36,6 +38,7 @@ export interface Prefs {
     static?: boolean;
     anim?: boolean;
     audio?: boolean;
+    clipboard?: boolean;
     bitrate?: number;
     quality?: number;
     fps?: number;
@@ -50,6 +53,7 @@ let ctx: SettingsContext = {
     debugHud: document.createElement('div'),
     isActive: () => false,
     onAudioToggle: () => {},
+    onClipboardToggle: () => {},
 };
 
 function loadPrefs(): Prefs {
@@ -98,6 +102,11 @@ function applyAudioPref(): void {
     if (ctx.isActive()) ctx.send(msgSetAudio(setAudio.checked));
 }
 
+function applyClipboardPref(): void {
+    ctx.onClipboardToggle(setClipboard.checked);
+    if (ctx.isActive()) ctx.send(msgSetClipboard(setClipboard.checked));
+}
+
 /* 固定分辨率（设置面板选择）；返回 null 表示自动跟随视口 */
 export function getFixedResolution(): [number, number] | null {
     const v = setRes.value;
@@ -138,6 +147,7 @@ export function applyAllPrefs(): void {
     applyCodecPref();
     applyAnimPref();
     applyAudioPref();
+    applyClipboardPref();
 }
 
 export function initSettings(c: SettingsContext): void {
@@ -149,6 +159,7 @@ export function initSettings(c: SettingsContext): void {
     setStatic.checked = prefs.static !== false;
     setAnim.checked = prefs.anim !== false; /* 默认禁用动画（性能优先） */
     setAudio.checked = prefs.audio === true; /* 默认关闭音频传输 */
+    setClipboard.checked = prefs.clipboard === true; /* 默认关闭剪贴板共享 */
     setBitrate.value = String(prefs.bitrate ?? 0);
     setQuality.value = String(prefs.quality ?? 23);
     setFps.value = String(prefs.fps && prefs.fps > 0 ? prefs.fps : 30);
@@ -191,6 +202,11 @@ export function initSettings(c: SettingsContext): void {
     setAudio.addEventListener('change', () => {
         savePrefs({ ...loadPrefs(), audio: setAudio.checked });
         applyAudioPref();
+    });
+
+    setClipboard.addEventListener('change', () => {
+        savePrefs({ ...loadPrefs(), clipboard: setClipboard.checked });
+        applyClipboardPref();
     });
 
     setBitrate.addEventListener('change', () => {

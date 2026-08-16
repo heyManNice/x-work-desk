@@ -9,6 +9,7 @@
 #define MSG_SESSION_EXISTS 0x05 /* 该账户已有活跃会话（询问是否注销接管） */
 #define MSG_CURSOR 0x06       /* 光标图像：w(2) h(2) hx(2) hy(2) + RGBA */
 #define MSG_AUDIO 0x07        /* Opus 音频帧（20ms/帧） */
+#define MSG_CLIPBOARD 0x08    /* 剪贴板文本（UTF-8，双向） */
 
 /* ---------- 客户端 -> 服务端 ---------- */
 #define MSG_LOGIN 0x10    /* userLen(2) user passLen(2) pass w(2) h(2) */
@@ -22,6 +23,7 @@
 #define MSG_SET_CODEC 0x18       /* 编码设置：staticSkip(1) bitrateKbps(2) crf(1) */
 #define MSG_SET_ANIMATIONS 0x19  /* 桌面动画开关：enable(1) */
 #define MSG_SET_AUDIO 0x1a       /* 音频传输开关：enable(1) */
+#define MSG_SET_CLIPBOARD 0x1b   /* 剪贴板共享开关：enable(1) */
 
 #define VIDEO_FLAG_KEY 0x01    /* MSG_VIDEO flags: 关键帧 */
 #define MOUSE_FLAG_MOTION 0x01 /* MSG_MOUSE flags */

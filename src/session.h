@@ -12,6 +12,18 @@ struct AVCodecContext;
 struct AVFrame;
 struct AVPacket;
 
+/* 剪贴板共享状态（每会话独立，避免多用户内容串扰） */
+typedef struct clip_ctx
+{
+    int event_base;          /* XFixes 事件基号 */
+    unsigned long last_hash; /* 上次推送内容的哈希 */
+    Window owner_win;        /* 剪贴板 owner 窗口 */
+    Atom clip_atom, primary_atom, utf8_atom, text_atom, targets_atom;
+    uint8_t *own_text;       /* 我们作为 owner 提供的内容 */
+    size_t own_len;
+    pthread_mutex_t lock;
+} clip_ctx;
+
 /* I420 帧缓冲 + 几何信息：capture 填充、encoder 消费 */
 typedef struct video_buf
 {
@@ -97,6 +109,12 @@ struct runtime
     pthread_t audio_thread;
     pid_t audio_pid; /* pw-record 采集子进程 */
     struct AVCodecContext *audio_ctx; /* Opus 编码器 */
+
+    /* ---- 剪贴板共享（每会话独立状态） ---- */
+    int _Atomic clip_enabled;
+    clip_ctx clip;
+    int _Atomic clip_pending_own;  /* 前端内容就绪，capture 线程执行 XSetSelectionOwner */
+    int _Atomic clip_pending_read; /* 剪贴板变化，capture 线程锁外读取并推送 */
 
     video_buf video;
     proc_ctx proc;

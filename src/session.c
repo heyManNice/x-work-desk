@@ -4,6 +4,7 @@
 #include "sessproc.h"
 #include "sess_table.h"
 #include "audio.h"
+#include "clip.h"
 #include "protocol.h"
 #include "config.h"
 #include "auth.h"
@@ -486,6 +487,14 @@ void vdi_on_message(conn *c, const uint8_t *data, size_t len)
             else
                 audio_stop(rt);
         }
+        break;
+    case MSG_SET_CLIPBOARD:
+        /* 剪贴板共享在当前 Xvfb+GNOME 环境不可用（GNOME 剪贴板管理
+         * 会破坏 CLIPBOARD owner 并造成事件死循环），暂时禁用 */
+        break;
+    case MSG_CLIPBOARD:
+        /* 前端剪贴板内容 → 注入 X11 剪贴板 */
+        clip_set(rt, data + 1, len - 1);
         break;
     default:
         break;

@@ -10,11 +10,13 @@ import {
     MSG_SESSION_EXISTS,
     MSG_CURSOR,
     MSG_AUDIO,
+    MSG_CLIPBOARD,
     msgLogin,
     msgResize,
     msgKeyframe,
     msgTakeover,
     msgTakeoverCancel,
+    msgClipboard,
 } from './protocol';
 import { VideoRenderer } from './decoder';
 import { InputRelay } from './input';
@@ -46,6 +48,8 @@ let ws: WebSocket | null = null;
 let renderer: VideoRenderer | null = null;
 let relay: InputRelay | null = null;
 const audioPlayer = new AudioPlayer();
+let clipboardEnabled = false;
+let clipCache = '';
 let pendingLogin: { user: string; pass: string; w: number; h: number } | null = null;
 let active = false;
 let resizeTimer = 0;
@@ -114,7 +118,9 @@ function connect(): void {
 
 function handleMessage(b: Uint8Array): void {
     const t = b[0];
-    if (t === MSG_AUDIO) {
+    if (t === MSG_CLIPBOARD) {
+        clipWrite(new TextDecoder().decode(b.subarray(1)));
+    } else if (t === MSG_AUDIO) {
         audioPlayer.feed(b.subarray(1));
     } else if (t === MSG_CURSOR) {
         applyCursor(parseCursor(b));
@@ -146,6 +152,35 @@ function handleMessage(b: Uint8Array): void {
         onDisconnect();
     }
 }
+
+/* ---------- 剪贴板共享 ---------- */
+async function clipWrite(text: string): Promise<void> {
+    try {
+        await navigator.clipboard.writeText(text);
+        clipCache = text;
+    } catch {
+        /* 无用户手势时写入可能被拒；内容已在远程，提示用户手动粘贴 */
+    }
+}
+
+/* 页面获得焦点/可见时读取浏览器剪贴板，内容变化则推送服务端 */
+async function clipReadPush(): Promise<void> {
+    if (!clipboardEnabled) return;
+    try {
+        const t = await navigator.clipboard.readText();
+        if (t && t !== clipCache) {
+            clipCache = t;
+            send(msgClipboard(t));
+        }
+    } catch {
+        /* 无权限/非手势读取失败则忽略 */
+    }
+}
+
+window.addEventListener('focus', () => { void clipReadPush(); });
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) void clipReadPush();
+});
 
 /* 应用远程光标：转成 data URL 后设为 canvas 的 CSS cursor（含热点） */
 function applyCursor(c: CursorImage): void {
@@ -303,5 +338,6 @@ initSettings({
     debugHud,
     isActive: () => active,
     onAudioToggle: (enable) => (enable ? audioPlayer.start() : audioPlayer.stop()),
+    onClipboardToggle: (enable) => { clipboardEnabled = enable; },
 });
 setResizeRequest(() => sendResize());

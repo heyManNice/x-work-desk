@@ -6,6 +6,7 @@
 #include "config.h"
 #include "encoder.h"
 #include "util.h"
+#include "clip.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -220,6 +221,7 @@ void *capture_thread(void *arg)
     {
         cap->cursor_event_base = cev;
         XFixesSelectCursorInput(cap->dpy, cap->root, XFixesDisplayCursorNotifyMask);
+        clip_init(rt, cev); /* 订阅 CLIPBOARD owner 变化 */
     }
 
     while (atomic_load(&cap->running))
@@ -229,7 +231,9 @@ void *capture_thread(void *arg)
         pthread_mutex_lock(&cap->xlock);
         int ok = XShmGetImage(cap->dpy, cap->root, cap->img, 0, 0, AllPlanes);
         cursor_check(rt); /* 光标变化检查（同一 X 连接，xlock 内） */
+        clip_check(rt);   /* 剪贴板 X 事件与 owner 设置（xlock 内） */
         pthread_mutex_unlock(&cap->xlock);
+        clip_read_push(rt); /* 剪贴板读取（可能阻塞，锁外） */
 
         if (ok)
         {
