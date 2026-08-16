@@ -96,3 +96,7 @@ void vdi_on_message(conn *c, const uint8_t *data, size_t len);
 void vdi_on_close(conn *c);
 void session_sweep(void); /* 事件循环周期调用：清理已结束的会话 */
 void session_shutdown_all(void); /* 服务退出前清理所有会话（优雅停机） */
+
+/* runtime 引用计数（sess_table.c 等模块使用） */
+void runtime_ref(runtime *rt);
+void runtime_unref(runtime *rt);
