@@ -241,42 +241,6 @@ function showDesktop(): void {
     relay?.setActive(true);
     canvas.focus();
     sendResize(); /* 进入桌面后按当前视口同步分辨率 */
-    triggerPasswordSave(); /* 登录成功后触发浏览器保存密码 */
-}
-
-/* 触发浏览器原生"保存密码"提示（无页面跳转、应用不保存任何密码）。
- * 隐藏 iframe 里的表单使用标准的 username/password 字段名，让浏览器识别为登录表单。
- * 页面内可见表单使用唯一字段名，仅用于避免自动填充建议，与保存无关。 */
-function triggerPasswordSave(): void {
-    try {
-        let frame = document.getElementById('pw-save-frame') as HTMLIFrameElement | null;
-        if (!frame) {
-            frame = document.createElement('iframe');
-            frame.id = 'pw-save-frame';
-            frame.name = 'pw-save-frame';
-            frame.style.display = 'none';
-            document.body.appendChild(frame);
-        }
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = '/';
-        form.target = 'pw-save-frame';
-        const u = document.createElement('input');
-        u.type = 'text';
-        u.name = 'username';
-        u.value = userInput.value.trim();
-        const p = document.createElement('input');
-        p.type = 'password';
-        p.name = 'password';
-        p.value = passInput.value;
-        form.appendChild(u);
-        form.appendChild(p);
-        document.body.appendChild(form);
-        form.submit();
-        form.remove();
-    } catch {
-        /* 忽略：某些环境不提示也不影响使用 */
-    }
 }
 
 function loginFail(text?: string): void {
