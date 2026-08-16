@@ -55,26 +55,25 @@ int init_shm(capture_ctx *cap, int width, int height)
     return 0;
 }
 
-/* ---------------- BGRA(32bpp) -> I420 ---------------- */
+/* ---------------- BGRA(32bpp) -> NV12 ---------------- */
 static inline uint8_t rgb2y(int r, int g, int b) { return (uint8_t)((66 * r + 129 * g + 25 * b + 128) >> 8) + 16; }
 static inline uint8_t rgb2u(int r, int g, int b) { return (uint8_t)((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128; }
 static inline uint8_t rgb2v(int r, int g, int b) { return (uint8_t)((112 * r - 94 * g - 18 * b + 128) >> 8) + 128; }
 
-static void bgra_to_i420(const uint8_t *bgra, video_buf *vb)
+/* NV12：Y 平面 + 交错 UV 平面（硬件编码器 NVENC/VAAPI 的通用输入格式） */
+static void bgra_to_nv12(const uint8_t *bgra, video_buf *vb)
 {
     int w = vb->width, h = vb->height;
     uint8_t *yuv = vb->yuv;
     uint8_t *Y = yuv;
-    uint8_t *U = yuv + (size_t)w * h;
-    uint8_t *V = yuv + (size_t)w * h + (size_t)(w / 2) * (h / 2);
+    uint8_t *UV = yuv + (size_t)w * h;
     for (int j = 0; j < h; j++)
     {
         const uint8_t *row = bgra + (size_t)j * w * 4;
         uint8_t *yrow = Y + (size_t)j * w;
         if ((j & 1) == 0)
         {
-            uint8_t *urow = U + (size_t)(j / 2) * (w / 2);
-            uint8_t *vrow = V + (size_t)(j / 2) * (w / 2);
+            uint8_t *uvrow = UV + (size_t)(j / 2) * w;
             for (int i = 0; i < w; i += 2)
             {
                 int b = row[i * 4], g = row[i * 4 + 1], r = row[i * 4 + 2];
@@ -82,8 +81,8 @@ static void bgra_to_i420(const uint8_t *bgra, video_buf *vb)
                 yrow[i] = rgb2y(r, g, b);
                 yrow[i + 1] = rgb2y(r2, g2, b2);
                 int rr = (r + r2) >> 1, gg = (g + g2) >> 1, bb = (b + b2) >> 1;
-                urow[i / 2] = rgb2u(rr, gg, bb);
-                vrow[i / 2] = rgb2v(rr, gg, bb);
+                uvrow[i] = rgb2u(rr, gg, bb);
+                uvrow[i + 1] = rgb2v(rr, gg, bb);
             }
         }
         else
@@ -239,7 +238,7 @@ void *capture_thread(void *arg)
             int skip_static = atomic_load(&rt->static_skip) != 0;
             if (need_key || !skip_static || frame_changed(cap, &rt->video))
             {
-                bgra_to_i420((const uint8_t *)cap->img->data, &rt->video);
+                bgra_to_nv12((const uint8_t *)cap->img->data, &rt->video);
                 encode_frame(rt);
             }
         }

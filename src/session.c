@@ -49,11 +49,7 @@ static void runtime_teardown(runtime *rt)
         XCloseDisplay(rt->cap.dpy);
         rt->cap.dpy = NULL;
     }
-    if (rt->enc.enc)
-    {
-        x264_encoder_close(rt->enc.enc);
-        rt->enc.enc = NULL;
-    }
+    encoder_destroy(&rt->enc);
     free(rt->video.yuv);
     rt->video.yuv = NULL;
     free(rt->enc.sps);
@@ -185,27 +181,6 @@ static void push_login_result(conn *c, int ok, const char *txt)
     free(buf);
 }
 
-static void push_config(conn *c, runtime *rt)
-{
-    size_t len = 9 + rt->enc.sps_len + rt->enc.pps_len;
-    uint8_t *buf = malloc(len);
-    uint8_t *p = buf;
-    *p++ = MSG_CONFIG;
-    wr_u16(p, (uint16_t)rt->video.width);
-    p += 2;
-    wr_u16(p, (uint16_t)rt->video.height);
-    p += 2;
-    wr_u16(p, (uint16_t)rt->enc.sps_len);
-    p += 2;
-    memcpy(p, rt->enc.sps, rt->enc.sps_len);
-    p += rt->enc.sps_len;
-    wr_u16(p, (uint16_t)rt->enc.pps_len);
-    p += 2;
-    memcpy(p, rt->enc.pps, rt->enc.pps_len);
-    net_push(c, buf, len, 0);
-    free(buf);
-}
-
 /* ---------------- 登录工作线程 ---------------- */
 typedef struct login_job
 {
@@ -231,7 +206,7 @@ static void takeover_session(runtime *sess, conn *c)
     runtime_ref(sess); /* 新连接持有会话引用 */
     atomic_store(&sess->conn, c);
     c->vdi = sess;
-    push_config(c, sess);
+    /* CONFIG 由抓帧线程在首个关键帧后发送；这里强制请求关键帧 */
     atomic_store(&sess->cap.req_keyframe, 1);
 }
 
@@ -332,11 +307,7 @@ static void *login_worker(void *arg)
 
     push_login_result(c, 1, "ok");
     session_register(rt, j->user);
-    /* 与 runtime_restart 互斥，避免读取到被替换的 SPS/PPS */
-    pthread_mutex_lock(&rt->lock);
-    push_config(c, rt);
     log_info("登录完成: %s -> %s", j->user, rt->proc.display_str);
-    pthread_mutex_unlock(&rt->lock);
 
     conn_unref(c);
     runtime_unref(rt);
@@ -449,7 +420,6 @@ static void handle_takeover_msg(conn *c, runtime *rt)
     }
     session_register(rt, rt->user);
     push_login_result(c, 1, "ok");
-    push_config(c, rt);
     atomic_store(&rt->cap.req_keyframe, 1);
     log_info("接管并重建会话: %s -> %s", rt->user, rt->proc.display_str);
 }
@@ -535,10 +505,7 @@ static int runtime_restart(runtime *rt, int w, int h)
         return -1;
     }
 
-    /* 通知前端新分辨率与新参数集 */
-    conn *c = atomic_load(&rt->conn);
-    if (c)
-        push_config(c, rt);
+    /* CONFIG 由抓帧线程在重建后的首个关键帧发送 */
     atomic_store(&rt->cap.req_keyframe, 1);
     log_info("会话重建完成: %s (%dx%d)", rt->user, rt->video.width, rt->video.height);
     pthread_mutex_unlock(&rt->lock);

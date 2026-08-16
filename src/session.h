@@ -6,7 +6,11 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <sys/types.h>
-#include <x264.h>
+
+/* FFmpeg 编码器上下文（仅前向声明，具体实现在 encoder.c） */
+struct AVCodecContext;
+struct AVFrame;
+struct AVPacket;
 
 /* I420 帧缓冲 + 几何信息：capture 填充、encoder 消费 */
 typedef struct video_buf
@@ -49,10 +53,12 @@ typedef struct capture_ctx
 /* 编码器子系统的自有状态 */
 typedef struct encoder_ctx
 {
-    x264_t *enc;
-    x264_param_t param; /* 当前编码参数（运行期 reconfig 用） */
-    int cur_kbps;       /* 当前生效码率（0=CRF 质量模式） */
-    int cur_crf;        /* 当前生效 CRF */
+    struct AVCodecContext *ctx; /* FFmpeg 编码上下文 */
+    struct AVFrame *frame;      /* 输入帧（NV12） */
+    struct AVPacket *pkt;       /* 输出包 */
+    int kind;                   /* 0=libx264 1=nvenc 2=vaapi */
+    int cur_kbps;               /* 当前生效码率（0=质量模式） */
+    int cur_crf;                /* 当前生效质量档 */
     uint8_t *sps;
     size_t sps_len;
     uint8_t *pps;

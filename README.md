@@ -18,7 +18,7 @@
 │  · session.c  会话管理：每个登录用户一个 runtime                              │
 │  · auth.c     shadow+crypt 认证（需 root）；--auth none 开发模式               │
 │  · capture.c  Xvfb 虚拟屏 + XShmGetImage 抓帧 + BGRA→I420                     │
-│  · encoder.c  x264 (ultrafast, zerolatency, baseline) H.264 编码              │
+│  · encoder.c  H.264 编码（FFmpeg：NVENC/VAAPI 硬件优先，回退 libx264）      │
 │  · input.c    XTestFakeMotion/Button/Key 输入注入                              │
 └────────────────────────────────────┬─────────────────────────────────────────┘
                                      │ 启动 / 认证
@@ -51,11 +51,12 @@
 ## 构建
 
 依赖：`gcc meson ninja node npm Xvfb xauth` + X11 开发头文件
-（`libx11-dev libxext-dev libxtst-dev`）+ `libx264`（无系统包时自建）。
+（`libx11-dev libxext-dev libxtst-dev libxfixes-dev`）+ FFmpeg 开发库
+（`libavcodec-dev libavutil-dev`；硬件编码需系统含 NVENC/VAAPI 支持）。
 
 ```bash
-# 1) 构建 x264（若系统无 libx264-dev / 无法 sudo）
-cd third_party/x264 && ./configure --disable-asm --disable-cli --enable-static && make -j$(nproc)
+# 1) 安装依赖（Debian/Ubuntu）
+sudo apt install libavcodec-dev libavutil-dev libxfixes-dev
 
 # 2) 后端（meson）
 meson setup build && ninja -C build      # 产出 build/xworkd
@@ -157,7 +158,6 @@ src/                后端 C 源码（meson 管理）
 frontend/           前端 Vite + 原生 TS
 deploy/             systemd 单元、安装脚本、nginx TLS 反代示例
 docs/DEPLOYMENT.md  生产部署指南（权限、用户管理、资源规划、运维）
-third_party/x264   x264 源码（自建）
 test/               冒烟测试脚本（node WebSocket 客户端等）
 ```
 

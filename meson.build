@@ -4,11 +4,6 @@ project('xworkd', 'c',
 
 cc = meson.get_compiler('c')
 
-# ---- 自建 x264（third_party/x264，由 make 构建） ----
-x264_dir = meson.current_source_dir() / 'third_party' / 'x264'
-x264_inc = include_directories('third_party/x264')
-x264_lib = cc.find_library('x264', dirs: [x264_dir])
-
 # ---- X11 / 系统库 ----
 deps = []
 foreach p : ['x11', 'xext', 'xtst', 'xfixes']
@@ -27,6 +22,18 @@ deps += pam_dep
 
 crypt_dep = cc.find_library('crypt', required: false)
 deps += crypt_dep
+
+avcodec_dep = dependency('libavcodec', required: false)
+if not avcodec_dep.found()
+  avcodec_dep = cc.find_library('avcodec', required: true)
+endif
+deps += avcodec_dep
+
+avutil_dep = dependency('libavutil', required: false)
+if not avutil_dep.found()
+  avutil_dep = cc.find_library('avutil', required: true)
+endif
+deps += avutil_dep
 
 m_dep = cc.find_library('m', required: false)
 deps += m_dep
@@ -50,8 +57,7 @@ executable('xworkd',
     'src/encoder.c',
     'src/input.c',
   ],
-  include_directories: x264_inc,
-  dependencies: deps + [x264_lib],
+  dependencies: deps,
   install: true)
 
 # 前端构建（若存在 node_modules，则纳入 ninja 构建）

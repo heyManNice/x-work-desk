@@ -39,12 +39,14 @@ export class VideoRenderer {
         }
         this.decoder = new VideoDecoder({
             output: (frame: VideoFrame) => this.draw(frame),
-            error: () => {
+            error: (e) => {
                 this.haveKey = false;
+                this.onError?.(`解码错误: ${String(e)}`);
                 this.onKeyframeRequest?.();
             },
         });
-        /* 不带 description：关键帧内已含 SPS/PPS，直接喂 Annex-B 字节流 */
+        /* 关键帧自带 SPS/PPS（服务端未使用 global header），
+         * 解码器不需要 description，直接喂 Annex-B 字节流 */
         this.decoder.configure({
             codec,
             optimizeForLatency: true,
@@ -70,8 +72,9 @@ export class VideoRenderer {
                 })
             );
             if (isKey) this.haveKey = true;
-        } catch {
+        } catch (e) {
             this.haveKey = false;
+            this.onError?.(`解码失败: ${String(e)}`);
             this.onKeyframeRequest?.();
         }
     }

@@ -516,7 +516,7 @@ int session_bring_up(runtime *rt, const char *user, int w, int h)
 
     if (init_shm(&rt->cap, rt->video.width, rt->video.height) != 0)
         return -1;
-    if (init_encoder(&rt->enc, &rt->video, g_cfg.fps) != 0)
+    if (init_encoder(rt) != 0)
         return -1;
     /* 确保目标用户的 systemd 实例在运行，提供 /run/user/<uid>/bus
      * （snap 等应用依赖；启动失败时桌面仍可用 dbus-run-session 兜底） */
