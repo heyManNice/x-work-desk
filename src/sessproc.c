@@ -107,23 +107,17 @@ void set_user_gsettings(const char *user, const char *schema,
         waitpid(pid, NULL, 0);
 }
 
+/* 带超时的命令等待（timeout_ms<0 表示不限时），见下方实现 */
+int run_cmd_wait_timeout(char *const argv[], int timeout_ms);
+
 int run_cmd_wait(char *const argv[])
 {
-    pid_t pid = fork();
-    if (pid < 0)
-        return -1;
-    if (pid == 0)
-    {
-        execvp(argv[0], argv);
-        _exit(127);
-    }
-    int st;
-    waitpid(pid, &st, 0);
-    return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+    return run_cmd_wait_timeout(argv, -1);
 }
 
-/* 带超时的命令等待：systemctl 等调用在用户 systemd 实例被会话关机风暴
- * 卡住时可能阻塞到默认 90s 超时，这里限制最大等待时间，超时杀掉子进程 */
+/* systemctl 等调用在用户
+ * systemd 实例被会话关机风暴卡住时可能阻塞到默认 90s 超时，限制最大等待
+ * 时间，超时杀掉子进程 */
 int run_cmd_wait_timeout(char *const argv[], int timeout_ms)
 {
     pid_t pid = fork();
@@ -135,6 +129,11 @@ int run_cmd_wait_timeout(char *const argv[], int timeout_ms)
         _exit(127);
     }
     int st;
+    if (timeout_ms < 0)
+    {
+        waitpid(pid, &st, 0);
+        return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+    }
     int waited = 0;
     for (;;)
     {

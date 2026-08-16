@@ -7,6 +7,7 @@
 #include "config.h"
 #include "auth.h"
 #include "net.h"
+#include "session.h"
 #include "util.h"
 #include "protocol.h"
 
@@ -126,5 +127,6 @@ int main(int argc, char **argv)
     }
     log_info("开始服务...");
     net_run();
+    runtime_wait_destroyed(); /* 等待异步会话销毁收尾，避免孤儿 X/进程 */
     return 0;
 }

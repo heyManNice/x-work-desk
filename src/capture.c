@@ -31,6 +31,15 @@ static void drain_randr_events(capture_ctx *cap)
         XRRUpdateConfiguration(&ev);
 }
 
+/* 刷新屏幕尺寸缓存（先消费 RandR 事件，避免读到旧值） */
+static void refresh_screen_size(capture_ctx *cap, int *w, int *h)
+{
+    XSync(cap->dpy, False);
+    drain_randr_events(cap);
+    *w = DisplayWidth(cap->dpy, DefaultScreen(cap->dpy));
+    *h = DisplayHeight(cap->dpy, DefaultScreen(cap->dpy));
+}
+
 /* 按 w×h 重建 SHM 图像与编码器（调用方需持有 cap->xlock）。
  * 假定 X 服务器屏幕已经是 w×h。 */
 static int rebuild_capture(runtime *rt, int w, int h)
@@ -335,18 +344,16 @@ void *capture_thread(void *arg)
             {
                 if (session_resize_capture(rt, dw, dh) != 0)
                 {
-                    XSync(cap->dpy, False);
-                    drain_randr_events(cap);
-                    rebuild_capture(rt, DisplayWidth(cap->dpy, DefaultScreen(cap->dpy)),
-                                    DisplayHeight(cap->dpy, DefaultScreen(cap->dpy)));
+                    int aw, ah;
+                    refresh_screen_size(cap, &aw, &ah);
+                    rebuild_capture(rt, aw, ah);
                 }
             }
             else
             {
-                XSync(cap->dpy, False);
-                drain_randr_events(cap);
-                rebuild_capture(rt, DisplayWidth(cap->dpy, DefaultScreen(cap->dpy)),
-                                DisplayHeight(cap->dpy, DefaultScreen(cap->dpy)));
+                int aw, ah;
+                refresh_screen_size(cap, &aw, &ah);
+                rebuild_capture(rt, aw, ah);
             }
             pthread_mutex_unlock(&cap->xlock);
             continue;

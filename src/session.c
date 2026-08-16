@@ -167,10 +167,54 @@ static void runtime_destroy(runtime *rt)
     free(rt);
 }
 
+/* ---- 异步销毁：teardown 含音频/抓帧线程 join，可能阻塞（如采集链路
+ * 无数据时音频线程卡在 read）。若在事件循环里同步执行，单会话注销就会
+ * 冻结整个服务器（所有用户 + HTTP）。这里把销毁挪到独立工作线程，
+ * 事件循环永不阻塞；停机时用 runtime_wait_destroyed() 等待收尾。 ---- */
+static pthread_mutex_t g_destroy_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_destroy_cond = PTHREAD_COND_INITIALIZER;
+static int g_destroy_pending = 0;
+
+static void *destroy_worker(void *arg)
+{
+    runtime *rt = arg;
+    runtime_teardown(rt);
+    pthread_mutex_destroy(&rt->lock);
+    free(rt);
+    pthread_mutex_lock(&g_destroy_lock);
+    g_destroy_pending--;
+    pthread_cond_broadcast(&g_destroy_cond);
+    pthread_mutex_unlock(&g_destroy_lock);
+    return NULL;
+}
+
+void runtime_wait_destroyed(void)
+{
+    pthread_mutex_lock(&g_destroy_lock);
+    while (g_destroy_pending > 0)
+        pthread_cond_wait(&g_destroy_cond, &g_destroy_lock);
+    pthread_mutex_unlock(&g_destroy_lock);
+}
+
 void runtime_unref(runtime *rt)
 {
     if (__sync_sub_and_fetch(&rt->refs, 1) == 0)
-        runtime_destroy(rt);
+    {
+        pthread_mutex_lock(&g_destroy_lock);
+        g_destroy_pending++;
+        pthread_mutex_unlock(&g_destroy_lock);
+        pthread_t th;
+        if (pthread_create(&th, NULL, destroy_worker, rt) == 0)
+            pthread_detach(th);
+        else
+        {
+            /* 线程创建失败：回滚计数并同步销毁（阻塞总比泄漏好） */
+            pthread_mutex_lock(&g_destroy_lock);
+            g_destroy_pending--;
+            pthread_mutex_unlock(&g_destroy_lock);
+            runtime_destroy(rt);
+        }
+    }
 }
 
 /* ---------------- vdi 会话入口（net.c 调用） ---------------- */
