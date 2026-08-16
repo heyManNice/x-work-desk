@@ -217,5 +217,14 @@ void audio_stop(runtime *rt)
 {
     if (!atomic_exchange(&rt->audio_running, 0))
         return;
+    /* 先杀掉采集子进程（含后台 pw-record）关闭管道写端：
+     * 否则若 pw-record 链接失效/无数据输出，音频线程会一直阻塞在
+     * read() 上，pthread_join 永久挂起，卡死事件循环（注销后页面无响应） */
+    pid_t apid = rt->audio_pid;
+    if (apid > 0)
+    {
+        kill(-apid, SIGTERM);
+        kill(apid, SIGTERM);
+    }
     pthread_join(rt->audio_thread, NULL);
 }
