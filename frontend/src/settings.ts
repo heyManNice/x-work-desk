@@ -72,6 +72,11 @@ function savePrefs(p: Prefs): void {
     }
 }
 
+/* 局部更新偏好：读取当前值 → 合并 → 写回 */
+function updatePref(patch: Partial<Prefs>): void {
+    savePrefs({ ...loadPrefs(), ...patch });
+}
+
 function applyDebugPref(show: boolean): void {
     ctx.debugHud.style.display = show ? '' : 'none';
 }
@@ -191,55 +196,55 @@ export function initSettings(c: SettingsContext): void {
     });
 
     setDebug.addEventListener('change', () => {
-        savePrefs({ ...loadPrefs(), debug: setDebug.checked });
+        updatePref({ debug: setDebug.checked });
         applyDebugPref(setDebug.checked);
     });
 
     setStatic.addEventListener('change', () => {
-        savePrefs({ ...loadPrefs(), static: setStatic.checked });
+        updatePref({ static: setStatic.checked });
         applyCodecPref();
     });
 
     setAnim.addEventListener('change', () => {
-        savePrefs({ ...loadPrefs(), anim: setAnim.checked });
+        updatePref({ anim: setAnim.checked });
         applyAnimPref();
     });
 
     setAudio.addEventListener('change', () => {
-        savePrefs({ ...loadPrefs(), audio: setAudio.checked });
+        updatePref({ audio: setAudio.checked });
         applyAudioPref();
     });
 
     setClipboard.addEventListener('change', () => {
-        savePrefs({ ...loadPrefs(), clipboard: setClipboard.checked });
+        updatePref({ clipboard: setClipboard.checked });
         applyClipboardPref();
     });
 
     setBitrate.addEventListener('change', () => {
-        savePrefs({ ...loadPrefs(), bitrate: parseInt(setBitrate.value, 10) || 0 });
+        updatePref({ bitrate: parseInt(setBitrate.value, 10) || 0 });
         applyCodecPref();
     });
 
     setQuality.addEventListener('change', () => {
         const q = parseInt(setQuality.value, 10);
-        savePrefs({ ...loadPrefs(), quality: Number.isFinite(q) ? q : 23 });
+        updatePref({ quality: Number.isFinite(q) ? q : 23 });
         applyCodecPref();
     });
 
     setFps.addEventListener('change', () => {
         const fps = parseInt(setFps.value, 10) || 30;
-        savePrefs({ ...loadPrefs(), fps });
+        updatePref({ fps });
         applyFpsPref();
     });
 
     setRes.addEventListener('change', () => {
-        savePrefs({ ...loadPrefs(), res: setRes.value });
+        updatePref({ res: setRes.value });
         applyResRatioLock();
         if (ctx.isActive()) sendResize();
     });
 
     setRatio.addEventListener('change', () => {
-        savePrefs({ ...loadPrefs(), ratio: setRatio.value });
+        updatePref({ ratio: setRatio.value });
         applyRatio(setRatio.value as RatioMode, ctx.canvas.width, ctx.canvas.height);
     });
 }

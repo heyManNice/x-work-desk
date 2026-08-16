@@ -63,6 +63,9 @@ meson setup build && ninja -C build      # 产出 build/xworkd
 
 # 3) 前端（vite）
 cd frontend && npm install && npm run build   # 产出 frontend/dist
+
+# 4) 单元测试（纯逻辑模块，无需 X/FFmpeg，可无头运行）
+meson test -C build    # test-util / test-msgq / test-ws
 ```
 
 ## 运行

@@ -31,7 +31,7 @@ void conn_ref(conn *c)
 static void conn_free(conn *c)
 {
     free(c->rbuf);
-    free(c->msg);
+    ws_parser_destroy(&c->ws);
     free(c->snd);
     msgq_destroy(&c->outq);
     free(c);

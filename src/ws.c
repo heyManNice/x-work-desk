@@ -137,113 +137,43 @@ void ws_flush(conn *c)
     }
 }
 
-/* 解析缓冲中尽可能多的完整帧；剩余部分留在缓冲头部 */
+/* 解析缓冲中尽可能多的完整帧；剩余部分留在缓冲头部。
+ * 帧级解析由 ws_parser（无 I/O）完成，这里只做事件分发。 */
 void ws_on_data(conn *c)
 {
-    size_t len = c->rlen;
     size_t off = 0;
-    while (off < len)
+    while (off < c->rlen)
     {
-        if (c->ws_hdr)
+        int ev;
+        const uint8_t *payload = NULL;
+        size_t plen = 0;
+        int n = ws_parser_feed(&c->ws, c->rbuf + off, c->rlen - off,
+                               &ev, &payload, &plen);
+        if (n < 0)
         {
-            if (len - off < 2)
-                break;
-            uint8_t b0 = c->rbuf[off], b1 = c->rbuf[off + 1];
-            off += 2;
-            c->ws_final = (b0 & 0x80) != 0;
-            c->ws_opcode = b0 & 0x0f;
-            c->ws_masked = (b1 & 0x80) != 0;
-            uint64_t plen = b1 & 0x7f;
-            if (plen == 126)
-            {
-                if (len - off < 2)
-                    break;
-                plen = ((uint64_t)c->rbuf[off] << 8) | c->rbuf[off + 1];
-                off += 2;
-            }
-            else if (plen == 127)
-            {
-                if (len - off < 8)
-                    break;
-                plen = 0;
-                for (int i = 0; i < 8; i++)
-                    plen = (plen << 8) | c->rbuf[off + i];
-                off += 8;
-            }
-            if (c->ws_masked)
-            {
-                if (len - off < 4)
-                    break;
-                memcpy(c->ws_mask, c->rbuf + off, 4);
-                off += 4;
-            }
-            c->ws_payload_len = plen;
-            c->ws_have = 0;
-            c->ws_hdr = 0;
-            if (c->ws_opcode == 0x8)
-            {
-                net_close_conn(c);
-                return;
-            }
-            else if (c->ws_opcode == 0x9)
-                c->ws_msg_opcode = 0x9; /* ping */
-            else if (c->ws_opcode == 0xA)
-                c->ws_msg_opcode = 0xA; /* pong */
-            else if (c->ws_opcode == 0x0)
-            { /* continuation: 沿用 msg_opcode */
-            }
-            else
-                c->ws_msg_opcode = c->ws_opcode;
+            net_close_conn(c);
+            return;
         }
-        if (!c->ws_hdr)
-        {
-            uint64_t want = c->ws_payload_len - c->ws_have;
-            uint64_t avail = (uint64_t)(len - off);
-            uint64_t take = want < avail ? want : avail;
-            if (take > 0)
-            {
-                if (c->ws_msg_opcode == 0x2)
-                {
-                    if (c->ws_payload_len > (1u << 20))
-                    {
-                        net_close_conn(c);
-                        return;
-                    }
-                    if (!c->msg)
-                    {
-                        c->msgcap = (size_t)c->ws_payload_len + 1;
-                        c->msg = malloc(c->msgcap);
-                        c->msglen = 0;
-                    }
-                    for (uint64_t k = 0; k < take; k++)
-                    {
-                        uint8_t b = c->rbuf[off + k];
-                        if (c->ws_masked)
-                            b ^= c->ws_mask[(c->ws_have + k) & 3];
-                        c->msg[c->msglen++] = b;
-                    }
-                }
-                off += (size_t)take;
-                c->ws_have += take;
-            }
-            if (c->ws_have == c->ws_payload_len)
-            {
-                if (c->ws_msg_opcode == 0x2 && c->ws_final)
-                {
-                    vdi_on_message(c, c->msg, c->msglen);
-                }
-                else if (c->ws_msg_opcode == 0x9)
-                {
-                    ws_send_pong(c, c->msg, c->msglen);
-                }
-                free(c->msg);
-                c->msg = NULL;
-                c->msglen = c->msgcap = 0;
-                c->ws_hdr = 1;
-            }
-        }
-        if (off >= len)
+        if (n == 0)
             break;
+        off += (size_t)n;
+
+        switch (ev)
+        {
+        case WS_EV_BINARY:
+            session_on_message(c, payload, plen);
+            break;
+        case WS_EV_PING:
+            ws_send_pong(c, payload, plen);
+            break;
+        case WS_EV_PONG:
+            break;
+        case WS_EV_CLOSE:
+            net_close_conn(c);
+            return;
+        default:
+            break;
+        }
     }
     if (off > 0)
         conn_consume(c, off);

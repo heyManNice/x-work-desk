@@ -34,7 +34,7 @@ conn *conn_alloc(int fd)
     c->fd = fd;
     c->refs = 1;
     atomic_init(&c->closing, false);
-    c->ws_hdr = 1;
+    ws_parser_init(&c->ws, 1u << 20);
     /* 初始小预算；会话确定分辨率后由 session.c 按帧率/分辨率调整 */
     msgq_init(&c->outq, 512 * 1024);
     if (!conn_reserve(c, 4096))
@@ -62,8 +62,8 @@ void net_close_conn(conn *c)
         close(c->fd);
         c->fd = -1;
     }
-    if (c->is_ws && c->vdi)
-        vdi_on_close(c);
+    if (c->is_ws && c->sess)
+        session_on_close(c);
     conn_unref(c);
 }
 

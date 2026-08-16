@@ -3,6 +3,7 @@
  * 会话只在用户系统注销（gnome-session 退出）或 Xvfb 崩溃时结束。 */
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE
+#include "session.h"
 #include "sess_table.h"
 #include "util.h"
 
@@ -28,6 +29,7 @@ runtime *session_lookup(const char *user)
         if (g_sessions[i].rt && !strcmp(g_sessions[i].user, user))
         {
             rt = g_sessions[i].rt;
+            runtime_ref(rt); /* 调用方负责 unref：防 lookup 与使用之间被 sweep 释放 */
             break;
         }
     pthread_mutex_unlock(&g_sess_lock);
@@ -69,27 +71,6 @@ void session_unregister(runtime *rt)
     pthread_mutex_unlock(&g_sess_lock);
 }
 
-/* 进程是否存活：/proc 检查（对僵尸返回 0=已结束），
- * 避免 waitpid 在多线程（sweep + 登录线程）下互相收割的竞态 */
-static int pid_alive(pid_t pid)
-{
-    char path[64];
-    snprintf(path, sizeof path, "/proc/%d/stat", pid);
-    FILE *f = fopen(path, "rb");
-    if (!f)
-        return 0;
-    char state = 0;
-    /* 格式: pid (comm) state ...  comm 可能含空格/括号，用 rfind 定位最后一个 ')' */
-    char buf[512];
-    size_t n = fread(buf, 1, sizeof buf - 1, f);
-    fclose(f);
-    buf[n] = 0;
-    char *rp = strrchr(buf, ')');
-    if (rp && rp[1] == ' ')
-        state = rp[2];
-    return state != 0 && state != 'Z';
-}
-
 /* 判断会话是否已结束：gnome-session（wrapper）或 Xvfb 已退出 */
 int session_gone(runtime *rt)
 {
@@ -128,7 +109,7 @@ void session_sweep(void)
         pthread_mutex_unlock(&rt->lock);
         conn *c = atomic_exchange(&rt->conn, NULL);
         if (c)
-            net_close_conn(c); /* 触发 vdi_on_close → unref */
+            net_close_conn(c); /* 触发 session_on_close → unref */
         runtime_unref(rt);     /* 释放会话表引用，最终销毁 */
     }
 }

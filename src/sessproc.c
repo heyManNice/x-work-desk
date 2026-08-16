@@ -3,6 +3,7 @@
  *   按 DISPLAY 清理会话进程、用户 systemd 实例与 gsettings 集成。 */
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE
+#include "session.h"
 #include "sessproc.h"
 #include "protocol.h"
 #include "config.h"
@@ -56,6 +57,30 @@ int gen_cookie_hex(char *out, size_t outsz)
     fclose(f);
     hex_encode(bytes, 16, out, outsz);
     return 0;
+}
+
+/* 进程是否存活：/proc 检查（对僵尸返回 0=已结束）。
+ * 用 /proc/stat 而非 waitpid，避免多线程（sweep + 登录/销毁线程）
+ * 下互相收割子进程的竞态。 */
+int pid_alive(pid_t pid)
+{
+    if (pid <= 0)
+        return 0;
+    char path[64];
+    snprintf(path, sizeof path, "/proc/%d/stat", pid);
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return 0;
+    char state = 0;
+    /* 格式: pid (comm) state ...  comm 可能含空格/括号，用 rfind 定位最后一个 ')' */
+    char buf[512];
+    size_t n = fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    char *rp = strrchr(buf, ')');
+    if (rp && rp[1] == ' ')
+        state = rp[2];
+    return state != 0 && state != 'Z';
 }
 
 /* 检查用户 systemd 实例的会话总线是否可连接（/run/user/<uid>/bus） */
@@ -527,29 +552,14 @@ static void spawn_session_app(runtime *rt, const char *user)
     rt->proc.children[rt->proc.nchildren++] = pid;
 }
 
-/* 启动 Xvfb + 会话 + 抓帧/编码管线（proc/video 字段需已设置） */
-int session_bring_up(runtime *rt, const char *user, int w, int h)
+/* ---- session_bring_up 的阶段分解 ----
+ * bring_up 涉及 X 启动、systemd、gsettings 等多个慢操作，按阶段拆成
+ * 独立函数，失败时在哪个阶段一目了然；调用方（登录/接管/重建工作线程）
+ * 全部在事件循环之外执行。 */
+
+/* 阶段 1：分配 display 与 xauth cookie（幂等：已分配则跳过） */
+static int prepare_display_and_auth(runtime *rt, const char *user)
 {
-    rt->video.width = (w > 0 && w <= 8192) ? w : g_cfg.width;
-    rt->video.height = (h > 0 && h <= 8192) ? h : g_cfg.height;
-    atomic_store(&rt->desired_w, rt->video.width);
-    atomic_store(&rt->desired_h, rt->video.height);
-    atomic_store(&rt->resize_retries, 0);
-
-    /* 出站队列预算按分辨率/帧率估算：低码率场景小内存，高清场景够缓冲。
-     * 经验估算 ~40KB/百万像素/帧 × 2 帧缓冲，1MB~16MB 区间。 */
-    conn *outc = atomic_load(&rt->conn);
-    if (outc)
-    {
-        uint64_t px = (uint64_t)rt->video.width * (uint64_t)rt->video.height;
-        uint64_t budget = px * 2 * 40 + 512 * 1024;
-        if (budget < 1024 * 1024)
-            budget = 1024 * 1024;
-        if (budget > 16 * 1024 * 1024)
-            budget = 16 * 1024 * 1024;
-        msgq_set_budget(&outc->outq, (size_t)budget);
-    }
-
     if (rt->proc.display < 0)
     {
         rt->proc.display = find_free_display();
@@ -585,7 +595,12 @@ int session_bring_up(runtime *rt, const char *user, int w, int h)
             }
         }
     }
+    return 0;
+}
 
+/* 阶段 2：启动 X 服务器（Xorg+dummy 或 Xvfb）并等待 socket 就绪 */
+static int start_x_server(runtime *rt)
+{
     if (g_cfg.server == SERVER_XORG)
     {
         /* Xorg + dummy 驱动：无真实显卡/显示器，内存帧缓冲，支持 RandR
@@ -637,8 +652,13 @@ int session_bring_up(runtime *rt, const char *user, int w, int h)
         log_err("Xvfb 未启动 %s", rt->proc.display_str);
         return -1;
     }
+    return 0;
+}
 
-    /* 在正确的 env 下打开 Display */
+/* 阶段 3：在正确的环境变量下打开 X Display（全局 env 锁保护，避免与
+ * 其他会话的 open_display 互相覆盖） */
+static int open_x_display(runtime *rt)
+{
     pthread_mutex_lock(&g_xenv_lock);
     char *od = getenv("DISPLAY"), *oa = getenv("XAUTHORITY");
     setenv("DISPLAY", rt->proc.display_str, 1);
@@ -659,7 +679,80 @@ int session_bring_up(runtime *rt, const char *user, int w, int h)
         return -1;
     }
     rt->cap.root = DefaultRootWindow(rt->cap.dpy);
+    return 0;
+}
 
+/* 阶段 4：确保目标用户的 systemd 用户实例在运行，提供 /run/user/<uid>/bus */
+static void ensure_user_systemd(const char *user)
+{
+    if (geteuid() != 0)
+        return;
+    struct passwd *pw = getpwnam(user);
+    if (!pw)
+        return;
+    char unit[64];
+    snprintf(unit, sizeof unit, "user@%u.service", pw->pw_uid);
+    char *args[] = {"systemctl", "start", unit, NULL};
+    run_cmd_wait_timeout(args, 10000);
+    /* 兜底：用户实例的 dbus 可能已停止（VM 上偶发），
+     * 导致 /run/user/<uid>/bus 拒绝连接、gnome-session 起不来。
+     * 检测到总线不可用则重启用户实例恢复。 */
+    if (!user_bus_ok(pw->pw_uid))
+    {
+        log_info("用户 %s 的总线不可用，重启 %s", user, unit);
+        char *restart[] = {"systemctl", "restart", unit, NULL};
+        run_cmd_wait_timeout(restart, 10000);
+        sleep(1);
+        char *start2[] = {"systemctl", "start", unit, NULL};
+        run_cmd_wait_timeout(start2, 10000);
+    }
+}
+
+/* 阶段 5：登录后应用 GNOME 会话偏好（锁屏禁用、动画默认关） */
+static void apply_session_prefs(const char *user)
+{
+    /* 禁用 GNOME 自动锁屏：Xvfb 环境下锁屏界面存在输入异常，
+     * 登录后直接进桌面，避免锁屏无法输入密码 */
+    set_user_gsettings(user, "org.gnome.desktop.screensaver",
+                       "lock-enabled", "false");
+    set_user_gsettings(user, "org.gnome.desktop.screensaver",
+                       "idle-activation-enabled", "false");
+    set_user_gsettings(user, "org.gnome.desktop.session", "idle-delay", "0");
+    /* 默认禁用桌面动画（性能优先）：Xvfb 软件渲染 + --force-animations 时
+     * gsettings 是唯一开关，先落到 false，前端设置面板可再按需打开 */
+    set_user_gsettings(user, "org.gnome.desktop.interface",
+                       "enable-animations", "false");
+}
+
+/* 启动 Xvfb + 会话 + 抓帧/编码管线（proc/video 字段需已设置） */
+int session_bring_up(runtime *rt, const char *user, int w, int h)
+{
+    rt->video.width = (w > 0 && w <= 8192) ? w : g_cfg.width;
+    rt->video.height = (h > 0 && h <= 8192) ? h : g_cfg.height;
+    atomic_store(&rt->desired_w, rt->video.width);
+    atomic_store(&rt->desired_h, rt->video.height);
+    atomic_store(&rt->resize_retries, 0);
+
+    /* 出站队列预算按分辨率/帧率估算：低码率场景小内存，高清场景够缓冲。
+     * 经验估算 ~40KB/百万像素/帧 × 2 帧缓冲，1MB~16MB 区间。 */
+    conn *outc = atomic_load(&rt->conn);
+    if (outc)
+    {
+        uint64_t px = (uint64_t)rt->video.width * (uint64_t)rt->video.height;
+        uint64_t budget = px * 2 * 40 + 512 * 1024;
+        if (budget < 1024 * 1024)
+            budget = 1024 * 1024;
+        if (budget > 16 * 1024 * 1024)
+            budget = 16 * 1024 * 1024;
+        msgq_set_budget(&outc->outq, (size_t)budget);
+    }
+
+    if (prepare_display_and_auth(rt, user) != 0)
+        return -1;
+    if (start_x_server(rt) != 0)
+        return -1;
+    if (open_x_display(rt) != 0)
+        return -1;
     if (g_cfg.server == SERVER_XORG)
     {
         /* 启动后把屏幕切到会话请求的分辨率（dummy 默认 1024x768）。
@@ -673,43 +766,9 @@ int session_bring_up(runtime *rt, const char *user, int w, int h)
         return -1;
     if (init_encoder(rt) != 0)
         return -1;
-    /* 确保目标用户的 systemd 实例在运行，提供 /run/user/<uid>/bus
-     * （snap 等应用依赖；启动失败时桌面仍可用 dbus-run-session 兜底） */
-    if (geteuid() == 0)
-    {
-        struct passwd *pw = getpwnam(user);
-        if (pw)
-        {
-            char unit[64];
-            snprintf(unit, sizeof unit, "user@%u.service", pw->pw_uid);
-            char *args[] = {"systemctl", "start", unit, NULL};
-            run_cmd_wait_timeout(args, 10000);
-            /* 兜底：用户实例的 dbus 可能已停止（VM 上偶发），
-             * 导致 /run/user/<uid>/bus 拒绝连接、gnome-session 起不来。
-             * 检测到总线不可用则重启用户实例恢复。 */
-            if (!user_bus_ok(pw->pw_uid))
-            {
-                log_info("用户 %s 的总线不可用，重启 %s", user, unit);
-                char *restart[] = {"systemctl", "restart", unit, NULL};
-                run_cmd_wait_timeout(restart, 10000);
-                sleep(1);
-                char *start2[] = {"systemctl", "start", unit, NULL};
-                run_cmd_wait_timeout(start2, 10000);
-            }
-        }
-    }
+    ensure_user_systemd(user);
     spawn_session_app(rt, user);
-    /* 禁用 GNOME 自动锁屏：Xvfb 环境下锁屏界面存在输入异常，
-     * 登录后直接进桌面，避免锁屏无法输入密码 */
-    set_user_gsettings(user, "org.gnome.desktop.screensaver",
-                       "lock-enabled", "false");
-    set_user_gsettings(user, "org.gnome.desktop.screensaver",
-                       "idle-activation-enabled", "false");
-    set_user_gsettings(user, "org.gnome.desktop.session", "idle-delay", "0");
-    /* 默认禁用桌面动画（性能优先）：Xvfb 软件渲染 + --force-animations 时
-     * gsettings 是唯一开关，先落到 false，前端设置面板可再按需打开 */
-    set_user_gsettings(user, "org.gnome.desktop.interface",
-                       "enable-animations", "false");
+    apply_session_prefs(user);
 
     atomic_store(&rt->cap.running, 1);
     if (pthread_create(&rt->cap.cap_thread, NULL, capture_thread, rt) != 0)

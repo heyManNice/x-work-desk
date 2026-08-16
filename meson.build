@@ -44,7 +44,8 @@ deps += opus_dep
 m_dep = cc.find_library('m', required: false)
 deps += m_dep
 
-deps += dependency('threads')
+threads_dep = dependency('threads')
+deps += threads_dep
 
 executable('xworkd',
   sources: [
@@ -54,9 +55,11 @@ executable('xworkd',
     'src/net.c',
     'src/http.c',
     'src/ws.c',
+    'src/ws_parser.c',
     'src/eventloop.c',
     'src/auth.c',
     'src/session.c',
+    'src/session_msg.c',
     'src/sessproc.c',
     'src/sess_table.c',
     'src/audio.c',
@@ -76,3 +79,15 @@ if import('fs').is_dir(frontend / 'node_modules')
     output: 'frontend-stamp',
     build_by_default: true)
 endif
+
+# ---- 单元测试（纯逻辑模块，不依赖 X/FFmpeg，可无头运行） ----
+test_units = [
+  ['test-util', ['test/test_util.c', 'src/util.c']],
+  ['test-msgq', ['test/test_msgq.c', 'src/msgqueue.c']],
+  ['test-ws', ['test/test_ws.c', 'src/ws_parser.c']],
+]
+foreach t : test_units
+  test(t[0], executable(t[0], t[1],
+        include_directories: include_directories('src'),
+        dependencies: threads_dep))
+endforeach

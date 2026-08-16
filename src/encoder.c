@@ -4,6 +4,7 @@
  * 统一使用 NV12 输入、global header（SPS/PPS 在 extradata，
  * 前端用 avcC description 配置解码器，不依赖关键帧携带参数集）。 */
 #define _POSIX_C_SOURCE 200809L
+#include "session.h"
 #include "encoder.h"
 #include "net.h"
 #include "protocol.h"
@@ -34,7 +35,6 @@ static const char *kind_name(int kind)
     }
 }
 
-/* 从 avcC extradata 解析裸 SPS/PPS NAL（前端 description / codec string 用） */
 /* 从 Annex-B 字节流解析裸 SPS(7)/PPS(8) NAL，写入 enc（已有则跳过） */
 static void extract_sps_pps_annexb(encoder_ctx *enc, const uint8_t *e, int size)
 {
@@ -231,7 +231,13 @@ static int encoder_open_kind(runtime *rt, const AVCodec *codec, int kind,
     enc->frame = av_frame_alloc();
     enc->pkt = av_packet_alloc();
     if (!enc->frame || !enc->pkt)
+    {
+        av_frame_free(&enc->frame);
+        av_packet_free(&enc->pkt);
+        avcodec_free_context(&ctx);
+        enc->ctx = NULL; /* 失败路径必须清空，否则回退链/后续逻辑误判已就绪 */
         return -1;
+    }
     extract_sps_pps(enc);
     log_info("编码器: %s (%dx%d fps=%d)", kind_name(kind), vb->width, vb->height, fps);
     return 0;

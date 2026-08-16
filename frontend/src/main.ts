@@ -116,40 +116,70 @@ function connect(): void {
     ws.onerror = () => { };
 }
 
+function handleClipboardMsg(b: Uint8Array): void {
+    void clipWrite(new TextDecoder().decode(b.subarray(1)));
+}
+
+function handleLoginResult(b: Uint8Array): void {
+    const r = parseLoginResult(b);
+    if (r.ok) {
+        loginBtn.hidden = true;
+        showDesktop();
+    } else {
+        loginFail(r.text);
+    }
+}
+
+function handleConfigMsg(b: Uint8Array): void {
+    const cfg = parseConfig(b);
+    renderer?.configure(cfg);
+    relay?.setSize(cfg.width, cfg.height);
+    setResolution(cfg.width, cfg.height);
+    applyDisplayRatio(cfg.width, cfg.height);
+    requestKeyframe();
+}
+
+function handleSessionExists(): void {
+    /* 该账户已有活跃会话：询问是否注销旧会话并接管 */
+    const take = window.confirm('该账户已在其他窗口登录。\n\n是否注销旧会话并接管？');
+    send(take ? msgTakeover() : msgTakeoverCancel());
+}
+
+function handleVideoMsg(b: Uint8Array): void {
+    const flags = b[1];
+    if ((flags & 0x01) !== 0) onKeyframeReceived();
+    renderer?.feed(b.subarray(2), (flags & 0x01) !== 0);
+    onVideoFrame(b.byteLength);
+}
+
 function handleMessage(b: Uint8Array): void {
-    const t = b[0];
-    if (t === MSG_CLIPBOARD) {
-        clipWrite(new TextDecoder().decode(b.subarray(1)));
-    } else if (t === MSG_AUDIO) {
-        audioPlayer.feed(b.subarray(1));
-    } else if (t === MSG_CURSOR) {
-        applyCursor(parseCursor(b));
-    } else if (t === MSG_LOGIN_RESULT) {
-        const r = parseLoginResult(b);
-        if (r.ok) {
-            loginBtn.hidden = true;
-            showDesktop();
-        } else {
-            loginFail(r.text);
-        }
-    } else if (t === MSG_CONFIG) {
-        const cfg = parseConfig(b);
-        renderer?.configure(cfg);
-        relay?.setSize(cfg.width, cfg.height);
-        setResolution(cfg.width, cfg.height);
-        applyDisplayRatio(cfg.width, cfg.height);
-        requestKeyframe();
-    } else if (t === MSG_SESSION_EXISTS) {
-        /* 该账户已有活跃会话：询问是否注销旧会话并接管 */
-        const take = window.confirm('该账户已在其他窗口登录。\n\n是否注销旧会话并接管？');
-        send(take ? msgTakeover() : msgTakeoverCancel());
-    } else if (t === MSG_VIDEO) {
-        const flags = b[1];
-        if ((flags & 0x01) !== 0) onKeyframeReceived();
-        renderer?.feed(b.subarray(2), (flags & 0x01) !== 0);
-        onVideoFrame(b.byteLength);
-    } else if (t === MSG_CLOSE) {
-        onDisconnect();
+    switch (b[0]) {
+        case MSG_CLIPBOARD:
+            handleClipboardMsg(b);
+            break;
+        case MSG_AUDIO:
+            audioPlayer.feed(b.subarray(1));
+            break;
+        case MSG_CURSOR:
+            applyCursor(parseCursor(b));
+            break;
+        case MSG_LOGIN_RESULT:
+            handleLoginResult(b);
+            break;
+        case MSG_CONFIG:
+            handleConfigMsg(b);
+            break;
+        case MSG_SESSION_EXISTS:
+            handleSessionExists();
+            break;
+        case MSG_VIDEO:
+            handleVideoMsg(b);
+            break;
+        case MSG_CLOSE:
+            onDisconnect();
+            break;
+        default:
+            break;
     }
 }
 

@@ -83,10 +83,30 @@ static void http_error(conn *c, int code, const char *text)
     }
 }
 
+/* 路径穿越检查：按 '/' 拆分成组件，任何组件为 ".." 即拒绝。
+ * 相比 strstr(uri, "..")，不会误伤 "foo..bar" 之类的合法文件名，
+ * 且按路径语义检查（服务器不做百分号解码，%2e%2e 只是普通文件名）。 */
+static int path_safe(const char *uri)
+{
+    const char *p = uri;
+    while (*p)
+    {
+        const char *seg = p;
+        while (*p && *p != '/')
+            p++;
+        size_t n = (size_t)(p - seg);
+        if (n == 2 && seg[0] == '.' && seg[1] == '.')
+            return 0;
+        if (*p == '/')
+            p++;
+    }
+    return 1;
+}
+
 static void serve_file(conn *c, const char *uri)
 {
     /* 路径安全 */
-    if (strstr(uri, ".."))
+    if (!path_safe(uri))
     {
         http_error(c, 400, "Bad Request");
         return;
@@ -157,9 +177,9 @@ static void do_ws_upgrade(conn *c, const char *sec_key, size_t consumed)
     }
 
     c->is_ws = 1;
-    c->ws_hdr = 1;
+    ws_parser_init(&c->ws, 1u << 20);
     c->http_done = 1;
-    vdi_on_open(c);
+    session_on_open(c);
 
     /* 剩余字节可能是 WS 帧 */
     if (consumed < c->rlen)

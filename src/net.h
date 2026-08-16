@@ -5,8 +5,9 @@
 #include <stdatomic.h>
 #include <pthread.h>
 #include "msgqueue.h"
+#include "ws_parser.h"
 
-/* 连接结构（net.c/eventloop.c 拥有并管理生命周期，session.c 通过 c->vdi 使用） */
+/* 连接结构（net.c/eventloop.c 拥有并管理生命周期，session.c 通过 c->sess 使用） */
 typedef struct conn
 {
     int fd;
@@ -23,27 +24,16 @@ typedef struct conn
     int http_done; /* 1=已解析请求（升级或已响应） */
     int close_after_flush; /* 响应冲刷完毕后关闭连接 */
 
-    /* ---- WS 帧解析状态 ---- */
+    /* ---- WS 帧解析状态（ws_parser 独立于 I/O，可单测） ---- */
     int is_ws;
-    int ws_hdr; /* 1=等待帧头 */
-    int ws_final;
-    int ws_opcode;
-    int ws_msg_opcode;
-    int ws_masked;
-    uint64_t ws_payload_len;
-    uint64_t ws_have;
-    uint8_t ws_mask[4];
-
-    /* ---- WS 消息拼装 ---- */
-    uint8_t *msg;
-    size_t msglen, msgcap;
+    ws_parser ws;
 
     /* ---- 出站：消息队列 + 半发送帧/HTTP 响应 ---- */
     msg_queue outq;
     uint8_t *snd;
     size_t snd_len, snd_off;
 
-    struct runtime *vdi; /* 会话（session.c 管理） */
+    struct runtime *sess; /* 会话（session.c / session_msg.c 管理） */
     struct conn *next;
 } conn;
 
@@ -78,7 +68,7 @@ void http_on_data(conn *c); /* 有新的读数据，尝试解析 HTTP 请求 */
 void ws_on_data(conn *c);   /* 有新的读数据，解析尽可能多的 WS 帧 */
 void ws_flush(conn *c);     /* 冲刷出站队列与半发送帧（POLLOUT/唤醒时调用） */
 
-/* 由 session.c 实现 */
-void vdi_on_open(conn *c);
-void vdi_on_message(conn *c, const uint8_t *data, size_t len);
-void vdi_on_close(conn *c);
+/* 由 session.c / session_msg.c 实现 */
+void session_on_open(conn *c);
+void session_on_message(conn *c, const uint8_t *data, size_t len);
+void session_on_close(conn *c);

@@ -25,12 +25,12 @@ void msgq_destroy(msg_queue *q)
     pthread_mutex_destroy(&q->lock);
 }
 
-void msgq_set_budget(msg_queue *q, size_t max_bytes)
+/* 从队头丢弃 droppable 消息，直到剩余字节 <= max_bytes（或队空）。
+ * 调用方需持有 q->lock。返回丢弃条数。 */
+static int msgq_drop_oldest(msg_queue *q, size_t max_bytes)
 {
-    pthread_mutex_lock(&q->lock);
-    q->max_bytes = max_bytes;
-    /* 收缩预算时立即丢弃超出的可丢帧 */
-    while (q->bytes > q->max_bytes && q->head && q->head->droppable)
+    int dropped = 0;
+    while (q->bytes > max_bytes && q->head && q->head->droppable)
     {
         msg_node *n = q->head;
         q->head = n->next;
@@ -38,10 +38,19 @@ void msgq_set_budget(msg_queue *q, size_t max_bytes)
             q->tail = NULL;
         q->bytes -= n->len;
         q->count--;
-        q->dropped++;
+        dropped++;
         free(n->data);
         free(n);
     }
+    return dropped;
+}
+
+void msgq_set_budget(msg_queue *q, size_t max_bytes)
+{
+    pthread_mutex_lock(&q->lock);
+    q->max_bytes = max_bytes;
+    /* 收缩预算时立即丢弃超出的可丢帧 */
+    q->dropped += msgq_drop_oldest(q, q->max_bytes);
     pthread_mutex_unlock(&q->lock);
 }
 
@@ -49,18 +58,8 @@ int msgq_push_take(msg_queue *q, uint8_t *data, size_t len, int droppable)
 {
     pthread_mutex_lock(&q->lock);
     /* 超出预算：丢弃最旧的 droppable 消息（保持低延迟） */
-    while (q->bytes + len > q->max_bytes && q->head && q->head->droppable)
-    {
-        msg_node *n = q->head;
-        q->head = n->next;
-        if (!q->head)
-            q->tail = NULL;
-        q->bytes -= n->len;
-        q->count--;
-        q->dropped++;
-        free(n->data);
-        free(n);
-    }
+    size_t target = len >= q->max_bytes ? 0 : q->max_bytes - len;
+    q->dropped += msgq_drop_oldest(q, target);
     msg_node *n = malloc(sizeof *n);
     if (!n)
     {

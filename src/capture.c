@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE
+#include "session.h"
 #include "capture.h"
 #include "net.h"
 #include "protocol.h"
@@ -394,6 +395,17 @@ void *capture_thread(void *arg)
             pthread_mutex_lock(&cap->xlock);
             session_resize_capture(rt, rw, rh);
             pthread_mutex_unlock(&cap->xlock);
+            continue;
+        }
+
+        /* 动画开关（MSG_SET_ANIMATIONS 只置标志）：gsettings 是 fork+wait
+         * 的慢操作，放抓帧线程执行避免阻塞事件循环（一次性丢几帧无感） */
+        int ap = atomic_exchange(&rt->anim_pending, 0);
+        if (ap != 0)
+        {
+            if (rt->user[0])
+                set_user_gsettings(rt->user, "org.gnome.desktop.interface",
+                                   "enable-animations", ap > 0 ? "true" : "false");
             continue;
         }
 
