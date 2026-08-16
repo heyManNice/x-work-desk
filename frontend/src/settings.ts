@@ -1,6 +1,6 @@
 /* 登录页设置面板：偏好持久化（localStorage）+ 控件交互 + 各设置下发 */
 
-import { msgSetFps, msgSetCodec, msgSetAnimations } from './protocol';
+import { msgSetFps, msgSetCodec, msgSetAnimations, msgSetAudio } from './protocol';
 
 export type RatioMode = 'fit' | 'stretch' | 'pixel';
 
@@ -10,6 +10,7 @@ export interface SettingsContext {
     setRatioMode: (m: RatioMode) => void; /* 鼠标坐标按显示模式映射 */
     debugHud: HTMLElement;
     isActive: () => boolean;
+    onAudioToggle: (enable: boolean) => void; /* 打开/关闭前端音频播放 */
 }
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string): T =>
@@ -20,6 +21,7 @@ const settingsPanel = $('#settings-panel') as HTMLElement;
 const setDebug = $('#set-debug') as HTMLInputElement;
 const setStatic = $('#set-static') as HTMLInputElement;
 const setAnim = $('#set-anim') as HTMLInputElement;
+const setAudio = $('#set-audio') as HTMLInputElement;
 const setBitrate = $('#set-bitrate') as HTMLSelectElement;
 const setQuality = $('#set-quality') as HTMLSelectElement;
 const rowQuality = $('#row-quality') as HTMLElement;
@@ -33,6 +35,7 @@ export interface Prefs {
     debug?: boolean;
     static?: boolean;
     anim?: boolean;
+    audio?: boolean;
     bitrate?: number;
     quality?: number;
     fps?: number;
@@ -46,6 +49,7 @@ let ctx: SettingsContext = {
     setRatioMode: () => {},
     debugHud: document.createElement('div'),
     isActive: () => false,
+    onAudioToggle: () => {},
 };
 
 function loadPrefs(): Prefs {
@@ -89,6 +93,11 @@ function applyAnimPref(): void {
     if (ctx.isActive()) ctx.send(msgSetAnimations(setAnim.checked));
 }
 
+function applyAudioPref(): void {
+    ctx.onAudioToggle(setAudio.checked);
+    if (ctx.isActive()) ctx.send(msgSetAudio(setAudio.checked));
+}
+
 /* 固定分辨率（设置面板选择）；返回 null 表示自动跟随视口 */
 export function getFixedResolution(): [number, number] | null {
     const v = setRes.value;
@@ -128,6 +137,7 @@ export function applyAllPrefs(): void {
     applyFpsPref();
     applyCodecPref();
     applyAnimPref();
+    applyAudioPref();
 }
 
 export function initSettings(c: SettingsContext): void {
@@ -138,6 +148,7 @@ export function initSettings(c: SettingsContext): void {
     setDebug.checked = prefs.debug !== false;
     setStatic.checked = prefs.static !== false;
     setAnim.checked = prefs.anim !== false; /* 默认禁用动画（性能优先） */
+    setAudio.checked = prefs.audio === true; /* 默认关闭音频传输 */
     setBitrate.value = String(prefs.bitrate ?? 0);
     setQuality.value = String(prefs.quality ?? 23);
     setFps.value = String(prefs.fps && prefs.fps > 0 ? prefs.fps : 30);
@@ -175,6 +186,11 @@ export function initSettings(c: SettingsContext): void {
     setAnim.addEventListener('change', () => {
         savePrefs({ ...loadPrefs(), anim: setAnim.checked });
         applyAnimPref();
+    });
+
+    setAudio.addEventListener('change', () => {
+        savePrefs({ ...loadPrefs(), audio: setAudio.checked });
+        applyAudioPref();
     });
 
     setBitrate.addEventListener('change', () => {

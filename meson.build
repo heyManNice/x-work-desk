@@ -35,6 +35,12 @@ if not avutil_dep.found()
 endif
 deps += avutil_dep
 
+opus_dep = dependency('opus', required: false)
+if not opus_dep.found()
+  opus_dep = cc.find_library('opus', required: true)
+endif
+deps += opus_dep
+
 m_dep = cc.find_library('m', required: false)
 deps += m_dep
 
@@ -53,6 +59,7 @@ executable('xworkd',
     'src/session.c',
     'src/sessproc.c',
     'src/sess_table.c',
+    'src/audio.c',
     'src/capture.c',
     'src/encoder.c',
     'src/input.c',

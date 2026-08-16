@@ -341,6 +341,16 @@ void encode_frame(runtime *rt)
         return;
     video_buf *vb = &rt->video;
 
+    /* 接管空闲会话等场景：SPS/PPS 已存在但新连接需要 CONFIG，
+     * 由抓帧线程补发（避免跨线程访问编码器状态） */
+    if (atomic_exchange(&rt->cap.need_config, 0))
+    {
+        conn *c = atomic_load(&rt->conn);
+        if (c)
+            encoder_send_config_locked(c, rt);
+        atomic_store(&rt->cap.req_keyframe, 1);
+    }
+
     /* 运行期码率/质量调整：参数变化时重建编码器（重建在抓帧线程内，
      * 避免跨线程调用；重建后重发 CONFIG 并请求关键帧） */
     int want_kbps = atomic_load(&rt->bitrate_kbps);

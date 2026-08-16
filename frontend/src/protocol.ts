@@ -6,6 +6,7 @@ export const MSG_LOGIN_RESULT = 0x03;
 export const MSG_CLOSE = 0x04;
 export const MSG_SESSION_EXISTS = 0x05;
 export const MSG_CURSOR = 0x06;
+export const MSG_AUDIO = 0x07;
 
 export const MSG_LOGIN = 0x10;
 export const MSG_MOUSE = 0x11;
@@ -17,6 +18,7 @@ export const MSG_TAKEOVER_CANCEL = 0x16;
 export const MSG_SET_FPS = 0x17;
 export const MSG_SET_CODEC = 0x18;
 export const MSG_SET_ANIMATIONS = 0x19;
+export const MSG_SET_AUDIO = 0x1a;
 
 export const VIDEO_FLAG_KEY = 0x01;
 export const MOUSE_FLAG_MOTION = 0x01;
@@ -173,4 +175,8 @@ export function msgSetCodec(staticSkip: boolean, bitrateKbps: number, crf: numbe
 
 export function msgSetAnimations(enable: boolean): Uint8Array {
     return new Uint8Array([MSG_SET_ANIMATIONS, enable ? 1 : 0]);
+}
+
+export function msgSetAudio(enable: boolean): Uint8Array {
+    return new Uint8Array([MSG_SET_AUDIO, enable ? 1 : 0]);
 }

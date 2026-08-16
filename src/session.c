@@ -3,6 +3,7 @@
 #include "session.h"
 #include "sessproc.h"
 #include "sess_table.h"
+#include "audio.h"
 #include "protocol.h"
 #include "config.h"
 #include "auth.h"
@@ -30,6 +31,7 @@ void runtime_ref(runtime *rt) { __sync_add_and_fetch(&rt->refs, 1); }
 /* 停抓帧线程并释放 X/编码/进程资源；幂等，可在会话未完全启动时调用 */
 static void runtime_teardown(runtime *rt)
 {
+    audio_stop(rt);
     if (atomic_load(&rt->cap.running))
     {
         atomic_store(&rt->cap.running, 0);
@@ -206,7 +208,9 @@ static void takeover_session(runtime *sess, conn *c)
     runtime_ref(sess); /* 新连接持有会话引用 */
     atomic_store(&sess->conn, c);
     c->vdi = sess;
-    /* CONFIG 由抓帧线程在首个关键帧后发送；这里强制请求关键帧 */
+    /* 会话已有 SPS/PPS，capture 线程不会再自动发 CONFIG；
+     * 置 need_config 让抓帧线程下一帧补发，并强制请求关键帧 */
+    atomic_store(&sess->cap.need_config, 1);
     atomic_store(&sess->cap.req_keyframe, 1);
 }
 
@@ -472,6 +476,16 @@ void vdi_on_message(conn *c, const uint8_t *data, size_t len)
         if (len >= 2 && rt->user[0])
             set_user_gsettings(rt->user, "org.gnome.desktop.interface",
                                "enable-animations", data[1] ? "true" : "false");
+        break;
+    case MSG_SET_AUDIO:
+        if (len >= 2)
+        {
+            atomic_store(&rt->audio_enabled, data[1] ? 1 : 0);
+            if (data[1])
+                audio_start(rt);
+            else
+                audio_stop(rt);
+        }
         break;
     default:
         break;

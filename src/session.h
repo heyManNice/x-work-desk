@@ -48,6 +48,7 @@ typedef struct capture_ctx
     uint64_t frame_index;
     uint64_t sig[2]; /* 上一帧内容签名（静止帧检测） */
     int have_sig;
+    int _Atomic need_config; /* 接管/重建后要求重发 CONFIG */
 } capture_ctx;
 
 /* 编码器子系统的自有状态 */
@@ -89,6 +90,13 @@ struct runtime
     int _Atomic static_skip;   /* 静态帧优化开关（画面无变化跳过编码） */
     int _Atomic bitrate_kbps;  /* 目标码率上限（0=自动/CRF 质量模式） */
     int _Atomic crf;           /* CRF 质量档（码率为自动时生效） */
+
+    /* ---- 音频传输（Opus，前端开关控制） ---- */
+    int _Atomic audio_enabled;
+    _Atomic int audio_running;
+    pthread_t audio_thread;
+    pid_t audio_pid; /* pw-record 采集子进程 */
+    struct AVCodecContext *audio_ctx; /* Opus 编码器 */
 
     video_buf video;
     proc_ctx proc;

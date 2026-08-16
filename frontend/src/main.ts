@@ -9,6 +9,7 @@ import {
     MSG_CLOSE,
     MSG_SESSION_EXISTS,
     MSG_CURSOR,
+    MSG_AUDIO,
     msgLogin,
     msgResize,
     msgKeyframe,
@@ -17,6 +18,7 @@ import {
 } from './protocol';
 import { VideoRenderer } from './decoder';
 import { InputRelay } from './input';
+import { AudioPlayer } from './audio';
 import { initStats, setResolution, onVideoFrame, onDecodeTime,
          requestKeyframeTime, onKeyframeReceived, resetStats } from './stats';
 import { initSettings, getFixedResolution, applyDisplayRatio,
@@ -43,6 +45,7 @@ const connectingOverlay = $('#connecting-overlay');
 let ws: WebSocket | null = null;
 let renderer: VideoRenderer | null = null;
 let relay: InputRelay | null = null;
+const audioPlayer = new AudioPlayer();
 let pendingLogin: { user: string; pass: string; w: number; h: number } | null = null;
 let active = false;
 let resizeTimer = 0;
@@ -111,7 +114,9 @@ function connect(): void {
 
 function handleMessage(b: Uint8Array): void {
     const t = b[0];
-    if (t === MSG_CURSOR) {
+    if (t === MSG_AUDIO) {
+        audioPlayer.feed(b.subarray(1));
+    } else if (t === MSG_CURSOR) {
         applyCursor(parseCursor(b));
     } else if (t === MSG_LOGIN_RESULT) {
         const r = parseLoginResult(b);
@@ -220,6 +225,7 @@ function loginFail(text?: string): void {
 
 function onDisconnect(): void {
     active = false;
+    audioPlayer.stop(); /* 断开时停止音频播放 */
     relay?.setActive(false);
     renderer?.destroy();
     relay?.releaseAll();
@@ -296,5 +302,6 @@ initSettings({
     setRatioMode: (m) => relay?.setRatio(m),
     debugHud,
     isActive: () => active,
+    onAudioToggle: (enable) => (enable ? audioPlayer.start() : audioPlayer.stop()),
 });
 setResizeRequest(() => sendResize());
