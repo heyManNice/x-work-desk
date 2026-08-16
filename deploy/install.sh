@@ -53,12 +53,22 @@ mkdir -p "$SHELL_OVERRIDE_DST"
 install -m 0644 "$SHELL_OVERRIDE_SRC/force-animations.conf" \
     "$SHELL_OVERRIDE_DST/force-animations.conf"
 
+# 安装 WirePlumber 覆盖：VM 内禁用不稳定的 PCI 模拟声卡，回退 Dummy Output，
+# 保证桌面音频采集稳定（实体机无 cpu.vm.name，不受影响）
+WP_CONF_DST="/etc/xdg/wireplumber/wireplumber.conf.d"
+mkdir -p "$WP_CONF_DST"
+install -m 0644 "$REPO_DIR/deploy/wireplumber.d/50-xworkd-vm-audio.conf" \
+    "$WP_CONF_DST/50-xworkd-vm-audio.conf"
+
 # 让已在线的用户 systemd 实例加载覆盖（离线用户下次登录自动生效）
 for u in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do
     uid="$(id -u "$u" 2>/dev/null || true)"
     if [[ -n "$uid" && -S "/run/user/$uid/bus" ]]; then
         su -s /bin/bash "$u" -c \
             "XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus systemctl --user daemon-reload" \
+            >/dev/null 2>&1 || true
+        su -s /bin/bash "$u" -c \
+            "XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus systemctl --user restart wireplumber" \
             >/dev/null 2>&1 || true
     fi
 done

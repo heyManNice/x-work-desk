@@ -57,8 +57,9 @@ XWORKD_PORT=8080 XWORKD_EXTRA_ARGS="--width 1920 --height 1080 --fps 60" sudo ./
 ```
 
 脚本做的事：校验构建产物 → 用仓库路径生成
-`/etc/systemd/system/xworkd.service` → 安装 GNOME Shell 动画覆盖 →
-对在线用户 `systemctl --user daemon-reload` → 开机自启 → 重启服务。
+`/etc/systemd/system/xworkd.service` → 安装 GNOME Shell 动画覆盖与
+WirePlumber 音频覆盖 → 对在线用户 `systemctl --user daemon-reload` 并重启
+wireplumber → 开机自启 → 重启服务。
 
 **GNOME 动画覆盖（`--force-animations`）**：Xvfb 是软件渲染
 （llvmpipe），GNOME Shell 48+ 检测到非硬件加速会强制抑制动画，使前端
@@ -69,6 +70,19 @@ XWORKD_PORT=8080 XWORKD_EXTRA_ARGS="--width 1920 --height 1080 --fps 60" sudo ./
 期间 CPU 占用会明显上升）。实体机硬件渲染时该覆盖无副作用；不需要可
 删除 `/etc/systemd/user/org.gnome.Shell@x11.service.d/` 后对每个在线用户
 执行 `systemctl --user daemon-reload`。
+
+**音频覆盖（VM 内禁用模拟声卡）**：VMware 等虚拟机模拟的 PCI 声卡
+（ES1371）在 PipeWire 下时序不稳定，输出全零导致音频采集静音。部署脚本
+安装 WirePlumber 规则，仅当节点带 `cpu.vm.name`（即虚拟机内）时禁用
+ALSA PCI 输出/输入节点，会话回退到 Dummy Output，桌面音频经软件 sink 的
+monitor 稳定采集。浏览器端播放声音，虚拟机本地无需出声。实体机没有
+`cpu.vm.name`，真实声卡不受影响；不需要时删除
+`/etc/xdg/wireplumber/wireplumber.conf.d/50-xworkd-vm-audio.conf` 并重启各
+用户 wireplumber。
+
+音频采集依赖 PipeWire 命令行工具（`pw-record`/`pw-link`/`pw-metadata`，
+软件包 `pipewire-bin`）。采集逻辑见 `src/audio.c`：查询用户会话默认输出
+sink 的 monitor 端口并接入录音流（20ms 小延迟），不再写死 `auto_null`。
 
 常用运维命令：
 
@@ -130,5 +144,6 @@ sudo setsid nohup ./build/xworkd --auth shadow \
 - **提示 keyring 未解锁**：keyring 密码与账号密码不一致（见第 3 节）。
 - **端口被占**：`sudo systemctl stop xworkd` 或换 `--port` 重新安装。
 - **`Xvfb`/`xauth` 缺失**：`sudo apt install xvfb xauth`。
+- **`pw-record` 等缺失**：`sudo apt install pipewire-bin`（音频传输需要）。
 - **认证模式**：`--auth shadow` 必须 root；开发用 `--auth none`（任意账号
   可登录，非 root 时以当前进程用户运行会话）。

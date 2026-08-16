@@ -81,11 +81,51 @@ static void *audio_thread(void *arg)
             snprintf(rt_dir, sizeof rt_dir, "/run/user/%u", pw->pw_uid);
             setenv("XDG_RUNTIME_DIR", rt_dir, 1);
         }
+        /* 独立进程组，便于父进程 kill(-pid) 连同后台 pw-record 一起回收 */
+        setpgid(0, 0);
         dup2(pfd[1], 1);
         close(pfd[0]);
         close(pfd[1]);
-        execlp("pw-record", "pw-record", "--rate=48000", "--channels=2",
-               "--format=s16", "--target=auto_null", "-", (char *)NULL);
+
+        /* 采集目标：默认输出 sink 的 monitor 端口（桌面应用播放的声音）。
+         * 不能再写死 auto_null——只有无硬件设备（Dummy Output）时它才存在，
+         * 有真实声卡时会回退到默认 source（麦克风）导致没有声音。
+         * 流程：查默认 sink → pw-record(--target=0) → pw-link 把 sink 的
+         * monitor_FL/FR 接到录音流。20ms 延迟避免把图周期推到 VMware 模拟
+         * 声卡无法承受的 4800 采样/周期。 */
+        const char *disp = rt->proc.display_str;
+        if (*disp == ':')
+            disp++;
+        char script[1024];
+        snprintf(script, sizeof script,
+                 "SINK=$(pw-metadata -n default 0 2>/dev/null | sed -n "
+                 "'s/.*default\\.audio\\.sink.*\"name\":\"\\([^\"]*\\)\".*/\\1/p' "
+                 "| head -n1); "
+                 "NODE=xwd-audio-%s; "
+                 "if [ -n \"$SINK\" ]; then "
+                 "  pw-record -P \"{ node.name = \\\"$NODE\\\" media.name = "
+                 "\\\"$NODE\\\" }\" --target=0 --latency=20ms "
+                 "--rate=48000 --channels=2 --format=s16 - & "
+                 "else "
+                 "  pw-record --target=auto_null --rate=48000 --channels=2 "
+                 "--format=s16 - & "
+                 "fi; "
+                 "REC=$!; "
+                 "if [ -n \"$SINK\" ]; then "
+                 "  i=0; "
+                 "  while [ $i -lt 8 ]; do "
+                 "    if pw-link \"$SINK:monitor_FL\" \"$NODE:input_FL\" "
+                 ">/dev/null 2>&1; then "
+                 "      pw-link \"$SINK:monitor_FR\" \"$NODE:input_FR\" "
+                 ">/dev/null 2>&1; "
+                 "      break; "
+                 "    fi; "
+                 "    sleep 0.5; i=$((i+1)); "
+                 "  done; "
+                 "fi; "
+                 "wait $REC",
+                 disp);
+        execlp("/bin/sh", "sh", "-c", script, (char *)NULL);
         _exit(127);
     }
     close(pfd[1]);
@@ -97,7 +137,7 @@ static void *audio_thread(void *arg)
     AVPacket *pkt = av_packet_alloc();
     if (!ctx || !frame || !pkt)
     {
-        kill(pid, SIGTERM);
+        kill(-pid, SIGTERM);
         close(fd);
         return NULL;
     }
@@ -148,7 +188,7 @@ static void *audio_thread(void *arg)
         }
     }
 
-    kill(pid, SIGTERM);
+    kill(-pid, SIGTERM);
     waitpid(pid, NULL, 0);
     close(fd);
     av_packet_free(&pkt);
