@@ -5,6 +5,9 @@
 void log_info(const char *fmt, ...);
 void log_err(const char *fmt, ...);
 
+/* 单调时钟毫秒（CLOCK_MONOTONIC，不受系统时间调整影响） */
+int64_t monotonic_ms(void);
+
 void hex_encode(const uint8_t *in, size_t inlen, char *out, size_t outsz);
 
 /* 协议小端 u16 打包/解包 */

@@ -110,6 +110,8 @@ struct runtime
     _Atomic int desired_h;
     _Atomic int resize_retries; /* 外部重置后的重新应用计数（防止与 mutter 无限互搏） */
     _Atomic int restarting;    /* 1=重建工作线程运行中（避免重复触发） */
+    _Atomic int64_t cap_start_ms; /* 抓帧线程启动时间（单调毫秒） */
+    _Atomic int settle_pending;   /* 登录早期分辨率请求：等 GNOME 稳定后补一次 */
 
     /* ---- 音频传输（Opus，前端开关控制） ---- */
     int _Atomic audio_enabled;

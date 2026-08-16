@@ -471,6 +471,10 @@ static void handle_resize_msg(runtime *rt, const uint8_t *data, size_t len)
             atomic_store(&rt->desired_w, w);
             atomic_store(&rt->desired_h, h);
             atomic_store(&rt->resize_retries, 0);
+            /* 启动早期（GNOME 未稳定）的请求会被 mutter 覆盖，标记等稳定后补一次 */
+            int64_t start = atomic_load(&rt->cap_start_ms);
+            if (start == 0 || monotonic_ms() - start < 12000)
+                atomic_store(&rt->settle_pending, 1);
         }
         else if (!atomic_exchange(&rt->restarting, 1))
         {

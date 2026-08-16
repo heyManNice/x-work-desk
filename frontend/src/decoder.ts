@@ -11,6 +11,9 @@ export class VideoRenderer {
     private ctx: CanvasRenderingContext2D;
     private configured = false;
     private haveKey = false; // 已收到关键帧，之后才能解码 delta
+    private cfgCodec = '';
+    private cfgWidth = 0;
+    private cfgHeight = 0;
 
     onKeyframeRequest: (() => void) | null = null;
     onResize: ((w: number, h: number) => void) | null = null;
@@ -32,6 +35,12 @@ export class VideoRenderer {
             return;
         }
         const codec = `avc1.${hex(cfg.sps[1])}${hex(cfg.sps[2])}${hex(cfg.sps[3])}`;
+        /* 分辨率与编码未变化：不重建解码器、不重置画布，
+         * 避免重连（同分辨率）时画面闪烁 */
+        if (this.configured &&
+            this.cfgWidth === cfg.width && this.cfgHeight === cfg.height &&
+            this.cfgCodec === codec)
+            return;
         try {
             this.decoder?.close();
         } catch {
@@ -55,6 +64,9 @@ export class VideoRenderer {
         this.canvas.height = cfg.height;
         this.configured = true;
         this.haveKey = false;
+        this.cfgCodec = codec;
+        this.cfgWidth = cfg.width;
+        this.cfgHeight = cfg.height;
         this.onResize?.(cfg.width, cfg.height);
         this.onKeyframeRequest?.();
     }
@@ -104,5 +116,8 @@ export class VideoRenderer {
         }
         this.decoder = null;
         this.configured = false;
+        this.cfgCodec = '';
+        this.cfgWidth = 0;
+        this.cfgHeight = 0;
     }
 }

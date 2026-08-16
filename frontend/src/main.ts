@@ -262,7 +262,8 @@ function onDisconnect(): void {
     active = false;
     audioPlayer.stop(); /* 断开时停止音频播放 */
     relay?.setActive(false);
-    renderer?.destroy();
+    /* 保留解码器：同分辨率重连时不重建，避免画面闪烁；
+     * 分辨率变化时 configure() 会按新尺寸重建 */
     relay?.releaseAll();
     passInput.value = ''; /* 注销后清空密码 */
     resetStats(); /* 指标保持占位显示 0，避免下次进入桌面时内容跳动 */

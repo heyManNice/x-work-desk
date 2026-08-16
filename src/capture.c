@@ -302,6 +302,8 @@ void *capture_thread(void *arg)
 {
     runtime *rt = arg;
     capture_ctx *cap = &rt->cap;
+    atomic_store(&rt->cap_start_ms, monotonic_ms());
+    atomic_store(&rt->settle_pending, 0);
 
     struct timespec next;
     clock_gettime(CLOCK_MONOTONIC, &next);
@@ -324,6 +326,26 @@ void *capture_thread(void *arg)
 
     while (atomic_load(&cap->running))
     {
+        /* 登录早期（GNOME/mutter 启动中）的分辨率请求会被 mutter 的启动
+         * 显示器配置覆盖；等会话稳定（12s）后按期望尺寸补一次，钉住正确值 */
+        if (atomic_load(&rt->settle_pending))
+        {
+            int64_t elapsed = monotonic_ms() - atomic_load(&rt->cap_start_ms);
+            if (elapsed >= 12000)
+            {
+                int dw = atomic_load(&rt->desired_w);
+                int dh = atomic_load(&rt->desired_h);
+                atomic_store(&rt->settle_pending, 0);
+                if (dw > 0 && dh > 0)
+                {
+                    pthread_mutex_lock(&cap->xlock);
+                    session_resize_capture(rt, dw, dh);
+                    pthread_mutex_unlock(&cap->xlock);
+                    continue;
+                }
+            }
+        }
+
         /* 消费 RandR 事件并检查屏幕尺寸：外部（如 GNOME/mutter）改了尺寸时
          * 跟随实际尺寸重建，避免 SHM 图像与屏幕不一致导致 BadMatch 刷屏 */
         pthread_mutex_lock(&cap->xlock);
