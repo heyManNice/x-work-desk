@@ -97,6 +97,11 @@ function applyAnimPref(): void {
     if (ctx.isActive()) ctx.send(msgSetAnimations(setAnim.checked));
 }
 
+/* 分辨率=自动时桌面跟随视口天然 1:1，屏幕比例无意义：禁用比例选择 */
+function applyResRatioLock(): void {
+    setRatio.disabled = setRes.value === 'auto';
+}
+
 function applyAudioPref(): void {
     ctx.onAudioToggle(setAudio.checked);
     if (ctx.isActive()) ctx.send(msgSetAudio(setAudio.checked));
@@ -167,6 +172,7 @@ export function initSettings(c: SettingsContext): void {
     setRatio.value = prefs.ratio || 'fit';
     applyDebugPref(setDebug.checked);
     applyCodecPref();
+    applyResRatioLock();
 
     settingsBtn.addEventListener('click', () => {
         const open = settingsPanel.hidden;
@@ -228,6 +234,7 @@ export function initSettings(c: SettingsContext): void {
 
     setRes.addEventListener('change', () => {
         savePrefs({ ...loadPrefs(), res: setRes.value });
+        applyResRatioLock();
         if (ctx.isActive()) sendResize();
     });
 
