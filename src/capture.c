@@ -65,7 +65,8 @@ static int session_resize_capture(runtime *rt, int w, int h)
     capture_ctx *cap = &rt->cap;
     if (w <= 0 || h <= 0 || w > 8192 || h > 8192)
         return -1;
-    if (w == DisplayWidth(cap->dpy, DefaultScreen(cap->dpy)) &&
+    if (w == rt->video.width && h == rt->video.height &&
+        w == DisplayWidth(cap->dpy, DefaultScreen(cap->dpy)) &&
         h == DisplayHeight(cap->dpy, DefaultScreen(cap->dpy)))
         return 0;
 
@@ -76,25 +77,27 @@ static int session_resize_capture(runtime *rt, int w, int h)
         return -1;
     }
 
-    int ok = 0;
-    for (int i = 0; i < 60; i++)
+    /* cvt 会把宽度取整到 8 的倍数（如 1366→1368），实际屏幕尺寸可能与
+     * 请求略有差异。等待尺寸稳定（连续两次读取一致）后按实际尺寸重建，
+     * 不强求精确等于请求值。 */
+    int last_w = -1, last_h = -1;
+    for (int i = 0; i < 20; i++)
     {
         XSync(cap->dpy, False);
         drain_randr_events(cap);
-        if (DisplayWidth(cap->dpy, DefaultScreen(cap->dpy)) == w &&
-            DisplayHeight(cap->dpy, DefaultScreen(cap->dpy)) == h)
-        {
-            ok = 1;
+        int sw = DisplayWidth(cap->dpy, DefaultScreen(cap->dpy));
+        int sh = DisplayHeight(cap->dpy, DefaultScreen(cap->dpy));
+        if (sw == last_w && sh == last_h && last_w > 0)
             break;
-        }
-        usleep(100000);
+        last_w = sw;
+        last_h = sh;
+        usleep(50000);
     }
-    if (!ok)
-    {
-        log_err("屏幕尺寸未切换到 %dx%d", w, h);
+    int aw = DisplayWidth(cap->dpy, DefaultScreen(cap->dpy));
+    int ah = DisplayHeight(cap->dpy, DefaultScreen(cap->dpy));
+    if (aw <= 0 || ah <= 0)
         return -1;
-    }
-    return rebuild_capture(rt, w, h);
+    return rebuild_capture(rt, aw, ah);
 }
 
 int init_shm(capture_ctx *cap, int width, int height)
@@ -331,11 +334,19 @@ void *capture_thread(void *arg)
                 (dw != sw || dh != sh))
             {
                 if (session_resize_capture(rt, dw, dh) != 0)
-                    rebuild_capture(rt, sw, sh);
+                {
+                    XSync(cap->dpy, False);
+                    drain_randr_events(cap);
+                    rebuild_capture(rt, DisplayWidth(cap->dpy, DefaultScreen(cap->dpy)),
+                                    DisplayHeight(cap->dpy, DefaultScreen(cap->dpy)));
+                }
             }
             else
             {
-                rebuild_capture(rt, sw, sh);
+                XSync(cap->dpy, False);
+                drain_randr_events(cap);
+                rebuild_capture(rt, DisplayWidth(cap->dpy, DefaultScreen(cap->dpy)),
+                                DisplayHeight(cap->dpy, DefaultScreen(cap->dpy)));
             }
             pthread_mutex_unlock(&cap->xlock);
             continue;

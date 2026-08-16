@@ -163,6 +163,7 @@ static int write_xorg_conf(const char *path, int w, int h)
                      "ML=$(cvt %d %d 60 2>/dev/null | sed -n "
                      "'s/^Modeline //p'); "
                      "[ -z \"$ML\" ] && exit 1; "
+                     "NAME=$(echo \"$ML\" | sed -n 's/^\\\"\\([^\\\"]*\\)\\\".*/\\1/p'); "
                      "{ "
                      "echo 'Section \"ServerFlags\"'; "
                      "echo '    Option \"DontVTSwitch\" \"true\"'; "
@@ -177,7 +178,7 @@ static int write_xorg_conf(const char *path, int w, int h)
                      "echo 'Section \"Monitor\"'; "
                      "echo '    Identifier \"dummy\"'; "
                      "echo \"    Modeline $ML\"; "
-                     "echo '    Option \"PreferredMode\" \"%dx%d_60.00\"'; "
+                     "echo \"    Option \\\"PreferredMode\\\" \\\"$NAME\\\"\"; "
                      "echo 'EndSection'; "
                      "echo 'Section \"Screen\"'; "
                      "echo '    Identifier \"dummy-screen\"'; "
@@ -190,7 +191,7 @@ static int write_xorg_conf(const char *path, int w, int h)
                      "echo '    EndSubSection'; "
                      "echo 'EndSection'; "
                      "} > \"%s\"",
-                     w, h, w, h, path);
+                     w, h, path);
     if (n <= 0 || n >= (int)sizeof cmd)
         return -1;
     pid_t pid = fork();
@@ -218,10 +219,11 @@ int xrandr_set_resolution(const char *display, const char *authfile,
                      "'s/^Modeline \\\"\\([^\\\"]*\\)\\\"  */\\1 /p'); "
                      "OUT=$(xrandr 2>/dev/null | awk '/ connected/{print $1; exit}'); "
                      "[ -z \"$ML\" ] && exit 1; "
+                     "NAME=$(echo $ML | awk '{print $1}'); "
                      "xrandr --newmode $ML >/dev/null 2>&1; "
-                     "xrandr --addmode \"$OUT\" \"%dx%d_60.00\" >/dev/null 2>&1; "
-                     "xrandr --output \"$OUT\" --mode \"%dx%d_60.00\"",
-                     w, h, w, h, w, h);
+                     "xrandr --addmode \"$OUT\" \"$NAME\" >/dev/null 2>&1; "
+                     "xrandr --output \"$OUT\" --mode \"$NAME\"",
+                     w, h);
     if (n <= 0 || n >= (int)sizeof cmd)
         return -1;
     pid_t pid = fork();
