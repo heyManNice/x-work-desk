@@ -44,6 +44,25 @@ if [[ -n "$EXTRA_ARGS" ]]; then
 fi
 
 install -m 0644 "$UNIT" "/etc/systemd/system/${SERVICE_NAME}.service"
+
+# 安装 GNOME Shell 用户单元覆盖：Xvfb 软件渲染下允许前端"桌面动画"开关真正生效
+# （gnome-shell --force-animations；实际开关仍由前端 gsettings 控制，默认关）
+SHELL_OVERRIDE_SRC="$REPO_DIR/deploy/org.gnome.Shell@x11.service.d"
+SHELL_OVERRIDE_DST="/etc/systemd/user/org.gnome.Shell@x11.service.d"
+mkdir -p "$SHELL_OVERRIDE_DST"
+install -m 0644 "$SHELL_OVERRIDE_SRC/force-animations.conf" \
+    "$SHELL_OVERRIDE_DST/force-animations.conf"
+
+# 让已在线的用户 systemd 实例加载覆盖（离线用户下次登录自动生效）
+for u in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do
+    uid="$(id -u "$u" 2>/dev/null || true)"
+    if [[ -n "$uid" && -S "/run/user/$uid/bus" ]]; then
+        su -s /bin/bash "$u" -c \
+            "XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus systemctl --user daemon-reload" \
+            >/dev/null 2>&1 || true
+    fi
+done
+
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
 systemctl restart "$SERVICE_NAME"

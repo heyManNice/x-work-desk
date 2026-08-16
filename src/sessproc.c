@@ -551,6 +551,10 @@ int session_bring_up(runtime *rt, const char *user, int w, int h)
     set_user_gsettings(user, "org.gnome.desktop.screensaver",
                        "idle-activation-enabled", "false");
     set_user_gsettings(user, "org.gnome.desktop.session", "idle-delay", "0");
+    /* 默认禁用桌面动画（性能优先）：Xvfb 软件渲染 + --force-animations 时
+     * gsettings 是唯一开关，先落到 false，前端设置面板可再按需打开 */
+    set_user_gsettings(user, "org.gnome.desktop.interface",
+                       "enable-animations", "false");
 
     atomic_store(&rt->cap.running, 1);
     if (pthread_create(&rt->cap.cap_thread, NULL, capture_thread, rt) != 0)

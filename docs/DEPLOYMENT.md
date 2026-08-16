@@ -57,7 +57,18 @@ XWORKD_PORT=8080 XWORKD_EXTRA_ARGS="--width 1920 --height 1080 --fps 60" sudo ./
 ```
 
 脚本做的事：校验构建产物 → 用仓库路径生成
-`/etc/systemd/system/xworkd.service` → `daemon-reload` → 开机自启 → 重启服务。
+`/etc/systemd/system/xworkd.service` → 安装 GNOME Shell 动画覆盖 →
+对在线用户 `systemctl --user daemon-reload` → 开机自启 → 重启服务。
+
+**GNOME 动画覆盖（`--force-animations`）**：Xvfb 是软件渲染
+（llvmpipe），GNOME Shell 48+ 检测到非硬件加速会强制抑制动画，使前端
+"桌面动画"开关不生效。部署脚本会给用户 systemd 单元
+`org.gnome.Shell@x11.service` 写入覆盖，给 gnome-shell 加
+`--force-animations` 跳过抑制；动画实际开/关仍由前端开关控制
+（`org.gnome.desktop.interface enable-animations`，默认关，打开时动画
+期间 CPU 占用会明显上升）。实体机硬件渲染时该覆盖无副作用；不需要可
+删除 `/etc/systemd/user/org.gnome.Shell@x11.service.d/` 后对每个在线用户
+执行 `systemctl --user daemon-reload`。
 
 常用运维命令：
 
