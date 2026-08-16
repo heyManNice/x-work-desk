@@ -29,6 +29,12 @@ if [[ ! -f "$REPO_DIR/frontend/dist/index.html" ]]; then
     exit 1
 fi
 
+# Xorg+dummy 虚拟显示（默认 --server xorg，支持运行时改分辨率）依赖
+if ! dpkg -s xserver-xorg-video-dummy >/dev/null 2>&1; then
+    echo "安装 xserver-xorg-video-dummy（Xorg 虚拟显示驱动）..."
+    apt-get install -y xserver-xorg-video-dummy
+fi
+
 echo "仓库路径: $REPO_DIR"
 echo "服务名:   $SERVICE_NAME"
 echo "端口:     $PORT"

@@ -6,7 +6,7 @@ cc = meson.get_compiler('c')
 
 # ---- X11 / 系统库 ----
 deps = []
-foreach p : ['x11', 'xext', 'xtst', 'xfixes']
+foreach p : ['x11', 'xext', 'xtst', 'xfixes', 'xrandr']
   d = dependency(p, required: false)
   if not d.found()
     d = cc.find_library(p, required: true)

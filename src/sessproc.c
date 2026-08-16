@@ -122,6 +122,126 @@ int run_cmd_wait(char *const argv[])
     return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
 }
 
+/* 带超时的命令等待：systemctl 等调用在用户 systemd 实例被会话关机风暴
+ * 卡住时可能阻塞到默认 90s 超时，这里限制最大等待时间，超时杀掉子进程 */
+int run_cmd_wait_timeout(char *const argv[], int timeout_ms)
+{
+    pid_t pid = fork();
+    if (pid < 0)
+        return -1;
+    if (pid == 0)
+    {
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+    int st;
+    int waited = 0;
+    for (;;)
+    {
+        pid_t r = waitpid(pid, &st, WNOHANG);
+        if (r == pid)
+            return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+        if (r < 0)
+            return -1;
+        if (waited >= timeout_ms)
+        {
+            kill(pid, SIGKILL);
+            waitpid(pid, &st, 0);
+            return -1;
+        }
+        usleep(50000);
+        waited += 50;
+    }
+}
+
+/* 生成 Xorg+dummy 配置文件：Monitor 段带请求分辨率的 Modeline + PreferredMode，
+ * 使 Xorg 启动即为该分辨率（避免 GNOME/mutter 启动时把屏幕重置回默认尺寸） */
+static int write_xorg_conf(const char *path, int w, int h)
+{
+    char cmd[1600];
+    int n = snprintf(cmd, sizeof cmd,
+                     "ML=$(cvt %d %d 60 2>/dev/null | sed -n "
+                     "'s/^Modeline //p'); "
+                     "[ -z \"$ML\" ] && exit 1; "
+                     "{ "
+                     "echo 'Section \"ServerFlags\"'; "
+                     "echo '    Option \"DontVTSwitch\" \"true\"'; "
+                     "echo '    Option \"AllowEmptyInitialConfiguration\" \"true\"'; "
+                     "echo 'EndSection'; "
+                     "echo 'Section \"Device\"'; "
+                     "echo '    Identifier \"dummy\"'; "
+                     "echo '    Driver \"dummy\"'; "
+                     "echo '    VideoRam 262144'; "
+                     "echo '    Option \"ConstantDPI\" \"true\"'; "
+                     "echo 'EndSection'; "
+                     "echo 'Section \"Monitor\"'; "
+                     "echo '    Identifier \"dummy\"'; "
+                     "echo \"    Modeline $ML\"; "
+                     "echo '    Option \"PreferredMode\" \"%dx%d_60.00\"'; "
+                     "echo 'EndSection'; "
+                     "echo 'Section \"Screen\"'; "
+                     "echo '    Identifier \"dummy-screen\"'; "
+                     "echo '    Device \"dummy\"'; "
+                     "echo '    Monitor \"dummy\"'; "
+                     "echo '    DefaultDepth 24'; "
+                     "echo '    SubSection \"Display\"'; "
+                     "echo '        Depth 24'; "
+                     "echo '        Virtual 8192 8192'; "
+                     "echo '    EndSubSection'; "
+                     "echo 'EndSection'; "
+                     "} > \"%s\"",
+                     w, h, w, h, path);
+    if (n <= 0 || n >= (int)sizeof cmd)
+        return -1;
+    pid_t pid = fork();
+    if (pid < 0)
+        return -1;
+    if (pid == 0)
+    {
+        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        _exit(127);
+    }
+    int st;
+    waitpid(pid, &st, 0);
+    return WIFEXITED(st) && WEXITSTATUS(st) == 0 ? 0 : -1;
+}
+
+/* 用 xrandr 把 X 服务器屏幕改到 w×h（Xorg+dummy 支持任意分辨率运行期切换，
+ * 包括缩小；Xvfb 不支持）。流程：cvt 生成 modeline → newmode → addmode →
+ * setmode。返回 0 表示成功。 */
+int xrandr_set_resolution(const char *display, const char *authfile,
+                          int w, int h)
+{
+    char cmd[1024];
+    int n = snprintf(cmd, sizeof cmd,
+                     "ML=$(cvt %d %d 60 2>/dev/null | sed -n "
+                     "'s/^Modeline \\\"\\([^\\\"]*\\)\\\"  */\\1 /p'); "
+                     "OUT=$(xrandr 2>/dev/null | awk '/ connected/{print $1; exit}'); "
+                     "[ -z \"$ML\" ] && exit 1; "
+                     "xrandr --newmode $ML >/dev/null 2>&1; "
+                     "xrandr --addmode \"$OUT\" \"%dx%d_60.00\" >/dev/null 2>&1; "
+                     "xrandr --output \"$OUT\" --mode \"%dx%d_60.00\"",
+                     w, h, w, h, w, h);
+    if (n <= 0 || n >= (int)sizeof cmd)
+        return -1;
+    pid_t pid = fork();
+    if (pid < 0)
+        return -1;
+    if (pid == 0)
+    {
+        setenv("DISPLAY", display, 1);
+        setenv("XAUTHORITY", authfile, 1);
+        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        _exit(127);
+    }
+    int st;
+    waitpid(pid, &st, 0);
+    int rc = WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+    if (rc != 0)
+        log_err("xrandr 改分辨率命令失败 rc=%d: %s", rc, cmd);
+    return rc == 0 ? 0 : -1;
+}
+
 /* 清理非 root 模式的会话运行时目录。root 用系统 /run/user 目录，不删除 */
 void cleanup_rt_dir(runtime *rt)
 {
@@ -411,6 +531,9 @@ int session_bring_up(runtime *rt, const char *user, int w, int h)
 {
     rt->video.width = (w > 0 && w <= 8192) ? w : g_cfg.width;
     rt->video.height = (h > 0 && h <= 8192) ? h : g_cfg.height;
+    atomic_store(&rt->desired_w, rt->video.width);
+    atomic_store(&rt->desired_h, rt->video.height);
+    atomic_store(&rt->resize_retries, 0);
 
     /* 出站队列预算按分辨率/帧率估算：低码率场景小内存，高清场景够缓冲。
      * 经验估算 ~40KB/百万像素/帧 × 2 帧缓冲，1MB~16MB 区间。 */
@@ -462,13 +585,35 @@ int session_bring_up(runtime *rt, const char *user, int w, int h)
         }
     }
 
-    char geom[32];
-    snprintf(geom, sizeof geom, "%dx%dx24", rt->video.width, rt->video.height);
-    char *xv[] = {"Xvfb", rt->proc.display_str, "-screen", "0", geom,
-                  "-nolisten", "tcp", "-auth", rt->proc.authfile, NULL};
-    rt->proc.xvfb_pid = run_cmd_bg(xv);
-    if (rt->proc.xvfb_pid < 0)
-        return -1;
+    if (g_cfg.server == SERVER_XORG)
+    {
+        /* Xorg + dummy 驱动：无真实显卡/显示器，内存帧缓冲，支持 RandR
+         * 运行期改分辨率（Xvfb 不支持，只能整体重建会话）。
+         * 配置文件每会话生成一份，Virtual 上限 8192 便于任意分辨率切换。 */
+        snprintf(rt->proc.xorg_conf, sizeof rt->proc.xorg_conf,
+                 "/tmp/xworkd_xorg_%d.conf", rt->proc.display);
+        if (write_xorg_conf(rt->proc.xorg_conf,
+                            rt->video.width, rt->video.height) != 0)
+            return -1;
+        chmod(rt->proc.xorg_conf, 0600);
+        char *xo[] = {"Xorg", rt->proc.display_str, "-config",
+                      rt->proc.xorg_conf, "-noreset", "-nolisten", "tcp",
+                      "-auth", rt->proc.authfile, NULL};
+        rt->proc.xvfb_pid = run_cmd_bg(xo);
+        if (rt->proc.xvfb_pid < 0)
+            return -1;
+    }
+    else
+    {
+        char geom[32];
+        snprintf(geom, sizeof geom, "%dx%dx24",
+                 rt->video.width, rt->video.height);
+        char *xv[] = {"Xvfb", rt->proc.display_str, "-screen", "0", geom,
+                      "-nolisten", "tcp", "-auth", rt->proc.authfile, NULL};
+        rt->proc.xvfb_pid = run_cmd_bg(xv);
+        if (rt->proc.xvfb_pid < 0)
+            return -1;
+    }
 
     int up = 0;
     for (int i = 0; i < 100; i++)
@@ -514,6 +659,15 @@ int session_bring_up(runtime *rt, const char *user, int w, int h)
     }
     rt->cap.root = DefaultRootWindow(rt->cap.dpy);
 
+    if (g_cfg.server == SERVER_XORG)
+    {
+        /* 启动后把屏幕切到会话请求的分辨率（dummy 默认 1024x768）。
+         * 失败时保持默认尺寸继续，登录后前端 MSG_RESIZE 会再触发。 */
+        if (xrandr_set_resolution(rt->proc.display_str, rt->proc.authfile,
+                                  rt->video.width, rt->video.height) != 0)
+            log_err("初始分辨率设置失败 %dx%d", rt->video.width, rt->video.height);
+    }
+
     if (init_shm(&rt->cap, rt->video.width, rt->video.height) != 0)
         return -1;
     if (init_encoder(rt) != 0)
@@ -528,7 +682,7 @@ int session_bring_up(runtime *rt, const char *user, int w, int h)
             char unit[64];
             snprintf(unit, sizeof unit, "user@%u.service", pw->pw_uid);
             char *args[] = {"systemctl", "start", unit, NULL};
-            run_cmd_wait(args);
+            run_cmd_wait_timeout(args, 10000);
             /* 兜底：用户实例的 dbus 可能已停止（VM 上偶发），
              * 导致 /run/user/<uid>/bus 拒绝连接、gnome-session 起不来。
              * 检测到总线不可用则重启用户实例恢复。 */
@@ -536,10 +690,10 @@ int session_bring_up(runtime *rt, const char *user, int w, int h)
             {
                 log_info("用户 %s 的总线不可用，重启 %s", user, unit);
                 char *restart[] = {"systemctl", "restart", unit, NULL};
-                run_cmd_wait(restart);
+                run_cmd_wait_timeout(restart, 10000);
                 sleep(1);
                 char *start2[] = {"systemctl", "start", unit, NULL};
-                run_cmd_wait(start2);
+                run_cmd_wait_timeout(start2, 10000);
             }
         }
     }

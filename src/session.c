@@ -27,6 +27,14 @@
 
 static int runtime_restart(runtime *rt, int w, int h);
 
+/* Xvfb 模式的异步分辨率重建任务（避免阻塞事件循环） */
+typedef struct
+{
+    runtime *rt;
+    int w, h;
+} restart_job;
+static void *restart_worker(void *arg);
+
 void runtime_ref(runtime *rt) { __sync_add_and_fetch(&rt->refs, 1); }
 
 /* 停抓帧线程并释放 X/编码/进程资源；幂等，可在会话未完全启动时调用 */
@@ -113,6 +121,11 @@ static void runtime_teardown(runtime *rt)
     if (rt->proc.display >= 0)
     {
         unlink(rt->proc.authfile);
+        if (rt->proc.xorg_conf[0])
+        {
+            unlink(rt->proc.xorg_conf);
+            rt->proc.xorg_conf[0] = 0;
+        }
         cleanup_rt_dir(rt);
         rt->proc.display = -1; /* 下一次 bring_up 重新分配 */
     }
@@ -377,7 +390,53 @@ static void handle_resize_msg(runtime *rt, const uint8_t *data, size_t len)
     int w = rd_u16(data + 1);
     int h = rd_u16(data + 3);
     if (rt_state_is(rt, S_RUNNING))
-        runtime_restart(rt, w, h);
+    {
+        if (g_cfg.server == SERVER_XORG)
+        {
+            /* Xorg+dummy 支持运行期改分辨率：capture 线程检测到新尺寸后
+             * xrandr 切换 + 重建采集/编码，桌面不重启 */
+            atomic_store(&rt->resize_w, w);
+            atomic_store(&rt->resize_h, h);
+            atomic_store(&rt->desired_w, w);
+            atomic_store(&rt->desired_h, h);
+            atomic_store(&rt->resize_retries, 0);
+        }
+        else if (!atomic_exchange(&rt->restarting, 1))
+        {
+            /* Xvfb 不支持运行期改分辨率：异步整体重建，避免阻塞事件循环 */
+            restart_job *job = malloc(sizeof *job);
+            pthread_t th;
+            if (job)
+            {
+                runtime_ref(rt); /* 工作线程持有引用，防止连接关闭时被释放 */
+                job->rt = rt;
+                job->w = w;
+                job->h = h;
+                if (pthread_create(&th, NULL, restart_worker, job) == 0)
+                    pthread_detach(th);
+                else
+                {
+                    free(job);
+                    atomic_store(&rt->restarting, 0);
+                }
+            }
+            else
+            {
+                atomic_store(&rt->restarting, 0);
+            }
+        }
+    }
+}
+
+/* Xvfb 模式的分辨率重建工作线程：在事件循环外执行 teardown+bring_up */
+static void *restart_worker(void *arg)
+{
+    restart_job *job = arg;
+    runtime_restart(job->rt, job->w, job->h);
+    atomic_store(&job->rt->restarting, 0);
+    runtime_unref(job->rt);
+    free(job);
+    return NULL;
 }
 
 static void handle_input_msg(runtime *rt, uint8_t t, const uint8_t *data, size_t len)

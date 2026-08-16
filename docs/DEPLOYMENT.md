@@ -56,10 +56,19 @@ sudo ./deploy/install.sh
 XWORKD_PORT=8080 XWORKD_EXTRA_ARGS="--width 1920 --height 1080 --fps 60" sudo ./deploy/install.sh
 ```
 
-脚本做的事：校验构建产物 → 用仓库路径生成
+脚本做的事：校验构建产物 → 安装 xserver-xorg-video-dummy → 用仓库路径生成
 `/etc/systemd/system/xworkd.service` → 安装 GNOME Shell 动画覆盖与
 WirePlumber 音频覆盖 → 对在线用户 `systemctl --user daemon-reload` 并重启
 wireplumber → 开机自启 → 重启服务。
+
+**虚拟显示服务器（`--server`）**：默认 `xorg`——每用户一个 headless
+Xorg + dummy 驱动（无显示器/显卡，内存帧缓冲），支持 RandR 运行时改
+分辨率：前端窗口变化时 `xrandr` 直接切换屏幕尺寸，抓帧管线重建编码器并
+重发 CONFIG，**桌面不重启**。切换分辨率约 100ms。启动配置见
+`src/sessproc.c` 的 `write_xorg_conf`（Virtual 上限 8192x8192）。
+`--server xvfb` 可回退到旧行为（改分辨率需重建桌面，已改为异步重建 +
+systemctl 超时，不再卡住事件循环）。运行时改分辨率依赖 `cvt`
+（`x11-xserver-utils`）。
 
 **GNOME 动画覆盖（`--force-animations`）**：Xvfb 是软件渲染
 （llvmpipe），GNOME Shell 48+ 检测到非硬件加速会强制抑制动画，使前端

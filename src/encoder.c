@@ -261,8 +261,8 @@ static int encoder_open(runtime *rt, int kbps, int crf)
     return encoder_open_kind(rt, codec, ENC_X264, kbps, crf);
 }
 
-/* 关闭并释放编码器 */
-static void encoder_close(encoder_ctx *enc)
+/* 关闭并释放编码器（SPS/PPS 一并清空，重建后首个关键帧重新提取） */
+void encoder_close(encoder_ctx *enc)
 {
     if (enc->pkt)
         av_packet_free(&enc->pkt);

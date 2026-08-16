@@ -40,6 +40,7 @@ static void usage(const char *prog)
             "  --www-root DIR      前端静态文件目录 (默认 ./frontend/dist)\n"
             "  --auth none|shadow  认证模式 (默认 shadow；开发用 none)\n"
             "  --app CMD           在桌面上启动的会话命令 (默认 gnome-shell)\n"
+            "  --server xorg|xvfb  虚拟显示服务器 (默认 xorg；xorg 支持运行时改分辨率)\n"
             "  --width W --height H  虚拟屏幕尺寸 (默认 1280x720)\n"
             "  --fps N             抓帧帧率 (默认 30)\n",
             prog);
@@ -51,6 +52,7 @@ int main(int argc, char **argv)
     snprintf(g_cfg.www_root, sizeof g_cfg.www_root, "%s", "./frontend/dist");
     g_cfg.auth_mode = AUTH_SHADOW;
     g_cfg.session_cmd[0] = 0;
+    g_cfg.server = SERVER_XORG;
     g_cfg.width = DEFAULT_WIDTH;
     g_cfg.height = DEFAULT_HEIGHT;
     g_cfg.fps = 30;
@@ -76,6 +78,19 @@ int main(int argc, char **argv)
         }
         else if (!strcmp(argv[i], "--app") && i + 1 < argc)
             snprintf(g_cfg.session_cmd, sizeof g_cfg.session_cmd, "%s", argv[++i]);
+        else if (!strcmp(argv[i], "--server") && i + 1 < argc)
+        {
+            i++;
+            if (!strcmp(argv[i], "xorg"))
+                g_cfg.server = SERVER_XORG;
+            else if (!strcmp(argv[i], "xvfb"))
+                g_cfg.server = SERVER_XVFB;
+            else
+            {
+                usage(argv[0]);
+                return 1;
+            }
+        }
         else if (!strcmp(argv[i], "--width") && i + 1 < argc)
             g_cfg.width = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--height") && i + 1 < argc)

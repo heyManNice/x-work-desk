@@ -5,6 +5,7 @@
 #include "protocol.h"
 #include "config.h"
 #include "encoder.h"
+#include "sessproc.h"
 #include "util.h"
 #include "clip.h"
 
@@ -16,7 +17,85 @@
 #include <X11/Xlib.h>
 #include <X11/extensions/XShm.h>
 #include <X11/extensions/Xfixes.h>
+#include <X11/extensions/Xrandr.h>
 #include <sys/shm.h>
+
+/* 消费 RandR 屏幕变更事件并回填 DisplayWidth/Height 缓存 */
+static void drain_randr_events(capture_ctx *cap)
+{
+    if (!cap->rr_event_base)
+        return;
+    XEvent ev;
+    while (XCheckTypedEvent(cap->dpy,
+                            cap->rr_event_base + RRScreenChangeNotify, &ev))
+        XRRUpdateConfiguration(&ev);
+}
+
+/* 按 w×h 重建 SHM 图像与编码器（调用方需持有 cap->xlock）。
+ * 假定 X 服务器屏幕已经是 w×h。 */
+static int rebuild_capture(runtime *rt, int w, int h)
+{
+    capture_ctx *cap = &rt->cap;
+    if (w <= 0 || h <= 0 || w > 8192 || h > 8192)
+        return -1;
+
+    XShmDetach(cap->dpy, &cap->shminfo);
+    XDestroyImage(cap->img);
+    cap->img = NULL;
+    shmctl(cap->shminfo.shmid, IPC_RMID, NULL);
+    if (init_shm(cap, w, h) != 0)
+        return -1;
+    free(rt->video.yuv);
+    rt->video.yuv = NULL;
+    encoder_close(&rt->enc);
+    rt->video.width = w;
+    rt->video.height = h;
+    if (init_encoder(rt) != 0)
+        return -1;
+    atomic_store(&rt->cap.req_keyframe, 1);
+    log_info("分辨率切换完成: %dx%d", w, h);
+    return 0;
+}
+
+/* 运行时切换分辨率（Xorg+dummy）：xrandr 改屏幕尺寸 → 等尺寸生效 →
+ * 重建采集/编码管线并请求关键帧（首个关键帧自动重发新 CONFIG）。
+ * 调用方需持有 cap->xlock。 */
+static int session_resize_capture(runtime *rt, int w, int h)
+{
+    capture_ctx *cap = &rt->cap;
+    if (w <= 0 || h <= 0 || w > 8192 || h > 8192)
+        return -1;
+    if (w == DisplayWidth(cap->dpy, DefaultScreen(cap->dpy)) &&
+        h == DisplayHeight(cap->dpy, DefaultScreen(cap->dpy)))
+        return 0;
+
+    if (xrandr_set_resolution(rt->proc.display_str, rt->proc.authfile,
+                              w, h) != 0)
+    {
+        log_err("xrandr 改分辨率失败 %dx%d", w, h);
+        return -1;
+    }
+
+    int ok = 0;
+    for (int i = 0; i < 60; i++)
+    {
+        XSync(cap->dpy, False);
+        drain_randr_events(cap);
+        if (DisplayWidth(cap->dpy, DefaultScreen(cap->dpy)) == w &&
+            DisplayHeight(cap->dpy, DefaultScreen(cap->dpy)) == h)
+        {
+            ok = 1;
+            break;
+        }
+        usleep(100000);
+    }
+    if (!ok)
+    {
+        log_err("屏幕尺寸未切换到 %dx%d", w, h);
+        return -1;
+    }
+    return rebuild_capture(rt, w, h);
+}
 
 int init_shm(capture_ctx *cap, int width, int height)
 {
@@ -223,9 +302,61 @@ void *capture_thread(void *arg)
         XFixesSelectCursorInput(cap->dpy, cap->root, XFixesDisplayCursorNotifyMask);
         clip_init(rt, cev); /* 订阅 CLIPBOARD owner 变化（功能禁用时无副作用） */
     }
+    /* 订阅 RandR 屏幕变更：运行期改分辨率后回填屏幕尺寸 */
+    int rrev = 0, rrer = 0;
+    if (XRRQueryExtension(cap->dpy, &rrev, &rrer))
+    {
+        cap->rr_event_base = rrev;
+        XRRSelectInput(cap->dpy, cap->root, RRScreenChangeNotifyMask);
+    }
 
     while (atomic_load(&cap->running))
     {
+        /* 消费 RandR 事件并检查屏幕尺寸：外部（如 GNOME/mutter）改了尺寸时
+         * 跟随实际尺寸重建，避免 SHM 图像与屏幕不一致导致 BadMatch 刷屏 */
+        pthread_mutex_lock(&cap->xlock);
+        drain_randr_events(cap);
+        int sw = DisplayWidth(cap->dpy, DefaultScreen(cap->dpy));
+        int sh = DisplayHeight(cap->dpy, DefaultScreen(cap->dpy));
+        if (sw != rt->video.width || sh != rt->video.height)
+        {
+            /* 外部（如 GNOME/mutter 启动时）重置了屏幕尺寸：
+             * 若存在期望尺寸且尚未超限，重新应用期望分辨率（mutter 只会在
+             * 启动阶段重置一两次，之后 xrandr 的修改能稳定保持）；
+             * 超限后跟随实际尺寸，避免与外部管理器无限互搏 */
+            int dw = atomic_load(&rt->desired_w);
+            int dh = atomic_load(&rt->desired_h);
+            int tries = atomic_fetch_add(&rt->resize_retries, 1);
+            if (dw > 0 && dh > 0 && tries < 20 &&
+                (dw != sw || dh != sh))
+            {
+                if (session_resize_capture(rt, dw, dh) != 0)
+                    rebuild_capture(rt, sw, sh);
+            }
+            else
+            {
+                rebuild_capture(rt, sw, sh);
+            }
+            pthread_mutex_unlock(&cap->xlock);
+            continue;
+        }
+        pthread_mutex_unlock(&cap->xlock);
+
+        /* 前端请求的新分辨率（Xorg 模式）：在抓帧前切换，避免尺寸不一致 */
+        int rw = atomic_load(&rt->resize_w);
+        int rh = atomic_load(&rt->resize_h);
+        if (rw > 0 && rh > 0 &&
+            (rw != rt->video.width || rh != rt->video.height))
+        {
+            /* 清除已读到的请求；若处理期间来了更新的请求则保留给下一轮 */
+            atomic_compare_exchange_strong(&rt->resize_w, &rw, 0);
+            atomic_compare_exchange_strong(&rt->resize_h, &rh, 0);
+            pthread_mutex_lock(&cap->xlock);
+            session_resize_capture(rt, rw, rh);
+            pthread_mutex_unlock(&cap->xlock);
+            continue;
+        }
+
         /* 帧率可在运行期调整（MSG_SET_FPS），每次循环读取 */
         uint64_t interval_ns = 1000000000ull / (uint64_t)(atomic_load(&rt->fps) > 0 ? atomic_load(&rt->fps) : 30);
         pthread_mutex_lock(&cap->xlock);

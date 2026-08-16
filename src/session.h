@@ -37,8 +37,9 @@ typedef struct proc_ctx
     int display; /* -1 表示尚未分配 */
     char display_str[16];
     char authfile[512];
+    char xorg_conf[512]; /* Xorg 模式下的配置文件（Xvfb 模式为空） */
     char user[64]; /* 会话进程的运行用户（清理时按 uid+DISPLAY 匹配） */
-    pid_t xvfb_pid;
+    pid_t xvfb_pid; /* X 服务器进程 pid（Xvfb 或 Xorg） */
     pid_t *children;
     int nchildren;
 } proc_ctx;
@@ -61,6 +62,7 @@ typedef struct capture_ctx
     uint64_t sig[2]; /* 上一帧内容签名（静止帧检测） */
     int have_sig;
     int _Atomic need_config; /* 接管/重建后要求重发 CONFIG */
+    int rr_event_base;       /* RandR 屏幕变更事件基号（0=不可用） */
 } capture_ctx;
 
 /* 编码器子系统的自有状态 */
@@ -102,6 +104,12 @@ struct runtime
     int _Atomic static_skip;   /* 静态帧优化开关（画面无变化跳过编码） */
     int _Atomic bitrate_kbps;  /* 目标码率上限（0=自动/CRF 质量模式） */
     int _Atomic crf;           /* CRF 质量档（码率为自动时生效） */
+    _Atomic int resize_w;      /* 待应用的新分辨率（>0 时 capture 线程执行） */
+    _Atomic int resize_h;
+    _Atomic int desired_w;     /* 期望分辨率（登录/MSG_RESIZE 设定；外部重置时重新应用） */
+    _Atomic int desired_h;
+    _Atomic int resize_retries; /* 外部重置后的重新应用计数（防止与 mutter 无限互搏） */
+    _Atomic int restarting;    /* 1=重建工作线程运行中（避免重复触发） */
 
     /* ---- 音频传输（Opus，前端开关控制） ---- */
     int _Atomic audio_enabled;
