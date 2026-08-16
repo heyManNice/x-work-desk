@@ -35,6 +35,26 @@ typedef struct
 } restart_job;
 static void *restart_worker(void *arg);
 
+/* 简单进程存活检查（非僵尸） */
+static int proc_alive(pid_t pid)
+{
+    if (pid <= 0)
+        return 0;
+    char p[64];
+    snprintf(p, sizeof p, "/proc/%d/stat", pid);
+    FILE *f = fopen(p, "rb");
+    if (!f)
+        return 0;
+    char buf[256];
+    size_t n = fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    char *rp = strrchr(buf, ')');
+    if (!rp || rp[1] != ' ')
+        return 0;
+    return rp[2] != 0 && rp[2] != 'Z';
+}
+
 void runtime_ref(runtime *rt) { __sync_add_and_fetch(&rt->refs, 1); }
 
 /* 停抓帧线程并释放 X/编码/进程资源；幂等，可在会话未完全启动时调用 */
@@ -70,6 +90,13 @@ static void runtime_teardown(runtime *rt)
     rt->enc.pps = NULL;
     rt->enc.pps_len = 0;
 
+    /* 会话进程清理策略：X 服务器若仍存活（用户系统注销、gnome-session 先退出），
+     * 说明 systemd 用户实例正在正常收尾，跳过按 DISPLAY 扫描的 SIGKILL——
+     * 否则会误杀 systemd 刚重启的 dbus/wireplumber 等常驻服务（它们环境里
+     * 带 DISPLAY=:N），触发重启风暴并卡死用户管理器约 90s。
+     * 只有 X 服务器已死（崩溃）时才兜底清理孤儿进程。 */
+    int x_alive = proc_alive(rt->proc.xvfb_pid);
+
     /* 再杀掉 Xvfb 与会话进程（按进程组整体清理） */
     if (rt->proc.xvfb_pid > 0)
     {
@@ -78,7 +105,7 @@ static void runtime_teardown(runtime *rt)
     }
     /* systemd 用户实例接管了 gnome-session/gnome-shell 等（不在我们的进程组），
      * 按「DISPLAY=:N + 用户」扫描 /proc 兜底清理，避免旧会话残留占用总线 */
-    if (rt->proc.user[0])
+    if (rt->proc.user[0] && !x_alive)
         kill_session_procs_by_display(rt->proc.user, rt->proc.display_str, 0);
     for (int i = 0; i < rt->proc.nchildren; i++)
         if (rt->proc.children[i] > 0)
@@ -91,7 +118,7 @@ static void runtime_teardown(runtime *rt)
     {
         int any = 0;
         int st;
-        if (rt->proc.user[0])
+        if (rt->proc.user[0] && !x_alive)
             any |= kill_session_procs_by_display(rt->proc.user, rt->proc.display_str, 1);
         if (rt->proc.xvfb_pid > 0)
         {
