@@ -279,6 +279,11 @@ loginForm.addEventListener('submit', (e) => {
     if (!user || !pass) {
         return;
     }
+    /* 在用户手势内同步做一次同文档导航（history.pushState）：Chrome 的密码
+     * 管理器把"提交了含密码的表单 + 发生同文档导航"识别为登录成功，从而弹出
+     * 保存密码提示（Chromium 原生行为，CL 802593005）。页面不刷新，WS 登录
+     * 照常进行。 */
+    history.pushState({}, '', '/');
     loginBtn.disabled = true;
     loginBtn.classList.add('loading');
     btnSpinner.hidden = false;

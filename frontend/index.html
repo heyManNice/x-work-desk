@@ -19,14 +19,16 @@
                         <path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" />
                     </svg>
                 </div>
-                <!-- autocomplete=off + 唯一字段名：避免浏览器弹出"推荐账号"等自动填充建议 -->
-                <form id="login-form" autocomplete="off" novalidate>
+                <!-- 标准 username/password 字段名：让浏览器识别为登录表单
+                     （原生保存密码提示依赖）；提交由 JS preventDefault 接管，
+                     走 WebSocket 登录，不产生真实页面跳转 -->
+                <form id="login-form" novalidate>
                     <div class="field">
-                        <input id="xwd-account" name="xwd-account" type="text" placeholder="输入用户名" autocomplete="off"
+                        <input id="xwd-account" name="username" type="text" placeholder="输入用户名" autocomplete="username"
                             spellcheck="false" aria-label="用户名" required />
                     </div>
                     <div class="field">
-                        <input id="xwd-pass" name="xwd-pass" type="password" placeholder="输入密码"
+                        <input id="xwd-pass" name="password" type="password" placeholder="输入密码"
                             autocomplete="current-password" aria-label="密码" required />
                     </div>
                     <button id="login-btn" type="submit">
