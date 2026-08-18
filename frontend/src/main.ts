@@ -145,14 +145,14 @@ function handleConfigMsg(b: Uint8Array): void {
 }
 
 function handleSessionExists(): void {
-    /* 刷新/重连场景（pagehide 已标记）：静默注销旧会话并接管，不打扰用户 */
+    /* 刷新/重连场景（pagehide 已标记）：静默继承旧会话（复用原桌面，不注销） */
     if (sessionStorage.getItem('xwd-reconnect') === '1') {
         sessionStorage.removeItem('xwd-reconnect');
         send(msgTakeover());
         return;
     }
-    /* 其他场景（真有两处登录）：询问是否注销旧会话并接管 */
-    const take = window.confirm('该账户已在其他窗口登录。\n\n是否注销旧会话并接管？');
+    /* 第二处登录：警告前一人将被断开，你将继承其桌面（会话不注销） */
+    const take = window.confirm('该账号已有会话在使用。\n\n继续登录将断开前一个连接并继承其桌面（会话不会注销）。是否继续？');
     send(take ? msgTakeover() : msgTakeoverCancel());
 }
 

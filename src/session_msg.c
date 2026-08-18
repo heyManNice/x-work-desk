@@ -347,118 +347,39 @@ static void handle_input_msg(runtime *rt, uint8_t t, const uint8_t *data, size_t
         atomic_store(&rt->cap.req_keyframe, 1);
 }
 
-/* 接管确认：注销旧会话（快速：标记关闭 + 断连，销毁在后台线程），
- * 然后异步重建新会话，避免 session_bring_up 的 X/系统等待阻塞事件循环 */
-typedef struct
-{
-    runtime *rt;
-    conn *c; /* 发起接管确认的连接（事件循环线程已持有引用） */
-    int w, h;
-} takeover_job;
-
-static void *takeover_worker(void *arg)
-{
-    takeover_job *j = arg;
-    runtime *rt = j->rt;
-    conn *c = j->c;
-    int w = j->w, h = j->h;
-    free(j);
-
-    int ok = session_bring_up(rt, rt->user, w, h);
-    pthread_mutex_lock(&rt->lock);
-    int closed = (rt->state == S_CLOSED);
-    if (ok != 0 && !closed)
-        rt->state = S_LOGIN; /* 启动失败，允许重试 */
-    else if (ok == 0 && !closed)
-        rt->state = S_RUNNING;
-    pthread_mutex_unlock(&rt->lock);
-
-    if (ok != 0)
-    {
-        if (!closed)
-            push_login_result(c, 0, "无法启动桌面会话");
-        conn_unref(c);
-        runtime_unref(rt);
-        return NULL;
-    }
-    if (closed)
-    {
-        /* 启动期间客户端已断开：资源由最后一次 unref 统一清理 */
-        conn_unref(c);
-        runtime_unref(rt);
-        return NULL;
-    }
-
-    session_register(rt, rt->user);
-    push_login_result(c, 1, "ok");
-    atomic_store(&rt->cap.req_keyframe, 1);
-    log_info("接管并重建会话: %s -> %s", rt->user, rt->proc.display_str);
-
-    conn_unref(c);
-    runtime_unref(rt);
-    return NULL;
-}
-
 static void handle_takeover_msg(conn *c, runtime *rt)
 {
     if (!rt_state_is(rt, S_CONFIRM))
         return;
 
     runtime *sess = session_lookup(rt->user);
-    if (sess)
+    if (!sess)
     {
-        conn *old = atomic_exchange(&sess->conn, NULL);
-        pthread_mutex_lock(&sess->lock);
-        sess->state = S_CLOSED;
-        pthread_mutex_unlock(&sess->lock);
-        if (old)
-            net_close_conn(old); /* 旧连接前端回到登录页 */
-        session_unregister(sess);
-        runtime_unref(sess); /* 释放 lookup 引用（销毁在后台线程执行） */
+        /* 旧会话已消失（极罕见）：恢复登录态，让前端重新登录 */
+        pthread_mutex_lock(&rt->lock);
+        if (rt->state == S_CONFIRM)
+            rt->state = S_LOGIN;
+        pthread_mutex_unlock(&rt->lock);
+        return;
     }
 
+    /* 继承接管：断开前一人连接，新连接复用原会话（桌面不重建）。
+     * 断开连接只解绑不注销——只有 GNOME 桌面内注销才会销毁会话。 */
+    conn *old = atomic_exchange(&sess->conn, NULL);
+    if (old)
+        net_close_conn(old); /* 前一人前端回到登录页 */
+
+    push_login_result(c, 1, "ok");
+    takeover_session(sess, c);
+    log_info("接管并继承会话(第二人登录): %s -> %s", rt->user,
+             sess->proc.display_str);
+
+    /* 释放临时登录 runtime（连接已改挂到 sess）与 lookup 引用 */
     pthread_mutex_lock(&rt->lock);
-    if (rt->state != S_CONFIRM)
-    {
-        pthread_mutex_unlock(&rt->lock);
-        return;
-    }
-    rt->state = S_AUTHING;
+    rt->state = S_CLOSED;
     pthread_mutex_unlock(&rt->lock);
-
-    int w = rt->req_w > 0 ? rt->req_w : g_cfg.width;
-    int h = rt->req_h > 0 ? rt->req_h : g_cfg.height;
-
-    conn_ref(c); /* 事件循环线程持有连接引用，worker 负责释放 */
-    takeover_job *j = calloc(1, sizeof *j);
-    if (!j)
-    {
-        conn_unref(c);
-        pthread_mutex_lock(&rt->lock);
-        if (rt->state == S_AUTHING)
-            rt->state = S_LOGIN;
-        pthread_mutex_unlock(&rt->lock);
-        return;
-    }
-    j->rt = rt;
-    j->c = c;
-    j->w = w;
-    j->h = h;
-    runtime_ref(rt);
-    pthread_t th;
-    if (pthread_create(&th, NULL, takeover_worker, j) != 0)
-    {
-        conn_unref(c);
-        runtime_unref(rt);
-        free(j);
-        pthread_mutex_lock(&rt->lock);
-        if (rt->state == S_AUTHING)
-            rt->state = S_LOGIN;
-        pthread_mutex_unlock(&rt->lock);
-        return;
-    }
-    pthread_detach(th);
-    log_info("账户 %s 开始接管重建（%dx%d）", rt->user, w, h);
+    runtime_unref(rt);   /* 释放连接持有的 rt 引用（c->sess 已改挂） */
+    runtime_unref(sess); /* 释放 lookup 引用 */
 }
 
 void session_on_message(conn *c, const uint8_t *data, size_t len)
