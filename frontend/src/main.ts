@@ -21,10 +21,14 @@ import {
 import { VideoRenderer } from './decoder';
 import { InputRelay } from './input';
 import { AudioPlayer } from './audio';
-import { initStats, setResolution, onVideoFrame, onDecodeTime,
-         requestKeyframeTime, onKeyframeReceived, resetStats } from './stats';
-import { initSettings, getFixedResolution, applyDisplayRatio,
-         applyAllPrefs, setResizeRequest } from './settings';
+import {
+    initStats, setResolution, onVideoFrame, onDecodeTime,
+    requestKeyframeTime, onKeyframeReceived, resetStats
+} from './stats';
+import {
+    initSettings, getFixedResolution, applyDisplayRatio,
+    applyAllPrefs, setResizeRequest
+} from './settings';
 import type { CursorImage } from './protocol';
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string): T =>
@@ -123,6 +127,7 @@ function handleClipboardMsg(b: Uint8Array): void {
 function handleLoginResult(b: Uint8Array): void {
     const r = parseLoginResult(b);
     if (r.ok) {
+        sessionStorage.removeItem('xwd-reconnect'); /* 登录成功，重连标记失效 */
         loginBtn.hidden = true;
         showDesktop();
     } else {
@@ -140,7 +145,13 @@ function handleConfigMsg(b: Uint8Array): void {
 }
 
 function handleSessionExists(): void {
-    /* 该账户已有活跃会话：询问是否注销旧会话并接管 */
+    /* 刷新/重连场景（pagehide 已标记）：静默注销旧会话并接管，不打扰用户 */
+    if (sessionStorage.getItem('xwd-reconnect') === '1') {
+        sessionStorage.removeItem('xwd-reconnect');
+        send(msgTakeover());
+        return;
+    }
+    /* 其他场景（真有两处登录）：询问是否注销旧会话并接管 */
     const take = window.confirm('该账户已在其他窗口登录。\n\n是否注销旧会话并接管？');
     send(take ? msgTakeover() : msgTakeoverCancel());
 }
@@ -297,6 +308,12 @@ disconnectBtn.addEventListener('click', (e) => {
     e.preventDefault();
     if (ws) { ws.close(); ws = null; }
     onDisconnect();
+});
+
+/* 刷新/关闭前标记“正在重连”：刷新后重新登录时静默接管旧会话，
+ * 避免服务端误判“已有活跃会话”而弹出确认框（刷新时序竞态） */
+window.addEventListener('pagehide', () => {
+    sessionStorage.setItem('xwd-reconnect', '1');
 });
 
 /* 窗口尺寸变化：防抖后按新视口重建会话分辨率 */
