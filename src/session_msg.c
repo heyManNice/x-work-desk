@@ -509,8 +509,11 @@ void session_on_message(conn *c, const uint8_t *data, size_t len)
     case MSG_SET_CLIPBOARD:
         if (!rt_state_is(rt, S_RUNNING))
             break;
-        /* 剪贴板共享在当前 Xvfb+GNOME 环境不可用（GNOME 剪贴板管理
-         * 会破坏 CLIPBOARD owner 并造成事件死循环），暂时禁用 */
+        /* 剪贴板共享：Xorg+dummy 虚拟显示下 GNOME 剪贴板管理器未接管，
+         * 自实现的常驻 CLIPBOARD owner 实测不会被夺走，双向同步可行
+         * （早期 Xvfb 环境曾因 owner 被破坏/事件死循环而禁用）。 */
+        if (len >= 2)
+            atomic_store(&rt->clip_enabled, data[1] ? 1 : 0);
         break;
     case MSG_CLIPBOARD:
         if (!rt_state_is(rt, S_RUNNING))

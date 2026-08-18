@@ -129,18 +129,22 @@ static void clip_serve_selection(runtime *rt, XSelectionRequestEvent *req)
     {
         if (req->target == cl->targets_atom)
         {
-            Atom atoms[4];
+            Atom atoms[6];
             int n = 0;
             atoms[n++] = cl->utf8_atom;
             atoms[n++] = XA_STRING;
             atoms[n++] = cl->text_atom;
+            atoms[n++] = cl->plain_atom;
+            atoms[n++] = cl->plain_utf8_atom;
             atoms[n++] = cl->targets_atom;
             XChangeProperty(dpy, req->requestor, req->property, XA_ATOM, 32,
                             PropModeReplace, (unsigned char *)atoms, n);
             se.property = req->property;
         }
         else if (req->target == cl->utf8_atom || req->target == XA_STRING ||
-                 req->target == cl->text_atom)
+                 req->target == cl->text_atom ||
+                 req->target == cl->plain_atom ||
+                 req->target == cl->plain_utf8_atom)
         {
             XChangeProperty(dpy, req->requestor, req->property, req->target, 8,
                             PropModeReplace, cl->own_text, (int)cl->own_len);
@@ -164,6 +168,8 @@ void clip_init(runtime *rt, int event_base)
     cl->utf8_atom = XInternAtom(rt->cap.dpy, "UTF8_STRING", False);
     cl->text_atom = XInternAtom(rt->cap.dpy, "TEXT", False);
     cl->targets_atom = XInternAtom(rt->cap.dpy, "TARGETS", False);
+    cl->plain_atom = XInternAtom(rt->cap.dpy, "text/plain", False);
+    cl->plain_utf8_atom = XInternAtom(rt->cap.dpy, "text/plain;charset=utf-8", False);
     cl->owner_win = XCreateSimpleWindow(rt->cap.dpy, rt->cap.root,
                                         0, 0, 1, 1, 0, 0, 0);
     XMapWindow(rt->cap.dpy, cl->owner_win);
@@ -171,6 +177,29 @@ void clip_init(runtime *rt, int event_base)
                                XFixesSetSelectionOwnerNotifyMask);
     pthread_mutex_init(&cl->lock, NULL);
     XSync(rt->cap.dpy, False);
+}
+
+/* 保证前端内容仍是 CLIPBOARD/PRIMARY owner：被外部清空（owner 变 None）后
+ * 自动恢复（300ms 限流，避免与剪贴板管理器互搏造成事件风暴/高 CPU）。
+ * 注意：桌面应用成为 owner 时（owner 非 None）不抢回，保证能读到应用内容。 */
+static void clip_ensure_owner(runtime *rt)
+{
+    clip_ctx *cl = &rt->clip;
+    pthread_mutex_lock(&cl->lock);
+    int has = (cl->own_text && cl->own_len > 0);
+    pthread_mutex_unlock(&cl->lock);
+    if (!has)
+        return;
+    int64_t now = monotonic_ms();
+    if (now - cl->last_own_attempt_ms < 300)
+        return;
+    cl->last_own_attempt_ms = now;
+    if (XGetSelectionOwner(rt->cap.dpy, cl->clip_atom) == None)
+    {
+        XSetSelectionOwner(rt->cap.dpy, cl->primary_atom, cl->owner_win, CurrentTime);
+        XSetSelectionOwner(rt->cap.dpy, cl->clip_atom, cl->owner_win, CurrentTime);
+        XFlush(rt->cap.dpy);
+    }
 }
 
 /* capture 线程（xlock 内）：X 事件处理 + owner 设置 */
@@ -196,6 +225,8 @@ void clip_check(runtime *rt)
         }
         pthread_mutex_unlock(&cl->lock);
     }
+    /* 被外部接管后自动恢复（限流），尽量让前端内容常驻剪贴板 */
+    clip_ensure_owner(rt);
 
     /* CLIPBOARD owner 变化（用户显式复制）→ 锁外读取并推送。
      * 注意：不监听 PRIMARY 自动读取——读取 PRIMARY 会让应用取消选中 */
@@ -215,6 +246,11 @@ void clip_read_push(runtime *rt)
 {
     if (!atomic_exchange(&rt->clip_pending_read, 0))
         return;
+    /* 剪贴板管理器可能触发事件风暴：限流读取，避免反复 fork xclip 高 CPU */
+    int64_t now = monotonic_ms();
+    if (now - rt->clip.last_read_ms < 300)
+        return;
+    rt->clip.last_read_ms = now;
     size_t len = 0;
     uint8_t *text = clip_read(rt, "clipboard", &len);
     if (!text)
