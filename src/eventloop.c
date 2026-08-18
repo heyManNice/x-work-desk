@@ -112,8 +112,9 @@ int net_run(void)
             nfds++;
         }
 
-        /* 1 秒周期：兼顾即时性并允许周期性清理已结束的会话 */
-        if (poll(fds, (nfds_t)nfds, 1000) < 0)
+        /* 250ms 周期：及时检测连接断开（缩小刷新重连的竞态窗口），
+         * 并周期性清理已结束的会话 */
+        if (poll(fds, (nfds_t)nfds, 250) < 0)
         {
             if (errno == EINTR)
                 continue;

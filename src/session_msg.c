@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
 
 static int runtime_restart(runtime *rt, int w, int h);
 
@@ -114,7 +115,31 @@ static void *login_worker(void *arg)
     }
     if (sess && atomic_load(&sess->conn) != NULL)
     {
-        /* 该账户已有活跃会话且正被使用：询问是否注销接管 */
+        /* 旧连接可能刚断开但事件循环（poll 周期）尚未清理——属刷新重连的
+         * 时序竞态。唤醒事件循环并短暂等待，若 conn 已清空则直接接管空闲
+         * 会话（复用原桌面，不注销重建）；仍非空才视为确有活跃连接。 */
+        net_wake();
+        int waited = 0;
+        while (atomic_load(&sess->conn) != NULL && waited < 500000)
+        {
+            usleep(10000);
+            waited += 10000;
+            if (waited % 100000 == 0)
+                net_wake(); /* 周期性唤醒，确保事件循环观察到连接 EOF */
+        }
+        if (atomic_load(&sess->conn) == NULL)
+        {
+            /* 旧连接已关闭：无缝接管原会话（复用桌面，不重建） */
+            push_login_result(c, 1, "ok");
+            takeover_session(sess, c);
+            log_info("接管空闲会话(刷新重连): %s", j->user);
+            runtime_unref(sess); /* 释放 lookup 引用 */
+            conn_unref(c);
+            runtime_unref(rt);
+            free(j);
+            return NULL;
+        }
+        /* 该账户确有活跃连接：询问是否注销接管 */
         rt->req_w = j->width;
         rt->req_h = j->height;
         snprintf(rt->user, sizeof rt->user, "%s", j->user);
