@@ -12,6 +12,7 @@ typedef struct clip_ctx
     int event_base;          /* XFixes 事件基号 */
     unsigned long last_hash; /* 上次推送内容的哈希 */
     Window owner_win;        /* 剪贴板 owner 窗口 */
+    Window read_win;         /* 读取剪贴板的请求窗口（XConvertSelection） */
     Atom clip_atom, primary_atom, utf8_atom, text_atom, targets_atom,
         plain_atom, plain_utf8_atom; /* text/plain 系 target（GNOME/GTK 兼容） */
     uint8_t *own_text;               /* 我们作为 owner 提供的内容 */

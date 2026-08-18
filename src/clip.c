@@ -23,6 +23,8 @@
 
 #define CLIP_MAX 1048576 /* 1MB 文本上限 */
 
+static void clip_serve_selection(runtime *rt, XSelectionRequestEvent *req); /* 前置声明 */
+
 static uint64_t hash_text(const uint8_t *s, size_t n)
 {
     uint64_t h = 1469598103934665603ull;
@@ -34,79 +36,68 @@ static uint64_t hash_text(const uint8_t *s, size_t n)
     return h;
 }
 
-/* 以会话用户身份运行 xclip（继承会话的 DISPLAY/XAUTHORITY） */
-static void xclip_exec_child(runtime *rt, int out_fd, int in_fd,
-                             const char *selection)
-{
-    struct passwd *pw = getpwnam(rt->proc.user);
-    if (getuid() == 0 && pw)
-    {
-        initgroups(pw->pw_name, pw->pw_gid);
-        setgid(pw->pw_gid);
-        setuid(pw->pw_uid);
-    }
-    setenv("DISPLAY", rt->proc.display_str, 1);
-    setenv("XAUTHORITY", rt->proc.authfile, 1);
-    if (out_fd >= 0)
-        dup2(out_fd, 1);
-    if (in_fd >= 0)
-        dup2(in_fd, 0);
-    /* GNOME 剪贴板通常只提供 UTF8_STRING（不支持 STRING），显式指定 target */
-    execlp("xclip", "xclip", "-selection", selection, "-t", "UTF8_STRING",
-           "-loops", "1", (char *)NULL);
-    _exit(127);
-}
-
-/* 读取指定 selection 的文本（带 2 秒超时，避免 owner 无响应挂起） */
+/* 直接请求 selection 内容（XConvertSelection），避免 fork xclip 的启动延迟，
+ * 抢在剪贴板管理器接管前读到内容。带 500ms 超时（owner 无响应时返回 NULL）。 */
 static uint8_t *clip_read(runtime *rt, const char *selection, size_t *len)
 {
-    int pfd[2];
-    if (pipe(pfd) != 0)
-        return NULL;
-    pid_t pid = fork();
-    if (pid < 0)
-    {
-        close(pfd[0]);
-        close(pfd[1]);
-        return NULL;
-    }
-    if (pid == 0)
-    {
-        close(pfd[0]);
-        xclip_exec_child(rt, pfd[1], -1, selection);
-    }
-    close(pfd[1]);
+    clip_ctx *cl = &rt->clip;
+    Display *dpy = rt->cap.dpy;
+    Atom sel = (strcmp(selection, "clipboard") == 0) ? cl->clip_atom
+                                                     : cl->primary_atom;
+    Atom prop = XInternAtom(dpy, "XWD_CLIP_DATA", False);
 
-    uint8_t *buf = malloc(CLIP_MAX);
-    size_t have = 0;
+    XDeleteProperty(dpy, cl->read_win, prop);
+    XConvertSelection(dpy, sel, cl->utf8_atom, prop, cl->read_win, CurrentTime);
+    XFlush(dpy);
+
     struct timespec deadline;
     clock_gettime(CLOCK_MONOTONIC, &deadline);
-    deadline.tv_sec += 2;
+    deadline.tv_nsec += 500 * 1000000L;
+    if (deadline.tv_nsec >= 1000000000L)
+    {
+        deadline.tv_sec++;
+        deadline.tv_nsec -= 1000000000L;
+    }
+
     for (;;)
     {
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
-        if (now.tv_sec > deadline.tv_sec)
+        if (now.tv_sec > deadline.tv_sec ||
+            (now.tv_sec == deadline.tv_sec && now.tv_nsec > deadline.tv_nsec))
             break;
-        struct pollfd pf = {pfd[0], POLLIN, 0};
-        if (poll(&pf, 1, 200) <= 0)
-            break;
-        ssize_t n = read(pfd[0], buf + have, CLIP_MAX - have);
-        if (n <= 0)
-            break;
-        have += (size_t)n;
-        if (have >= CLIP_MAX)
-            break;
+
+        XEvent ev;
+        while (XCheckTypedWindowEvent(dpy, cl->read_win, SelectionNotify, &ev))
+        {
+            XSelectionEvent *se = &ev.xselection;
+            if (se->property == None)
+                return NULL; /* owner 无 UTF8_STRING */
+            Atom type;
+            int fmt;
+            unsigned long n, after;
+            unsigned char *data = NULL;
+            if (XGetWindowProperty(dpy, cl->read_win, prop, 0, CLIP_MAX,
+                                   True, AnyPropertyType, &type, &fmt, &n,
+                                   &after, &data) == Success &&
+                data && n > 0)
+            {
+                uint8_t *out = malloc(n);
+                memcpy(out, data, n);
+                XFree(data);
+                *len = n;
+                return out;
+            }
+            if (data)
+                XFree(data);
+            return NULL;
+        }
+        /* 顺手响应粘贴请求，避免事件堆积（也处理读取自身 owner 的情况） */
+        while (XCheckTypedEvent(dpy, SelectionRequest, &ev))
+            clip_serve_selection(rt, &ev.xselectionrequest);
+        usleep(2000);
     }
-    close(pfd[0]);
-    waitpid(pid, NULL, 0);
-    if (have == 0)
-    {
-        free(buf);
-        return NULL;
-    }
-    *len = have;
-    return buf;
+    return NULL;
 }
 
 /* 响应 SelectionRequest：把内容写进请求方 property 并回发通知 */
@@ -173,6 +164,9 @@ void clip_init(runtime *rt, int event_base)
     cl->owner_win = XCreateSimpleWindow(rt->cap.dpy, rt->cap.root,
                                         0, 0, 1, 1, 0, 0, 0);
     XMapWindow(rt->cap.dpy, cl->owner_win);
+    cl->read_win = XCreateSimpleWindow(rt->cap.dpy, rt->cap.root,
+                                       0, 0, 1, 1, 0, 0, 0);
+    XMapWindow(rt->cap.dpy, cl->read_win);
     XFixesSelectSelectionInput(rt->cap.dpy, rt->cap.root, cl->clip_atom,
                                XFixesSetSelectionOwnerNotifyMask);
     pthread_mutex_init(&cl->lock, NULL);
