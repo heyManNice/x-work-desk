@@ -144,15 +144,47 @@ function handleConfigMsg(b: Uint8Array): void {
     requestKeyframe();
 }
 
-function handleSessionExists(): void {
+/* 自制确认弹窗（替代浏览器原生 confirm）：显示遮罩对话框，返回用户选择 */
+function showConfirm(title: string, text: string): Promise<boolean> {
+    return new Promise((resolve) => {
+        const mask = $('#modal-mask');
+        const titleEl = $('#modal-title');
+        const textEl = $('#modal-text');
+        const okBtn = $('#modal-ok');
+        const cancelBtn = $('#modal-cancel');
+        titleEl.textContent = title;
+        textEl.textContent = text;
+        mask.hidden = false;
+        const finish = (v: boolean) => {
+            mask.hidden = true;
+            okBtn.removeEventListener('click', onOk);
+            cancelBtn.removeEventListener('click', onCancel);
+            mask.removeEventListener('click', onMaskClick);
+            resolve(v);
+        };
+        const onOk = () => finish(true);
+        const onCancel = () => finish(false);
+        const onMaskClick = (e: MouseEvent) => {
+            if (e.target === mask) onCancel(); /* 点击遮罩空白处等同取消 */
+        };
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+        mask.addEventListener('click', onMaskClick);
+    });
+}
+
+async function handleSessionExists(): Promise<void> {
     /* 刷新/重连场景（pagehide 已标记）：静默继承旧会话（复用原桌面，不注销） */
     if (sessionStorage.getItem('xwd-reconnect') === '1') {
         sessionStorage.removeItem('xwd-reconnect');
         send(msgTakeover());
         return;
     }
-    /* 第二处登录：警告前一人将被断开，你将继承其桌面（会话不注销） */
-    const take = window.confirm('该账号已有会话在使用。\n\n继续登录将断开前一个连接并继承其桌面（会话不会注销）。是否继续？');
+    /* 第二处登录：自制弹窗警告，继承原会话（不注销） */
+    const take = await showConfirm(
+        '会话提醒',
+        '该账号已有会话在使用。\n\n继续登录将断开前一个连接并继承其桌面（会话不会注销）。是否继续？',
+    );
     send(take ? msgTakeover() : msgTakeoverCancel());
 }
 

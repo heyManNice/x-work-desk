@@ -272,7 +272,8 @@ body,
 #screen {
     width: 100%;
     height: 100%;
-    object-fit: contain; /* 适应：等比缩放，最长边贴边，居中不变形 */
+    object-fit: contain;
+    /* 适应：等比缩放，最长边贴边，居中不变形 */
     background: #000;
 }
 
@@ -304,4 +305,75 @@ body,
 /* HTML hidden 属性（display:none）必须覆盖 display:flex，否则遮罩无法隐藏 */
 .connecting-overlay[hidden] {
     display: none;
+}
+
+/* ---------- 自制确认弹窗 ---------- */
+.modal-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-mask[hidden] {
+    display: none;
+}
+
+.modal-box {
+    width: min(400px, 92vw);
+    background: #2d2d2d;
+    border: 1px solid #3a3a3a;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.modal-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 12px;
+}
+
+.modal-text {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--muted);
+    margin-bottom: 24px;
+    white-space: pre-line;
+}
+
+.modal-btns {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+.modal-btn {
+    padding: 8px 18px;
+    border-radius: 8px;
+    border: none;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.modal-btn-cancel {
+    background: #3a3a3a;
+    color: var(--text);
+}
+
+.modal-btn-cancel:hover {
+    background: #444;
+}
+
+.modal-btn-ok {
+    background: var(--accent);
+    color: #fff;
+}
+
+.modal-btn-ok:hover {
+    filter: brightness(1.1);
 }
