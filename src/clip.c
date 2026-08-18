@@ -158,12 +158,13 @@ void clip_init(runtime *rt, int event_base)
     cl->plain_atom = XInternAtom(rt->cap.dpy, "text/plain", False);
     cl->plain_utf8_atom = XInternAtom(rt->cap.dpy, "text/plain;charset=utf-8", False);
     cl->read_prop_atom = XInternAtom(rt->cap.dpy, "XWD_CLIP_DATA", False);
+    /* 辅助窗口不映射：剪贴板 selection 的 owner/requestor 窗口无需显示，
+     * 未映射也能接收 SelectionRequest/SelectionNotify 事件；映射后会被
+     * GNOME 托盘/任务栏当作"unknown"应用窗口显示（1x1 无名窗口） */
     cl->owner_win = XCreateSimpleWindow(rt->cap.dpy, rt->cap.root,
                                         0, 0, 1, 1, 0, 0, 0);
-    XMapWindow(rt->cap.dpy, cl->owner_win);
     cl->read_win = XCreateSimpleWindow(rt->cap.dpy, rt->cap.root,
                                        0, 0, 1, 1, 0, 0, 0);
-    XMapWindow(rt->cap.dpy, cl->read_win);
     XFixesSelectSelectionInput(rt->cap.dpy, rt->cap.root, cl->clip_atom,
                                XFixesSetSelectionOwnerNotifyMask);
     pthread_mutex_init(&cl->lock, NULL);
