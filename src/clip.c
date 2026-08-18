@@ -1,6 +1,9 @@
 /* clip.c —— 剪贴板共享（每会话独立）。
- * 监听 PRIMARY（选中即复制）与 CLIPBOARD（Ctrl+C）的 owner 变化，
- * 用 xclip 桥接读取；作为 owner 响应粘贴请求（自实现 X11 selection）。
+ * 读取方向：XFixes 订阅 CLIPBOARD owner 变化，XConvertSelection 直接
+ * 请求 UTF8_STRING 内容推送前端（避免 fork xclip 的启动延迟，抢在
+ * 剪贴板管理器接管前读到内容）。
+ * 写入方向：作为 CLIPBOARD/PRIMARY owner 响应粘贴请求（自实现 X11
+ * selection），被外部清空后自动恢复。
  * 状态全部挂在 runtime->clip，多用户会话互不串扰。
  * 仅支持文本；内容哈希去重避免重复推送。 */
 #define _POSIX_C_SOURCE 200809L
@@ -12,18 +15,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <errno.h>
-#include <poll.h>
 #include <time.h>
-#include <sys/wait.h>
-#include <pwd.h>
-#include <grp.h>
 #include <X11/Xatom.h>
 #include <X11/extensions/Xfixes.h>
 
 #define CLIP_MAX 1048576 /* 1MB 文本上限 */
-
-static void clip_serve_selection(runtime *rt, XSelectionRequestEvent *req); /* 前置声明 */
 
 static uint64_t hash_text(const uint8_t *s, size_t n)
 {
@@ -36,6 +32,53 @@ static uint64_t hash_text(const uint8_t *s, size_t n)
     return h;
 }
 
+/* 响应 SelectionRequest：把内容写进请求方 property 并回发通知 */
+static void clip_serve_selection(runtime *rt, XSelectionRequestEvent *req)
+{
+    clip_ctx *cl = &rt->clip;
+    Display *dpy = rt->cap.dpy;
+    XSelectionEvent se;
+    memset(&se, 0, sizeof se);
+    se.type = SelectionNotify;
+    se.display = dpy;
+    se.requestor = req->requestor;
+    se.selection = req->selection;
+    se.target = req->target;
+    se.time = req->time;
+    se.property = None;
+
+    pthread_mutex_lock(&cl->lock);
+    if (cl->own_text && cl->own_len > 0)
+    {
+        if (req->target == cl->targets_atom)
+        {
+            Atom atoms[6];
+            int n = 0;
+            atoms[n++] = cl->utf8_atom;
+            atoms[n++] = XA_STRING;
+            atoms[n++] = cl->text_atom;
+            atoms[n++] = cl->plain_atom;
+            atoms[n++] = cl->plain_utf8_atom;
+            atoms[n++] = cl->targets_atom;
+            XChangeProperty(dpy, req->requestor, req->property, XA_ATOM, 32,
+                            PropModeReplace, (unsigned char *)atoms, n);
+            se.property = req->property;
+        }
+        else if (req->target == cl->utf8_atom || req->target == XA_STRING ||
+                 req->target == cl->text_atom ||
+                 req->target == cl->plain_atom ||
+                 req->target == cl->plain_utf8_atom)
+        {
+            XChangeProperty(dpy, req->requestor, req->property, req->target, 8,
+                            PropModeReplace, cl->own_text, (int)cl->own_len);
+            se.property = req->property;
+        }
+    }
+    pthread_mutex_unlock(&cl->lock);
+    XSendEvent(dpy, req->requestor, False, 0, (XEvent *)&se);
+    XFlush(dpy);
+}
+
 /* 直接请求 selection 内容（XConvertSelection），避免 fork xclip 的启动延迟，
  * 抢在剪贴板管理器接管前读到内容。带 500ms 超时（owner 无响应时返回 NULL）。 */
 static uint8_t *clip_read(runtime *rt, const char *selection, size_t *len)
@@ -44,7 +87,7 @@ static uint8_t *clip_read(runtime *rt, const char *selection, size_t *len)
     Display *dpy = rt->cap.dpy;
     Atom sel = (strcmp(selection, "clipboard") == 0) ? cl->clip_atom
                                                      : cl->primary_atom;
-    Atom prop = XInternAtom(dpy, "XWD_CLIP_DATA", False);
+    Atom prop = cl->read_prop_atom;
 
     XDeleteProperty(dpy, cl->read_win, prop);
     XConvertSelection(dpy, sel, cl->utf8_atom, prop, cl->read_win, CurrentTime);
@@ -100,53 +143,6 @@ static uint8_t *clip_read(runtime *rt, const char *selection, size_t *len)
     return NULL;
 }
 
-/* 响应 SelectionRequest：把内容写进请求方 property 并回发通知 */
-static void clip_serve_selection(runtime *rt, XSelectionRequestEvent *req)
-{
-    clip_ctx *cl = &rt->clip;
-    Display *dpy = rt->cap.dpy;
-    XSelectionEvent se;
-    memset(&se, 0, sizeof se);
-    se.type = SelectionNotify;
-    se.display = dpy;
-    se.requestor = req->requestor;
-    se.selection = req->selection;
-    se.target = req->target;
-    se.time = req->time;
-    se.property = None;
-
-    pthread_mutex_lock(&cl->lock);
-    if (cl->own_text && cl->own_len > 0)
-    {
-        if (req->target == cl->targets_atom)
-        {
-            Atom atoms[6];
-            int n = 0;
-            atoms[n++] = cl->utf8_atom;
-            atoms[n++] = XA_STRING;
-            atoms[n++] = cl->text_atom;
-            atoms[n++] = cl->plain_atom;
-            atoms[n++] = cl->plain_utf8_atom;
-            atoms[n++] = cl->targets_atom;
-            XChangeProperty(dpy, req->requestor, req->property, XA_ATOM, 32,
-                            PropModeReplace, (unsigned char *)atoms, n);
-            se.property = req->property;
-        }
-        else if (req->target == cl->utf8_atom || req->target == XA_STRING ||
-                 req->target == cl->text_atom ||
-                 req->target == cl->plain_atom ||
-                 req->target == cl->plain_utf8_atom)
-        {
-            XChangeProperty(dpy, req->requestor, req->property, req->target, 8,
-                            PropModeReplace, cl->own_text, (int)cl->own_len);
-            se.property = req->property;
-        }
-    }
-    pthread_mutex_unlock(&cl->lock);
-    XSendEvent(dpy, req->requestor, False, 0, (XEvent *)&se);
-    XFlush(dpy);
-}
-
 /* capture 线程初始化：订阅 PRIMARY 与 CLIPBOARD owner 变化 */
 void clip_init(runtime *rt, int event_base)
 {
@@ -161,6 +157,7 @@ void clip_init(runtime *rt, int event_base)
     cl->targets_atom = XInternAtom(rt->cap.dpy, "TARGETS", False);
     cl->plain_atom = XInternAtom(rt->cap.dpy, "text/plain", False);
     cl->plain_utf8_atom = XInternAtom(rt->cap.dpy, "text/plain;charset=utf-8", False);
+    cl->read_prop_atom = XInternAtom(rt->cap.dpy, "XWD_CLIP_DATA", False);
     cl->owner_win = XCreateSimpleWindow(rt->cap.dpy, rt->cap.root,
                                         0, 0, 1, 1, 0, 0, 0);
     XMapWindow(rt->cap.dpy, cl->owner_win);
@@ -190,6 +187,8 @@ static void clip_ensure_owner(runtime *rt)
     cl->last_own_attempt_ms = now;
     if (XGetSelectionOwner(rt->cap.dpy, cl->clip_atom) == None)
     {
+        /* 同时接管 PRIMARY 与 CLIPBOARD：Ctrl+V 走 CLIPBOARD，中键粘贴走
+         * PRIMARY；接管 PRIMARY 会覆盖其当前内容，属预期设计 */
         XSetSelectionOwner(rt->cap.dpy, cl->primary_atom, cl->owner_win, CurrentTime);
         XSetSelectionOwner(rt->cap.dpy, cl->clip_atom, cl->owner_win, CurrentTime);
         XFlush(rt->cap.dpy);
@@ -240,7 +239,8 @@ void clip_read_push(runtime *rt)
 {
     if (!atomic_exchange(&rt->clip_pending_read, 0))
         return;
-    /* 剪贴板管理器可能触发事件风暴：限流读取，避免反复 fork xclip 高 CPU */
+    /* 剪贴板管理器可能触发事件风暴：限流读取（每次 XConvertSelection
+     * 都有请求开销，风暴下反复读只会读到空） */
     int64_t now = monotonic_ms();
     if (now - rt->clip.last_read_ms < 300)
         return;

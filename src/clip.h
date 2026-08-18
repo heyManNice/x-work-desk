@@ -13,6 +13,7 @@ typedef struct clip_ctx
     unsigned long last_hash; /* 上次推送内容的哈希 */
     Window owner_win;        /* 剪贴板 owner 窗口 */
     Window read_win;         /* 读取剪贴板的请求窗口（XConvertSelection） */
+    Atom read_prop_atom;     /* 读取用 property（XWD_CLIP_DATA，缓存） */
     Atom clip_atom, primary_atom, utf8_atom, text_atom, targets_atom,
         plain_atom, plain_utf8_atom; /* text/plain 系 target（GNOME/GTK 兼容） */
     uint8_t *own_text;               /* 我们作为 owner 提供的内容 */
@@ -22,7 +23,7 @@ typedef struct clip_ctx
     pthread_mutex_t lock;
 } clip_ctx;
 
-/* 剪贴板共享（clip.c）：XFixes 监听 + xclip 桥接 */
+/* 剪贴板共享（clip.c）：XFixes 监听 + XConvertSelection 读取 / owner 响应 */
 void clip_init(struct runtime *rt, int event_base);                 /* capture 线程初始化 */
 void clip_check(struct runtime *rt);                                /* capture 线程轮询变化 */
 void clip_read_push(struct runtime *rt);                            /* 锁外读取剪贴板并推送 */
