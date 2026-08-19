@@ -77,6 +77,19 @@ void session_push_transfer(conn *c, int action, const char *text)
     free(buf);
 }
 
+/* 推送传输错误通知（前端右下角提醒，如路径权限不足） */
+void session_push_transfer_error(conn *c, const char *text)
+{
+    if (!c || atomic_load(&c->closing) || !text)
+        return;
+    size_t tl = strlen(text);
+    uint8_t *buf = malloc(1 + tl);
+    buf[0] = MSG_TRANSFER_ERROR;
+    memcpy(buf + 1, text, tl);
+    net_push(c, buf, 1 + tl, 0);
+    free(buf);
+}
+
 /* 把空闲会话（无连接）绑定到新连接上，推送配置并请求关键帧 */
 static void takeover_session(runtime *sess, conn *c)
 {

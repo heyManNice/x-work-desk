@@ -12,6 +12,7 @@
 #define MSG_CLIPBOARD 0x08        /* 剪贴板文本（UTF-8，双向） */
 #define MSG_TRANSFER_TOKEN 0x09   /* 服务端→客户端：文件传输 token（UTF-8 文本） */
 #define MSG_TRANSFER_REQUEST 0x0a /* 服务端→客户端：扩展触发的传输请求：action(1)+路径文本 */
+#define MSG_TRANSFER_ERROR 0x0b   /* 服务端→客户端：传输请求被拒绝（UTF-8 原因文本） */
 
 /* ---------- 客户端 -> 服务端 ---------- */
 #define MSG_LOGIN 0x10           /* userLen(2) user passLen(2) pass w(2) h(2) */

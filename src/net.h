@@ -88,3 +88,4 @@ void session_on_close(conn *c);
 /* 文件传输（transfer.c）：按 token 查找会话并推送传输请求 */
 struct runtime *session_by_token(const char *token);
 void session_push_transfer(conn *c, int action, const char *text);
+void session_push_transfer_error(conn *c, const char *text);

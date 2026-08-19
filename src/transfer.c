@@ -208,6 +208,12 @@ static int handle_request(conn *c, const char *q, const char *xw_token,
     }
     if (!any)
     {
+        /* 所有路径都不在用户 home 内（如 /etc 系统目录）：拒绝并推送
+         * 错误通知给浏览器，避免前端"没有响应"（扩展的 request 只回 403） */
+        conn *browser = atomic_load(&rt->conn);
+        if (browser && !atomic_load(&browser->closing))
+            session_push_transfer_error(browser,
+                                        "无法访问该路径：文件不在你的用户目录内或不存在");
         runtime_unref(rt);
         http_resp(c, 403, "Forbidden", NULL, 0);
         return 1;

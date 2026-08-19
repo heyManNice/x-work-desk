@@ -13,6 +13,7 @@ import {
     MSG_CLIPBOARD,
     MSG_TRANSFER_TOKEN,
     MSG_TRANSFER_REQUEST,
+    MSG_TRANSFER_ERROR,
     parseTransferRequest,
     TRANSFER_ACT_DOWNLOAD,
     TRANSFER_ACT_UPLOADDIR,
@@ -26,7 +27,7 @@ import {
 import { VideoRenderer } from './decoder';
 import { InputRelay } from './input';
 import { AudioPlayer } from './audio';
-import { setTransferToken, handleDownloadRequest, handleUploadRequest } from './transfer';
+import { setTransferToken, handleDownloadRequest, handleUploadRequest, showTransferError } from './transfer';
 import {
     initStats, setResolution, onVideoFrame, onDecodeTime,
     requestKeyframeTime, onKeyframeReceived, resetStats
@@ -215,6 +216,9 @@ function handleMessage(b: Uint8Array): void {
     switch (b[0]) {
         case MSG_TRANSFER_TOKEN:
             setTransferToken(new TextDecoder().decode(b.subarray(1)));
+            break;
+        case MSG_TRANSFER_ERROR:
+            showTransferError(new TextDecoder().decode(b.subarray(1)));
             break;
         case MSG_TRANSFER_REQUEST:
             handleTransferRequestMsg(b);

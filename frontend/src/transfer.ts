@@ -173,6 +173,27 @@ export function handleUploadRequest(dir: string): void {
     openFileChooser(dir);
 }
 
+/* 右下角错误提醒 toast（如路径权限不足被服务端拒绝） */
+export function showTransferError(msg: string): void {
+    let t = document.getElementById('transfer-toast') as HTMLElement | null;
+    if (!t) {
+        t = document.createElement('div');
+        t.id = 'transfer-toast';
+        t.className = 'transfer-toast';
+        document.body.appendChild(t);
+    }
+    t.textContent = '⚠ ' + msg;
+    t.classList.remove('transfer-toast-out');
+    t.hidden = false;
+    /* 重新触发出现动画：先移除再强制重排 */
+    void t.offsetWidth;
+    window.clearTimeout((t as HTMLElement & { __toast?: number }).__toast);
+    (t as HTMLElement & { __toast?: number }).__toast = window.setTimeout(() => {
+        t!.classList.add('transfer-toast-out');
+        window.setTimeout(() => { if (t) t.hidden = true; }, 300);
+    }, 4500);
+}
+
 function openFileChooser(dir: string): void {
     const input = document.createElement('input');
     input.type = 'file';
