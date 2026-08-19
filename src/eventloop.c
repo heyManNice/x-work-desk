@@ -109,7 +109,10 @@ int net_run(void)
                 continue;
             fds[nfds].fd = c->fd;
             fds[nfds].events = POLLIN;
-            if (c->snd)
+            /* send_fd>=0 表示 HTTP 流式文件下载中：socket 缓冲满（sendfile
+             * EAGAIN）时必须持续注册 POLLOUT，否则连接永远不会被唤醒，
+             * 大文件下载会卡住（小文件一次发完不暴露） */
+            if (c->snd || c->send_fd >= 0)
                 fds[nfds].events |= POLLOUT;
             fds[nfds].revents = 0;
             c->pindex = nfds;
