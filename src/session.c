@@ -23,35 +23,6 @@
 
 void runtime_ref(runtime *rt) { __sync_add_and_fetch(&rt->refs, 1); }
 
-/* 生成 32 字符十六进制随机 token（文件传输鉴权用） */
-static void gen_token(char *out, size_t n)
-{
-    unsigned char r[16];
-    size_t rd = 0;
-    FILE *f = fopen("/dev/urandom", "rb");
-    if (f)
-    {
-        rd = fread(r, 1, sizeof r, f);
-        fclose(f);
-    }
-    if (rd != sizeof r)
-    {
-        /* 降级：时间 + pid 混合 */
-        uint64_t t = (uint64_t)time(NULL) ^ ((uint64_t)getpid() << 32) ^ (uint64_t)monotonic_ms();
-        for (int i = 0; i < 16; i++)
-            r[i] = (unsigned char)(t >> (8 * (i % 8)));
-    }
-    if (n < 33)
-        return;
-    static const char hex[] = "0123456789abcdef";
-    for (int i = 0; i < 16; i++)
-    {
-        out[i * 2] = hex[r[i] >> 4];
-        out[i * 2 + 1] = hex[r[i] & 15];
-    }
-    out[32] = 0;
-}
-
 /* 停抓帧线程并释放 X/编码/进程资源；幂等，可在会话未完全启动时调用 */
 void runtime_teardown(runtime *rt)
 {
@@ -225,7 +196,7 @@ void session_on_open(conn *c)
     atomic_init(&rt->crf, 23);
     rt->proc.display = -1;
     pthread_mutex_init(&rt->lock, NULL);
-    gen_token(rt->token, sizeof rt->token);
+    util_gen_token(rt->token, sizeof rt->token);
     c->sess = rt;
 }
 

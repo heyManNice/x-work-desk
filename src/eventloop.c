@@ -35,7 +35,7 @@ conn *conn_alloc(int fd)
     c->refs = 1;
     c->send_fd = -1; /* 无文件下载；0 会被 ws_flush 误判为 stdin */
     atomic_init(&c->closing, false);
-    ws_parser_init(&c->ws, 1u << 20);
+    ws_parser_init(&c->ws, WS_MAX_FRAME_SIZE);
     /* 初始小预算；会话确定分辨率后由 session.c 按帧率/分辨率调整 */
     msgq_init(&c->outq, 512 * 1024);
     if (!conn_reserve(c, 4096))

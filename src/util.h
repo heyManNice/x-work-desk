@@ -37,3 +37,17 @@ void sha1_final(sha1_ctx *c, uint8_t out[20]);
 
 /* Base64 */
 size_t b64_encode(const uint8_t *in, size_t inlen, char *out, size_t outsz);
+
+/* URL 解码（%xx -> 字节，+ -> 空格）；有内容成功返回 1 */
+int util_url_decode(const char *in, char *out, size_t outn);
+
+/* 从 query string 提取参数：q="a=1&b=2"。命中返回 1。 */
+int util_query_get(const char *q, const char *key, char *out, size_t outn);
+
+/* 校验 path 属于 user 的 home 目录并用 realpath 解析（防符号链接逃逸）。
+ * 成功时把解析后的绝对路径写入 resolved。 */
+int util_path_in_user_home(const char *user, const char *path,
+                           char *resolved, size_t resolved_n);
+
+/* 生成 32 字符十六进制随机 token（文件传输鉴权用），写入 out（需 ≥33 字节） */
+void util_gen_token(char *out, size_t n);

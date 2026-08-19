@@ -30,64 +30,59 @@ typedef struct
 static void *restart_worker(void *arg);
 
 /* ---------------- 消息构造 ---------------- */
+
+/* 通用文本消息推送：type + [可选 prefix 字节] + text（UTF-8）。
+ * 统一 malloc/net_push/free，消除各 push_* 的重复样板。 */
+static void push_text_msg(conn *c, uint8_t type, const uint8_t *prefix,
+                          size_t plen, const char *text)
+{
+    if (!c || atomic_load(&c->closing))
+        return;
+    size_t tl = text ? strlen(text) : 0;
+    uint8_t *buf = malloc(1 + plen + tl);
+    if (!buf)
+        return;
+    buf[0] = type;
+    if (prefix && plen)
+        memcpy(buf + 1, prefix, plen);
+    if (text && tl)
+        memcpy(buf + 1 + plen, text, tl);
+    net_push(c, buf, 1 + plen + tl, 0);
+    free(buf);
+}
+
 static void push_login_result(conn *c, int ok, const char *txt)
 {
-    size_t tl = strlen(txt);
-    uint8_t *buf = malloc(2 + tl);
-    buf[0] = MSG_LOGIN_RESULT;
-    buf[1] = ok ? 1 : 0;
-    memcpy(buf + 2, txt, tl);
-    net_push(c, buf, 2 + tl, 0);
-    free(buf);
+    uint8_t prefix[1] = {(uint8_t)(ok ? 1 : 0)};
+    push_text_msg(c, MSG_LOGIN_RESULT, prefix, 1, txt);
 }
 
 static void push_session_exists(conn *c, const char *user)
 {
-    size_t ul = strlen(user);
-    uint8_t *buf = malloc(1 + ul);
-    buf[0] = MSG_SESSION_EXISTS;
-    memcpy(buf + 1, user, ul);
-    net_push(c, buf, 1 + ul, 0);
+    push_text_msg(c, MSG_SESSION_EXISTS, NULL, 0, user);
 }
 
 /* 下发文件传输 token：浏览器 HTTP 鉴权用（与扩展环境变量 XWORKD_TOKEN 同源） */
 static void push_transfer_token(conn *c, const char *token)
 {
-    if (!c || !token || !token[0])
+    if (!token || !token[0])
         return;
-    size_t tl = strlen(token);
-    uint8_t *buf = malloc(1 + tl);
-    buf[0] = MSG_TRANSFER_TOKEN;
-    memcpy(buf + 1, token, tl);
-    net_push(c, buf, 1 + tl, 0);
-    free(buf);
+    push_text_msg(c, MSG_TRANSFER_TOKEN, NULL, 0, token);
 }
 
 /* 向连接推送扩展触发的传输请求（下载/上传目录） */
 void session_push_transfer(conn *c, int action, const char *text)
 {
-    if (!c || atomic_load(&c->closing) || !text)
+    if (!text)
         return;
-    size_t tl = strlen(text);
-    uint8_t *buf = malloc(2 + tl);
-    buf[0] = MSG_TRANSFER_REQUEST;
-    buf[1] = (uint8_t)action;
-    memcpy(buf + 2, text, tl);
-    net_push(c, buf, 2 + tl, 0);
-    free(buf);
+    uint8_t prefix[1] = {(uint8_t)action};
+    push_text_msg(c, MSG_TRANSFER_REQUEST, prefix, 1, text);
 }
 
 /* 推送传输错误通知（前端右下角提醒，如路径权限不足） */
 void session_push_transfer_error(conn *c, const char *text)
 {
-    if (!c || atomic_load(&c->closing) || !text)
-        return;
-    size_t tl = strlen(text);
-    uint8_t *buf = malloc(1 + tl);
-    buf[0] = MSG_TRANSFER_ERROR;
-    memcpy(buf + 1, text, tl);
-    net_push(c, buf, 1 + tl, 0);
-    free(buf);
+    push_text_msg(c, MSG_TRANSFER_ERROR, NULL, 0, text);
 }
 
 /* 把空闲会话（无连接）绑定到新连接上，推送配置并请求关键帧 */

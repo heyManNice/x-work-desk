@@ -28,6 +28,7 @@ import { VideoRenderer } from './decoder';
 import { InputRelay } from './input';
 import { AudioPlayer } from './audio';
 import { setTransferToken, handleDownloadRequest, handleUploadRequest, showTransferError } from './transfer';
+import { showConfirm } from './modal';
 import {
     initStats, setResolution, onVideoFrame, onDecodeTime,
     requestKeyframeTime, onKeyframeReceived, resetStats
@@ -151,35 +152,7 @@ function handleConfigMsg(b: Uint8Array): void {
     requestKeyframe();
 }
 
-/* 自制确认弹窗（替代浏览器原生 confirm）：显示遮罩对话框，返回用户选择 */
-function showConfirm(title: string, text: string): Promise<boolean> {
-    return new Promise((resolve) => {
-        const mask = $('#modal-mask');
-        const titleEl = $('#modal-title');
-        const textEl = $('#modal-text');
-        const okBtn = $('#modal-ok');
-        const cancelBtn = $('#modal-cancel');
-        titleEl.textContent = title;
-        textEl.textContent = text;
-        mask.hidden = false;
-        const finish = (v: boolean) => {
-            mask.hidden = true;
-            okBtn.removeEventListener('click', onOk);
-            cancelBtn.removeEventListener('click', onCancel);
-            mask.removeEventListener('click', onMaskClick);
-            resolve(v);
-        };
-        const onOk = () => finish(true);
-        const onCancel = () => finish(false);
-        const onMaskClick = (e: MouseEvent) => {
-            if (e.target === mask) onCancel(); /* 点击遮罩空白处等同取消 */
-        };
-        okBtn.addEventListener('click', onOk);
-        cancelBtn.addEventListener('click', onCancel);
-        mask.addEventListener('click', onMaskClick);
-    });
-}
-
+/* 自制确认弹窗见 modal.ts（showConfirm），用于第二人登录确认 */
 async function handleSessionExists(): Promise<void> {
     /* 刷新/重连场景（pagehide 已标记）：静默继承旧会话（复用原桌面，不注销） */
     if (sessionStorage.getItem('xwd-reconnect') === '1') {

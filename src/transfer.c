@@ -26,62 +26,6 @@
 
 /* ---------------- 小工具 ---------------- */
 
-static int hexv(int ch)
-{
-    if (ch >= '0' && ch <= '9')
-        return ch - '0';
-    if (ch >= 'a' && ch <= 'f')
-        return ch - 'a' + 10;
-    if (ch >= 'A' && ch <= 'F')
-        return ch - 'A' + 10;
-    return -1;
-}
-
-/* URL 解码：%xx -> 字节，+ -> 空格 */
-static int urldecode(const char *in, char *out, size_t outn)
-{
-    size_t o = 0;
-    for (const char *p = in; *p && o + 1 < outn; p++)
-    {
-        if (*p == '%' && hexv(p[1]) >= 0 && hexv(p[2]) >= 0)
-        {
-            out[o++] = (char)((hexv(p[1]) << 4) | hexv(p[2]));
-            p += 2;
-        }
-        else if (*p == '+')
-            out[o++] = ' ';
-        else
-            out[o++] = *p;
-    }
-    out[o] = 0;
-    return o > 0;
-}
-
-/* 从 query string 提取参数：q="a=1&b=2"。命中返回 1。 */
-static int query_get(const char *q, const char *key, char *out, size_t outn)
-{
-    const char *p = q;
-    size_t kl = strlen(key);
-    while (*p)
-    {
-        const char *amp = strchr(p, '&');
-        size_t seg = amp ? (size_t)(amp - p) : strlen(p);
-        if (seg > kl && !strncmp(p, key, kl) && p[kl] == '=')
-        {
-            size_t vl = seg - kl - 1;
-            char tmp[2048];
-            size_t tl = vl < sizeof tmp - 1 ? vl : sizeof tmp - 1;
-            memcpy(tmp, p + kl + 1, tl);
-            tmp[tl] = 0;
-            return urldecode(tmp, out, outn);
-        }
-        if (!amp)
-            break;
-        p = amp + 1;
-    }
-    return 0;
-}
-
 /* 简单文本响应（冲刷后关闭） */
 static void http_resp(conn *c, int code, const char *msg,
                       const uint8_t *body, size_t body_len)
@@ -101,32 +45,7 @@ static void http_resp(conn *c, int code, const char *msg,
         net_close_conn(c);
 }
 
-/* ---------------- 路径权限校验 ---------------- */
-
-/* 校验 path 属于 user 的 home 目录，并用 realpath 解析（防符号链接逃逸）。
- * 成功时把解析后的绝对路径写入 resolved。 */
-static int path_in_user_home(const char *user, const char *path,
-                             char *resolved, size_t resolved_n)
-{
-    if (!user[0] || !path || path[0] != '/')
-        return 0;
-    struct passwd *pw = getpwnam(user);
-    if (!pw)
-        return 0;
-    size_t hl = strlen(pw->pw_dir);
-    if (strncmp(path, pw->pw_dir, hl) != 0)
-        return 0;
-    if (path[hl] != '/' && path[hl] != 0)
-        return 0; /* 前缀边界（/home/test2 不算 /home/test 内） */
-
-    if (!realpath(path, resolved))
-        return 0;
-    if (strncmp(resolved, pw->pw_dir, hl) != 0)
-        return 0;
-    if (resolved[hl] != '/' && resolved[hl] != 0)
-        return 0;
-    return 1;
-}
+/* 路径权限校验见 util_path_in_user_home（util.c） */
 
 /* ---------------- 处理函数 ---------------- */
 
@@ -190,7 +109,7 @@ static int handle_request(conn *c, const char *q, const char *xw_token,
         if (cl > 0)
         {
             char real[4096];
-            if (path_in_user_home(rt->user, line, real, sizeof real))
+            if (util_path_in_user_home(rt->user, line, real, sizeof real))
             {
                 size_t rl = strlen(real);
                 if (strlen(paths) + rl + 1 < sizeof paths)
@@ -232,8 +151,8 @@ static int handle_request(conn *c, const char *q, const char *xw_token,
 static int handle_download(conn *c, const char *q)
 {
     char token[64], path[2048];
-    if (!query_get(q, "token", token, sizeof token) ||
-        !query_get(q, "path", path, sizeof path))
+    if (!util_query_get(q, "token", token, sizeof token) ||
+        !util_query_get(q, "path", path, sizeof path))
     {
         http_resp(c, 400, "Bad Request", NULL, 0);
         return 1;
@@ -245,7 +164,7 @@ static int handle_download(conn *c, const char *q)
         return 1;
     }
     char real[4096];
-    if (!path_in_user_home(rt->user, path, real, sizeof real))
+    if (!util_path_in_user_home(rt->user, path, real, sizeof real))
     {
         runtime_unref(rt);
         http_resp(c, 403, "Forbidden", NULL, 0);
@@ -290,10 +209,10 @@ static int handle_upload(conn *c, const char *q,
                          const uint8_t *body, size_t body_len)
 {
     char token[64], dir[2048], name[1024], offs[32];
-    if (!query_get(q, "token", token, sizeof token) ||
-        !query_get(q, "dir", dir, sizeof dir) ||
-        !query_get(q, "name", name, sizeof name) ||
-        !query_get(q, "offset", offs, sizeof offs))
+    if (!util_query_get(q, "token", token, sizeof token) ||
+        !util_query_get(q, "dir", dir, sizeof dir) ||
+        !util_query_get(q, "name", name, sizeof name) ||
+        !util_query_get(q, "offset", offs, sizeof offs))
     {
         http_resp(c, 400, "Bad Request", NULL, 0);
         return 1;
@@ -305,7 +224,7 @@ static int handle_upload(conn *c, const char *q,
         return 1;
     }
     char real_dir[4096];
-    if (!path_in_user_home(rt->user, dir, real_dir, sizeof real_dir))
+    if (!util_path_in_user_home(rt->user, dir, real_dir, sizeof real_dir))
     {
         runtime_unref(rt);
         http_resp(c, 403, "Forbidden", NULL, 0);
@@ -321,7 +240,14 @@ static int handle_upload(conn *c, const char *q,
         return 1;
     }
     char full[4096];
-    snprintf(full, sizeof full, "%s/%s", real_dir, bn);
+    int fl = snprintf(full, sizeof full, "%s/%s", real_dir, bn);
+    if (fl < 0 || (size_t)fl >= sizeof full)
+    {
+        /* 路径过长被截断会写错文件，直接拒绝 */
+        runtime_unref(rt);
+        http_resp(c, 400, "Name Too Long", NULL, 0);
+        return 1;
+    }
     long long offset = atoll(offs);
     if (offset < 0)
     {
@@ -341,7 +267,10 @@ static int handle_upload(conn *c, const char *q,
      * 否则用户在桌面里无法读写上传的文件 */
     struct passwd *upw = getpwnam(rt->user);
     if (upw)
-        (void)fchown(fd, upw->pw_uid, upw->pw_gid);
+    {
+        int rc = fchown(fd, upw->pw_uid, upw->pw_gid);
+        (void)rc;
+    }
     ssize_t w = pwrite(fd, body, body_len, (off_t)offset);
     close(fd);
     runtime_unref(rt);

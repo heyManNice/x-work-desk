@@ -1,5 +1,7 @@
 #include "util.h"
 #include <time.h>
+#include <pwd.h>
+#include <unistd.h>
 
 int64_t monotonic_ms(void)
 {
@@ -183,4 +185,110 @@ size_t b64_encode(const uint8_t *in, size_t inlen, char *out, size_t outsz)
     }
     out[o] = 0;
     return o;
+}
+
+/* ---------------- URL/查询/路径工具（文件传输用，纯逻辑可单测） ---------------- */
+static int util_hexv(int ch)
+{
+    if (ch >= '0' && ch <= '9')
+        return ch - '0';
+    if (ch >= 'a' && ch <= 'f')
+        return ch - 'a' + 10;
+    if (ch >= 'A' && ch <= 'F')
+        return ch - 'A' + 10;
+    return -1;
+}
+
+int util_url_decode(const char *in, char *out, size_t outn)
+{
+    size_t o = 0;
+    for (const char *p = in; *p && o + 1 < outn; p++)
+    {
+        if (*p == '%' && util_hexv(p[1]) >= 0 && util_hexv(p[2]) >= 0)
+        {
+            out[o++] = (char)((util_hexv(p[1]) << 4) | util_hexv(p[2]));
+            p += 2;
+        }
+        else if (*p == '+')
+            out[o++] = ' ';
+        else
+            out[o++] = *p;
+    }
+    out[o] = 0;
+    return o > 0;
+}
+
+int util_query_get(const char *q, const char *key, char *out, size_t outn)
+{
+    const char *p = q;
+    size_t kl = strlen(key);
+    while (*p)
+    {
+        const char *amp = strchr(p, '&');
+        size_t seg = amp ? (size_t)(amp - p) : strlen(p);
+        if (seg > kl && !strncmp(p, key, kl) && p[kl] == '=')
+        {
+            size_t vl = seg - kl - 1;
+            char tmp[2048];
+            size_t tl = vl < sizeof tmp - 1 ? vl : sizeof tmp - 1;
+            memcpy(tmp, p + kl + 1, tl);
+            tmp[tl] = 0;
+            return util_url_decode(tmp, out, outn);
+        }
+        if (!amp)
+            break;
+        p = amp + 1;
+    }
+    return 0;
+}
+
+int util_path_in_user_home(const char *user, const char *path,
+                           char *resolved, size_t resolved_n)
+{
+    if (!user || !user[0] || !path || path[0] != '/')
+        return 0;
+    struct passwd *pw = getpwnam(user);
+    if (!pw)
+        return 0;
+    size_t hl = strlen(pw->pw_dir);
+    if (strncmp(path, pw->pw_dir, hl) != 0)
+        return 0;
+    if (path[hl] != '/' && path[hl] != 0)
+        return 0; /* 前缀边界（/home/test2 不算 /home/test 内） */
+
+    if (!realpath(path, resolved))
+        return 0;
+    if (strncmp(resolved, pw->pw_dir, hl) != 0)
+        return 0;
+    if (resolved[hl] != '/' && resolved[hl] != 0)
+        return 0;
+    return 1;
+}
+
+void util_gen_token(char *out, size_t n)
+{
+    unsigned char r[16];
+    size_t rd = 0;
+    FILE *f = fopen("/dev/urandom", "rb");
+    if (f)
+    {
+        rd = fread(r, 1, sizeof r, f);
+        fclose(f);
+    }
+    if (rd != sizeof r)
+    {
+        /* 降级：时间 + pid 混合 */
+        uint64_t t = (uint64_t)time(NULL) ^ ((uint64_t)getpid() << 32) ^ (uint64_t)monotonic_ms();
+        for (int i = 0; i < 16; i++)
+            r[i] = (unsigned char)(t >> (8 * (i % 8)));
+    }
+    if (n < 33)
+        return;
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < 16; i++)
+    {
+        out[i * 2] = hex[r[i] >> 4];
+        out[i * 2 + 1] = hex[r[i] & 15];
+    }
+    out[32] = 0;
 }

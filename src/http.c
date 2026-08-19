@@ -194,42 +194,40 @@ static void do_ws_upgrade(conn *c, const char *sec_key, size_t consumed)
     }
 }
 
-void http_on_data(conn *c)
+/* ---------------- HTTP 解析 helper ---------------- */
+
+/* 解析后的请求头字段（http_parse_headers 填充） */
+typedef struct
 {
-    if (c->http_done || c->close_after_flush)
-        return;
+    char sec_key[128];
+    char xw_token[128];
+    long clen;
+    int upgrade;
+} http_req_hdr;
 
-    char *req = (char *)c->rbuf;
-    size_t len = c->rlen;
-    char *he = memmem(req, len, "\r\n\r\n", 4);
-    if (!he)
-    {
-        if (len >= 65536)
-            http_error(c, 400, "Bad Request");
-        return; /* 等待更多数据 */
-    }
-
+/* 解析请求行："METHOD PATH VER"（method[16]/path[1024]）。成功返回 0，
+ * *header_start 指向请求头起始。 */
+static int http_parse_request_line(char *req, size_t len, char *method,
+                                   char *path, char **header_start)
+{
     char *line_end = memmem(req, len, "\r\n", 2);
     if (!line_end)
-    {
-        http_error(c, 400, "Bad Request");
-        return;
-    }
+        return -1;
     *line_end = 0;
-    char method[16] = "", path[1024] = "", ver[16] = "";
-    if (sscanf(req, "%15s %1023s %15s", method, path, ver) != 3)
-    {
-        http_error(c, 400, "Bad Request");
-        return;
-    }
+    char ver[16] = "";
+    int r = sscanf(req, "%15s %1023s %15s", method, path, ver);
     *line_end = '\r';
+    if (r != 3)
+        return -1;
+    *header_start = line_end + 2;
+    return 0;
+}
 
-    /* 解析请求头 */
-    char sec_key[128] = "";
-    int upgrade = 0;
-    char xw_token[128] = "";
-    long clen = -1;
-    char *hp = line_end + 2;
+/* 解析请求头（hp..he），填充 sec_key/xw_token/clen/upgrade */
+static void http_parse_headers(char *hp, char *he, http_req_hdr *h)
+{
+    memset(h, 0, sizeof *h);
+    h->clen = -1;
     while (hp < he)
     {
         char *nl = memmem(hp, (size_t)(he - hp), "\r\n", 2);
@@ -248,28 +246,88 @@ void http_on_data(conn *c)
             while (val < nl && (*val == ' ' || *val == '\t'))
                 val++;
             size_t vl = (size_t)(nl - val);
-            if (!strcasecmp(name, "Sec-WebSocket-Key") && vl > 0 && vl < sizeof sec_key)
+            if (!strcasecmp(name, "Sec-WebSocket-Key") && vl > 0 && vl < sizeof h->sec_key)
             {
-                memcpy(sec_key, val, vl);
-                sec_key[vl] = 0;
+                memcpy(h->sec_key, val, vl);
+                h->sec_key[vl] = 0;
             }
             if (!strcasecmp(name, "Upgrade") && vl >= 9 && !strncasecmp(val, "websocket", 9))
-                upgrade = 1;
+                h->upgrade = 1;
             if (!strcasecmp(name, "Content-Length") && vl > 0)
             {
-                clen = strtol(val, NULL, 10);
-                if (clen < 0)
-                    clen = -1;
+                h->clen = strtol(val, NULL, 10);
+                if (h->clen < 0)
+                    h->clen = -1;
             }
-            if (!strcasecmp(name, "X-Workd-Token") && vl > 0 && vl < sizeof xw_token)
+            if (!strcasecmp(name, "X-Workd-Token") && vl > 0 && vl < sizeof h->xw_token)
             {
-                memcpy(xw_token, val, vl);
-                xw_token[vl] = 0;
+                memcpy(h->xw_token, val, vl);
+                h->xw_token[vl] = 0;
             }
         }
         hp = nl + 2;
     }
+}
 
+/* /api 路由（文件传输）。返回 1=已处理，0=非 /api 路径。 */
+static int http_route_api(conn *c, const char *method, const char *path,
+                          const char *xw_token, size_t body_start, size_t len,
+                          long clen)
+{
+    if (strncmp(path, "/api/", 5) != 0)
+        return 0;
+    if (!strcmp(method, "POST"))
+    {
+        if (clen <= 0)
+        {
+            http_error(c, 411, "Length Required");
+            c->http_done = 1;
+            return 1;
+        }
+        size_t got = len - body_start;
+        if (got < (size_t)clen)
+        {
+            c->http_await_body = 1; /* 等 body 收满，下次 http_on_data 续收 */
+            c->http_clen = (size_t)clen;
+            return 1;
+        }
+        const uint8_t *body = (const uint8_t *)c->rbuf + body_start;
+        transfer_handle_http(c, method, path, xw_token, body, (size_t)clen);
+    }
+    else
+    {
+        if (!transfer_handle_http(c, method, path, xw_token, NULL, 0))
+            http_error(c, 404, "Not Found");
+    }
+    c->http_done = 1;
+    return 1;
+}
+
+void http_on_data(conn *c)
+{
+    if (c->http_done || c->close_after_flush)
+        return;
+
+    char *req = (char *)c->rbuf;
+    size_t len = c->rlen;
+    char *he = memmem(req, len, "\r\n\r\n", 4);
+    if (!he)
+    {
+        if (len >= 65536)
+            http_error(c, 400, "Bad Request");
+        return; /* 等待更多数据 */
+    }
+
+    char method[16] = "", path[1024] = "";
+    char *hp = NULL;
+    if (http_parse_request_line(req, len, method, path, &hp) != 0)
+    {
+        http_error(c, 400, "Bad Request");
+        return;
+    }
+
+    http_req_hdr h;
+    http_parse_headers(hp, he, &h);
     size_t body_start = (size_t)((he + 4) - req);
 
     /* 状态 2：等待 POST body 收满 */
@@ -278,49 +336,20 @@ void http_on_data(conn *c)
         size_t got = len - body_start;
         if (got < c->http_clen)
             return; /* 继续等更多数据 */
-        const uint8_t *body = (const uint8_t *)req + body_start;
-        transfer_handle_http(c, method, path, xw_token, body, c->http_clen);
+        transfer_handle_http(c, method, path, h.xw_token,
+                             (const uint8_t *)req + body_start, c->http_clen);
         c->http_done = 1;
         return;
     }
 
-    size_t consumed = body_start;
-    if (upgrade && sec_key[0])
+    if (h.upgrade && h.sec_key[0])
     {
-        do_ws_upgrade(c, sec_key, consumed);
+        do_ws_upgrade(c, h.sec_key, body_start);
         return;
     }
 
-    /* /api 路由：文件传输 */
-    if (strncmp(path, "/api/", 5) == 0)
-    {
-        if (!strcmp(method, "POST"))
-        {
-            /* 需要 body：等收满 Content-Length */
-            if (clen <= 0)
-            {
-                http_error(c, 411, "Length Required");
-                c->http_done = 1;
-                return;
-            }
-            size_t got = len - body_start;
-            if (got < (size_t)clen)
-            {
-                c->http_await_body = 1;
-                c->http_clen = (size_t)clen;
-                return;
-            }
-            const uint8_t *body = (const uint8_t *)req + body_start;
-            transfer_handle_http(c, method, path, xw_token, body, (size_t)clen);
-        }
-        else
-        {
-            if (!transfer_handle_http(c, method, path, xw_token, NULL, 0))
-                http_error(c, 404, "Not Found");
-        }
-        c->http_done = 1;
+    if (http_route_api(c, method, path, h.xw_token, body_start, len, h.clen))
         return;
-    }
 
     /* 普通请求：响应缓冲化，事件循环冲刷后关闭 */
     serve_file(c, path);

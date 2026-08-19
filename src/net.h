@@ -8,6 +8,10 @@
 #include "msgqueue.h"
 #include "ws_parser.h"
 
+/* WS 单帧载荷上限 / 文件下载 sendfile 单块大小（1MB） */
+#define WS_MAX_FRAME_SIZE (1u << 20)
+#define TRANSFER_SEND_CHUNK (1u << 20)
+
 /* 连接结构（net.c/eventloop.c 拥有并管理生命周期，session.c 通过 c->sess 使用） */
 typedef struct conn
 {

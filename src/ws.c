@@ -119,7 +119,7 @@ void ws_flush(conn *c)
     {
         while (c->send_left > 0)
         {
-            size_t want = c->send_left > (1u << 20) ? (1u << 20) : (size_t)c->send_left;
+            size_t want = c->send_left > TRANSFER_SEND_CHUNK ? TRANSFER_SEND_CHUNK : (size_t)c->send_left;
             ssize_t n = sendfile(c->fd, c->send_fd, &c->send_off, want);
             if (n < 0)
             {
