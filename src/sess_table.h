@@ -7,6 +7,8 @@ struct runtime;
 /* 按用户名查找会话并返回一个已持有的引用（调用方必须 runtime_unref）；
  * 未找到返回 NULL。持有引用可防止 session_sweep 并发释放。 */
 struct runtime *session_lookup(const char *user);
+/* 按文件传输 token 查找会话（transfer.c 用） */
+struct runtime *session_by_token(const char *token);
 void session_register(struct runtime *rt, const char *user);
 void session_unregister(struct runtime *rt);
 void session_sweep(void);

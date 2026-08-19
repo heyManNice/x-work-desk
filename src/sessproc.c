@@ -494,6 +494,14 @@ static void spawn_session_app(runtime *rt, const char *user)
         setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME", 1);
         setenv("XDG_SESSION_TYPE", "x11", 1);
         setenv("XDG_SESSION_CLASS", "user", 1);
+        /* 标记本会话由 xworkd 远程拉起：Nautilus 扩展据此决定是否显示
+         * 文件传输右键菜单（本地直接登录的会话不含此变量，不显示） */
+        setenv("XWORKD_REMOTE", "1", 1);
+        /* 文件传输 token：扩展据此向服务端请求下载/上传（与浏览器 HTTP 鉴权同源） */
+        setenv("XWORKD_TOKEN", rt->token[0] ? rt->token : "none", 1);
+        char portbuf[16];
+        snprintf(portbuf, sizeof portbuf, "%d", g_cfg.port);
+        setenv("XWORKD_PORT", portbuf, 1);
         /* keyring 解锁策略：shadow 模式密码已验证，可解锁或创建 login keyring；
          * none 模式密码未验证，仅当已存在 login keyring 时才尝试（避免用任意
          * 密码误创建密钥环），且不传密码时保持原行为 */

@@ -33,6 +33,7 @@ conn *conn_alloc(int fd)
         return NULL;
     c->fd = fd;
     c->refs = 1;
+    c->send_fd = -1; /* 无文件下载；0 会被 ws_flush 误判为 stdin */
     atomic_init(&c->closing, false);
     ws_parser_init(&c->ws, 1u << 20);
     /* 初始小预算；会话确定分辨率后由 session.c 按帧率/分辨率调整 */
@@ -58,7 +59,10 @@ void net_close_conn(conn *c)
     net_nconns--;
     if (c->fd >= 0)
     {
-        shutdown(c->fd, SHUT_RDWR);
+        /* 用 SHUT_WR 而非 SHUT_RDWR：半关闭先发 FIN，确保内核发送缓冲中
+         * 的响应数据送达对端；SHUT_RDWR 会丢弃未发数据，触发 RST，
+         * 导致浏览器 fetch/XHR 报 ERR_ABORTED（文件传输响应尤其敏感） */
+        shutdown(c->fd, SHUT_WR);
         close(c->fd);
         c->fd = -1;
     }

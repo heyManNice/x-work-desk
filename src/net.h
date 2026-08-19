@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdatomic.h>
+#include <sys/types.h>
 #include <pthread.h>
 #include "msgqueue.h"
 #include "ws_parser.h"
@@ -21,8 +22,19 @@ typedef struct conn
     size_t rcap;
 
     /* ---- HTTP 阶段状态（升级为 WS 后不再使用） ---- */
-    int http_done; /* 1=已解析请求（升级或已响应） */
+    int http_done;         /* 1=已解析请求（升级或已响应） */
     int close_after_flush; /* 响应冲刷完毕后关闭连接 */
+
+    /* ---- HTTP POST body 累积（transfer 上传分片） ---- */
+    char http_method[8];  /* 当前请求方法 */
+    size_t http_clen;     /* Content-Length */
+    size_t http_body_got; /* 已收到的 body 字节数 */
+    int http_await_body;  /* 1=正在等待 body 收满 */
+
+    /* ---- HTTP 流式文件下载（sendfile） ---- */
+    int send_fd;        /* 下载中的文件描述符；-1=无 */
+    off_t send_off;     /* 已发送偏移 */
+    uint64_t send_left; /* 剩余待发字节 */
 
     /* ---- WS 帧解析状态（ws_parser 独立于 I/O，可单测） ---- */
     int is_ws;
@@ -60,7 +72,7 @@ conn *conn_alloc(int fd);
 void net_close_conn(conn *c);
 
 /* 读缓冲辅助 */
-int conn_reserve(conn *c, size_t extra); /* 确保可追加 extra 字节，返回 1/0 */
+int conn_reserve(conn *c, size_t extra);     /* 确保可追加 extra 字节，返回 1/0 */
 void conn_consume(conn *c, size_t consumed); /* 消费前 consumed 字节，剩余移到头部 */
 
 /* 协议处理（http.c / ws.c 实现，eventloop.c 调用） */
@@ -72,3 +84,7 @@ void ws_flush(conn *c);     /* 冲刷出站队列与半发送帧（POLLOUT/唤�
 void session_on_open(conn *c);
 void session_on_message(conn *c, const uint8_t *data, size_t len);
 void session_on_close(conn *c);
+
+/* 文件传输（transfer.c）：按 token 查找会话并推送传输请求 */
+struct runtime *session_by_token(const char *token);
+void session_push_transfer(conn *c, int action, const char *text);

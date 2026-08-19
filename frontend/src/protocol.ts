@@ -8,6 +8,11 @@ export const MSG_SESSION_EXISTS = 0x05;
 export const MSG_CURSOR = 0x06;
 export const MSG_AUDIO = 0x07;
 export const MSG_CLIPBOARD = 0x08;
+export const MSG_TRANSFER_TOKEN = 0x09;
+export const MSG_TRANSFER_REQUEST = 0x0a;
+
+export const TRANSFER_ACT_DOWNLOAD = 1;
+export const TRANSFER_ACT_UPLOADDIR = 2;
 
 export const MSG_LOGIN = 0x10;
 export const MSG_MOUSE = 0x11;
@@ -44,6 +49,18 @@ export interface CursorImage {
     hx: number;
     hy: number;
     pixels: Uint8Array; /* RGBA 直通格式 */
+}
+
+export interface TransferRequest {
+    action: number;
+    text: string;
+}
+
+export function parseTransferRequest(b: Uint8Array): TransferRequest {
+    return {
+        action: b[1],
+        text: new TextDecoder().decode(b.subarray(2)),
+    };
 }
 
 const enc = new TextEncoder();

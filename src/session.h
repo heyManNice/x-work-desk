@@ -26,22 +26,23 @@ struct runtime
 {
     int refs; /* 连接持有 1 份，登录/重建工作线程持有 1 份 */
     pthread_mutex_t lock;
-    _Atomic int state; /* S_LOGIN / S_AUTHING / S_RUNNING / S_CLOSED */
+    _Atomic int state;  /* S_LOGIN / S_AUTHING / S_RUNNING / S_CLOSED */
     conn *_Atomic conn; /* 当前绑定的活动连接（可换绑；NULL=无人连接） */
     char user[64];
-    char pass[256]; /* 登录密码：用于解锁会话 GNOME Keyring，teardown 时清零 */
-    int req_w, req_h; /* 登录请求的分辨率（接管确认后重建会话用） */
-    int _Atomic fps;  /* 最大抓帧帧率（前端可调） */
-    int _Atomic static_skip;   /* 静态帧优化开关（画面无变化跳过编码） */
-    int _Atomic bitrate_kbps;  /* 目标码率上限（0=自动/CRF 质量模式） */
-    int _Atomic crf;           /* CRF 质量档（码率为自动时生效） */
-    int _Atomic anim_pending;  /* 动画开关待应用：-1=关 0=无 1=开（capture 线程异步执行 gsettings） */
-    _Atomic int resize_w;      /* 待应用的新分辨率（>0 时 capture 线程执行） */
+    char token[64];           /* 文件传输 token：注入扩展环境变量 + 浏览器 HTTP 鉴权 */
+    char pass[256];           /* 登录密码：用于解锁会话 GNOME Keyring，teardown 时清零 */
+    int req_w, req_h;         /* 登录请求的分辨率（接管确认后重建会话用） */
+    int _Atomic fps;          /* 最大抓帧帧率（前端可调） */
+    int _Atomic static_skip;  /* 静态帧优化开关（画面无变化跳过编码） */
+    int _Atomic bitrate_kbps; /* 目标码率上限（0=自动/CRF 质量模式） */
+    int _Atomic crf;          /* CRF 质量档（码率为自动时生效） */
+    int _Atomic anim_pending; /* 动画开关待应用：-1=关 0=无 1=开（capture 线程异步执行 gsettings） */
+    _Atomic int resize_w;     /* 待应用的新分辨率（>0 时 capture 线程执行） */
     _Atomic int resize_h;
-    _Atomic int desired_w;     /* 期望分辨率（登录/MSG_RESIZE 设定；外部重置时重新应用） */
+    _Atomic int desired_w; /* 期望分辨率（登录/MSG_RESIZE 设定；外部重置时重新应用） */
     _Atomic int desired_h;
-    _Atomic int resize_retries; /* 外部重置后的重新应用计数（防止与 mutter 无限互搏） */
-    _Atomic int restarting;    /* 1=重建工作线程运行中（避免重复触发） */
+    _Atomic int resize_retries;   /* 外部重置后的重新应用计数（防止与 mutter 无限互搏） */
+    _Atomic int restarting;       /* 1=重建工作线程运行中（避免重复触发） */
     _Atomic int64_t cap_start_ms; /* 抓帧线程启动时间（单调毫秒） */
     _Atomic int settle_pending;   /* 登录早期分辨率请求：等 GNOME 稳定后补一次 */
 
@@ -49,7 +50,7 @@ struct runtime
     int _Atomic audio_enabled;
     _Atomic int audio_running;
     pthread_t audio_thread;
-    pid_t audio_pid; /* pw-record 采集子进程 */
+    pid_t audio_pid;                  /* pw-record 采集子进程 */
     struct AVCodecContext *audio_ctx; /* Opus 编码器 */
 
     /* ---- 剪贴板共享（每会话独立状态） ---- */
@@ -68,8 +69,8 @@ struct runtime
 void session_on_open(conn *c);
 void session_on_message(conn *c, const uint8_t *data, size_t len);
 void session_on_close(conn *c);
-void session_sweep(void); /* 事件循环周期调用：清理已结束的会话 */
-void session_shutdown_all(void); /* 服务退出前清理所有会话（优雅停机） */
+void session_sweep(void);          /* 事件循环周期调用：清理已结束的会话 */
+void session_shutdown_all(void);   /* 服务退出前清理所有会话（优雅停机） */
 void runtime_wait_destroyed(void); /* 停机前等待异步销毁完成 */
 
 /* runtime 引用计数（sess_table.c 等模块使用） */

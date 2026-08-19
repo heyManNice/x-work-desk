@@ -50,6 +50,33 @@ static void push_session_exists(conn *c, const char *user)
     net_push(c, buf, 1 + ul, 0);
 }
 
+/* 下发文件传输 token：浏览器 HTTP 鉴权用（与扩展环境变量 XWORKD_TOKEN 同源） */
+static void push_transfer_token(conn *c, const char *token)
+{
+    if (!c || !token || !token[0])
+        return;
+    size_t tl = strlen(token);
+    uint8_t *buf = malloc(1 + tl);
+    buf[0] = MSG_TRANSFER_TOKEN;
+    memcpy(buf + 1, token, tl);
+    net_push(c, buf, 1 + tl, 0);
+    free(buf);
+}
+
+/* 向连接推送扩展触发的传输请求（下载/上传目录） */
+void session_push_transfer(conn *c, int action, const char *text)
+{
+    if (!c || atomic_load(&c->closing) || !text)
+        return;
+    size_t tl = strlen(text);
+    uint8_t *buf = malloc(2 + tl);
+    buf[0] = MSG_TRANSFER_REQUEST;
+    buf[1] = (uint8_t)action;
+    memcpy(buf + 2, text, tl);
+    net_push(c, buf, 2 + tl, 0);
+    free(buf);
+}
+
 /* 把空闲会话（无连接）绑定到新连接上，推送配置并请求关键帧 */
 static void takeover_session(runtime *sess, conn *c)
 {
@@ -131,6 +158,7 @@ static void *login_worker(void *arg)
         {
             /* 旧连接已关闭：无缝接管原会话（复用桌面，不重建） */
             push_login_result(c, 1, "ok");
+            push_transfer_token(c, sess->token);
             takeover_session(sess, c);
             log_info("接管空闲会话(刷新重连): %s", j->user);
             runtime_unref(sess); /* 释放 lookup 引用 */
@@ -158,6 +186,7 @@ static void *login_worker(void *arg)
     {
         /* 桌面空闲（无连接）：直接接管，不打扰 */
         push_login_result(c, 1, "ok");
+        push_transfer_token(c, sess->token);
         takeover_session(sess, c);
         log_info("接管空闲会话: %s", j->user);
         runtime_unref(sess); /* takeover_session 已为新连接持有引用 */
@@ -195,6 +224,7 @@ static void *login_worker(void *arg)
     }
 
     push_login_result(c, 1, "ok");
+    push_transfer_token(c, rt->token);
     session_register(rt, j->user);
     log_info("登录完成: %s -> %s", j->user, rt->proc.display_str);
 
@@ -370,6 +400,7 @@ static void handle_takeover_msg(conn *c, runtime *rt)
         net_close_conn(old); /* 前一人前端回到登录页 */
 
     push_login_result(c, 1, "ok");
+    push_transfer_token(c, sess->token);
     takeover_session(sess, c);
     log_info("接管并继承会话(第二人登录): %s -> %s", rt->user,
              sess->proc.display_str);

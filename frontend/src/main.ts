@@ -11,6 +11,11 @@ import {
     MSG_CURSOR,
     MSG_AUDIO,
     MSG_CLIPBOARD,
+    MSG_TRANSFER_TOKEN,
+    MSG_TRANSFER_REQUEST,
+    parseTransferRequest,
+    TRANSFER_ACT_DOWNLOAD,
+    TRANSFER_ACT_UPLOADDIR,
     msgLogin,
     msgResize,
     msgKeyframe,
@@ -21,6 +26,7 @@ import {
 import { VideoRenderer } from './decoder';
 import { InputRelay } from './input';
 import { AudioPlayer } from './audio';
+import { setTransferToken, handleDownloadRequest, handleUploadRequest } from './transfer';
 import {
     initStats, setResolution, onVideoFrame, onDecodeTime,
     requestKeyframeTime, onKeyframeReceived, resetStats
@@ -195,8 +201,24 @@ function handleVideoMsg(b: Uint8Array): void {
     onVideoFrame(b.byteLength);
 }
 
+/* 扩展触发的传输请求：download（路径列表）/ uploaddir（目标目录） */
+function handleTransferRequestMsg(b: Uint8Array): void {
+    const r = parseTransferRequest(b);
+    if (r.action === TRANSFER_ACT_DOWNLOAD) {
+        handleDownloadRequest(r.text);
+    } else if (r.action === TRANSFER_ACT_UPLOADDIR) {
+        handleUploadRequest(r.text.trim());
+    }
+}
+
 function handleMessage(b: Uint8Array): void {
     switch (b[0]) {
+        case MSG_TRANSFER_TOKEN:
+            setTransferToken(new TextDecoder().decode(b.subarray(1)));
+            break;
+        case MSG_TRANSFER_REQUEST:
+            handleTransferRequestMsg(b);
+            break;
         case MSG_CLIPBOARD:
             handleClipboardMsg(b);
             break;

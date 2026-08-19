@@ -5,6 +5,7 @@
 #define _GNU_SOURCE
 #include "net.h"
 #include "util.h"
+#include "transfer.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -226,6 +227,8 @@ void http_on_data(conn *c)
     /* 解析请求头 */
     char sec_key[128] = "";
     int upgrade = 0;
+    char xw_token[128] = "";
+    long clen = -1;
     char *hp = line_end + 2;
     while (hp < he)
     {
@@ -252,14 +255,70 @@ void http_on_data(conn *c)
             }
             if (!strcasecmp(name, "Upgrade") && vl >= 9 && !strncasecmp(val, "websocket", 9))
                 upgrade = 1;
+            if (!strcasecmp(name, "Content-Length") && vl > 0)
+            {
+                clen = strtol(val, NULL, 10);
+                if (clen < 0)
+                    clen = -1;
+            }
+            if (!strcasecmp(name, "X-Workd-Token") && vl > 0 && vl < sizeof xw_token)
+            {
+                memcpy(xw_token, val, vl);
+                xw_token[vl] = 0;
+            }
         }
         hp = nl + 2;
     }
 
-    size_t consumed = (size_t)((he + 4) - req);
+    size_t body_start = (size_t)((he + 4) - req);
+
+    /* 状态 2：等待 POST body 收满 */
+    if (c->http_await_body)
+    {
+        size_t got = len - body_start;
+        if (got < c->http_clen)
+            return; /* 继续等更多数据 */
+        const uint8_t *body = (const uint8_t *)req + body_start;
+        transfer_handle_http(c, method, path, xw_token, body, c->http_clen);
+        c->http_done = 1;
+        return;
+    }
+
+    size_t consumed = body_start;
     if (upgrade && sec_key[0])
     {
         do_ws_upgrade(c, sec_key, consumed);
+        return;
+    }
+
+    /* /api 路由：文件传输 */
+    if (strncmp(path, "/api/", 5) == 0)
+    {
+        if (!strcmp(method, "POST"))
+        {
+            /* 需要 body：等收满 Content-Length */
+            if (clen <= 0)
+            {
+                http_error(c, 411, "Length Required");
+                c->http_done = 1;
+                return;
+            }
+            size_t got = len - body_start;
+            if (got < (size_t)clen)
+            {
+                c->http_await_body = 1;
+                c->http_clen = (size_t)clen;
+                return;
+            }
+            const uint8_t *body = (const uint8_t *)req + body_start;
+            transfer_handle_http(c, method, path, xw_token, body, (size_t)clen);
+        }
+        else
+        {
+            if (!transfer_handle_http(c, method, path, xw_token, NULL, 0))
+                http_error(c, 404, "Not Found");
+        }
+        c->http_done = 1;
         return;
     }
 

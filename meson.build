@@ -67,6 +67,7 @@ executable('xworkd',
     'src/capture.c',
     'src/encoder.c',
     'src/input.c',
+    'src/transfer.c',
   ],
   dependencies: deps,
   install: true)

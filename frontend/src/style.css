@@ -377,3 +377,98 @@ body,
 .modal-btn-ok:hover {
     filter: brightness(1.1);
 }
+/* ---------- 右下角文件传输队列进度条 ---------- */
+.transfer-queue {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    width: 300px;
+    z-index: 90;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+}
+
+.transfer-item {
+    pointer-events: auto;
+    background: #1f1f1f;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    padding: 10px 12px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    animation: transfer-in 0.2s ease;
+}
+
+@keyframes transfer-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.transfer-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.transfer-icon {
+    color: var(--accent);
+    font-size: 13px;
+}
+
+.transfer-name {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.transfer-status {
+    font-size: 12px;
+    color: var(--muted);
+    flex-shrink: 0;
+}
+
+.transfer-track {
+    height: 5px;
+    background: #2f2f2f;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+
+.transfer-bar {
+    height: 100%;
+    width: 0;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: width 0.15s linear;
+}
+
+.transfer-meta {
+    font-size: 11px;
+    color: var(--muted);
+}
+
+.transfer-item.transfer-done .transfer-bar {
+    background: #2ecc71;
+}
+
+.transfer-item.transfer-done .transfer-status {
+    color: #2ecc71;
+}
+
+.transfer-item.transfer-error {
+    border-color: #e74c3c;
+}
+
+.transfer-item.transfer-error .transfer-bar {
+    background: #e74c3c;
+}
+
+.transfer-item.transfer-error .transfer-status {
+    color: #e74c3c;
+}
