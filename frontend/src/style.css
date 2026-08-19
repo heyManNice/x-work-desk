@@ -472,3 +472,27 @@ body,
 .transfer-item.transfer-error .transfer-status {
     color: #e74c3c;
 }
+
+/* ---------- 上传文件选择提示条（右下角轻量提示，非居中弹窗） ---------- */
+.upload-hint {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 95;
+    background: var(--accent);
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-size: 13px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+    animation: transfer-in 0.2s ease;
+}
+
+.upload-hint[hidden] {
+    display: none;
+}
+
+.upload-hint:hover {
+    filter: brightness(1.1);
+}

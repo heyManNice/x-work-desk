@@ -11,6 +11,14 @@ export function setTransferToken(t: string): void {
     token = t;
 }
 
+/* 记录最近一次真实用户交互时间：浏览器要求用户激活才能弹文件选择器。
+ * 用户在远程桌面右键触发上传时，WS 推送返回通常仍在激活窗口（约 5s）内，
+ * 据此决定是直接弹选择器还是先显示右下角提示条。 */
+let lastGestureAt = 0;
+window.addEventListener('pointerdown', () => { lastGestureAt = performance.now(); }, { passive: true });
+window.addEventListener('pointerup', () => { lastGestureAt = performance.now(); }, { passive: true });
+window.addEventListener('keydown', () => { lastGestureAt = performance.now(); }, { passive: true });
+
 interface TransferTask {
     kind: 'download' | 'upload';
     name: string;
@@ -88,15 +96,16 @@ function finishTask(t: TransferTask, ok: boolean, msg: string): void {
     st.textContent = ok ? '完成' : '失败';
     t.bar.style.width = ok ? '100%' : t.bar.style.width;
     t.el.classList.add(ok ? 'transfer-done' : 'transfer-error');
-    if (!ok && msg) {
+    if (msg) {
         t.text.textContent = msg;
     }
-    /* 完成 4 秒后自动移除 */
+    /* 成功 4 秒 / 失败 8 秒后自动移除（失败停留更久便于查看原因） */
+    const hold = ok ? 4000 : 8000;
     setTimeout(() => {
         const idx = tasks.indexOf(t);
         if (idx >= 0) tasks.splice(idx, 1);
         t.el.remove();
-    }, 4000);
+    }, hold);
 }
 
 /* ---------------- 下载 ---------------- */
@@ -115,7 +124,12 @@ function startDownload(path: string, name: string): void {
     fetch(url)
         .then(async (resp) => {
             if (!resp.ok) {
-                finishTask(task, false, `HTTP ${resp.status}`);
+                let reason = `HTTP ${resp.status} ${resp.statusText || ''}`.trim();
+                try {
+                    const t = await resp.text();
+                    if (t) reason = `${reason}：${t}`;
+                } catch { /* 忽略 */ }
+                finishTask(task, false, `下载失败：${reason}`);
                 return;
             }
             const total = Number(resp.headers.get('Content-Length') || 0);
@@ -150,101 +164,113 @@ function startDownload(path: string, name: string): void {
             URL.revokeObjectURL(a.href);
             finishTask(task, true, '');
         })
-        .catch((e) => finishTask(task, false, String(e)));
+        .catch((e) => finishTask(task, false, `下载失败：${e}`));
 }
 
 /* ---------------- 上传 ---------------- */
 
 export function handleUploadRequest(dir: string): void {
-    showUploadPicker(dir);
+    openFileChooser(dir);
 }
 
-/* 上传前先显示确认面板：浏览器禁止无用户手势弹文件选择器（扩展经 WS 触发的
- * 请求不是用户手势），用户点击"选择文件"按钮后即有手势，可正常弹出。 */
-function showUploadPicker(dir: string): void {
-    let mask = document.getElementById('upload-picker-mask') as HTMLElement | null;
-    if (!mask) {
-        mask = document.createElement('div');
-        mask.id = 'upload-picker-mask';
-        mask.className = 'modal-mask';
-        mask.innerHTML = `
-            <div class="modal-box">
-                <div class="modal-title">上传文件</div>
-                <div class="modal-text" id="upload-picker-dir"></div>
-                <div class="modal-btns">
-                    <button class="modal-btn modal-btn-cancel" id="upload-picker-cancel">取消</button>
-                    <button class="modal-btn modal-btn-ok" id="upload-picker-ok">选择文件</button>
-                </div>
-            </div>`;
-        document.body.appendChild(mask);
-    }
-    (document.getElementById('upload-picker-dir') as HTMLElement).textContent =
-        `上传到目录：${dir}`;
-    mask.hidden = false;
-    const ok = document.getElementById('upload-picker-ok') as HTMLButtonElement;
-    const cancel = document.getElementById('upload-picker-cancel') as HTMLButtonElement;
-    const done = () => {
-        mask.hidden = true;
-        ok.removeEventListener('click', onOk);
-        cancel.removeEventListener('click', onCancel);
+function openFileChooser(dir: string): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.onchange = () => {
+        const files = Array.from(input.files || []);
+        if (files.length > 0) uploadFiles(files, dir);
     };
-    const onOk = () => {
-        done();
-        /* 用户手势内弹文件选择器 */
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.multiple = true;
-        input.onchange = () => {
-            const files = Array.from(input.files || []);
-            for (const f of files) uploadFile(f, dir);
-        };
+    /* 浏览器要求用户激活才能弹文件选择器：用户在远程桌面右键触发上传时，
+     * 距最近一次真实交互（pointerdown 等）通常仍在激活窗口（约 5s）内，
+     * 直接 click 即可弹出，无需中间弹窗。超出窗口则显示右下角轻量提示条，
+     * 点击后再弹（点击本身提供激活）。 */
+    if (performance.now() - lastGestureAt < 3000) {
         input.click();
-    };
-    const onCancel = () => done();
-    ok.addEventListener('click', onOk);
-    cancel.addEventListener('click', onCancel);
+    } else {
+        showChooserHint(dir, input);
+    }
 }
 
-function uploadFile(file: File, dir: string): void {
-    const task = addTask('upload', file.name);
+/* 右下角轻量提示条（非居中弹窗），点击后弹文件选择器 */
+function showChooserHint(dir: string, input: HTMLInputElement): void {
+    let hint = document.getElementById('upload-hint') as HTMLElement | null;
+    if (!hint) {
+        hint = document.createElement('div');
+        hint.id = 'upload-hint';
+        hint.className = 'upload-hint';
+        document.body.appendChild(hint);
+    }
+    hint.textContent = `点击选择文件上传到 ${dir}`;
+    hint.hidden = false;
+    const close = () => {
+        hint.hidden = true;
+        hint.removeEventListener('click', onClick);
+    };
+    const onClick = () => {
+        close();
+        input.click(); /* 用户手势内弹选择器 */
+    };
+    hint.addEventListener('click', onClick);
+    setTimeout(close, 10000); /* 10s 自动消失 */
+}
+
+/* 多文件上传共用一个进度条：总进度 = 累计已传字节 / 全部文件总大小 */
+function uploadFiles(files: File[], dir: string): void {
+    const totalSize = files.reduce((s, f) => s + f.size, 0);
+    const name = files.length === 1 ? files[0].name : `上传 ${files.length} 个文件`;
+    const task = addTask('upload', name);
+    task.total = totalSize;
     const CHUNK = 1024 * 1024; /* 1MB/片 */
-    const total = file.size;
-    task.total = total;
-    let offset = 0;
+    let done = 0; /* 跨文件累计已传字节（进度用） */
+    let fi = 0;
     let lastT = performance.now();
     let lastD = 0;
     let speed = 0;
 
-    const sendChunk = (): void => {
-        const end = Math.min(offset + CHUNK, total);
-        const blob = file.slice(offset, end);
-        const xhr = new XMLHttpRequest();
-        xhr.open(
-            'POST',
-            `/api/transfer/upload?token=${encodeURIComponent(token)}` +
-            `&dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(file.name)}&offset=${offset}`,
-        );
-        xhr.onload = () => {
-            if (xhr.status !== 200) {
-                finishTask(task, false, `HTTP ${xhr.status}`);
-                return;
-            }
-            offset += blob.size;
-            const now = performance.now();
-            if (now - lastT > 400) {
-                speed = ((offset - lastD) / (now - lastT)) * 1000;
-                lastT = now;
-                lastD = offset;
-            }
-            updateTask(task, offset, total, speed);
-            if (offset < total) {
-                sendChunk();
-            } else {
-                finishTask(task, true, '');
-            }
+    const next = (): void => {
+        if (fi >= files.length) {
+            finishTask(task, true, '');
+            return;
+        }
+        const file = files[fi];
+        let off = 0; /* 当前文件自己的分片偏移（服务端按此写入） */
+        const sendChunk = (): void => {
+            const end = Math.min(off + CHUNK, file.size);
+            const blob = file.slice(off, end);
+            const xhr = new XMLHttpRequest();
+            xhr.open(
+                'POST',
+                `/api/transfer/upload?token=${encodeURIComponent(token)}` +
+                `&dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(file.name)}&offset=${off}`,
+            );
+            xhr.onload = () => {
+                if (xhr.status !== 200) {
+                    finishTask(task, false,
+                        `${file.name} 上传失败：HTTP ${xhr.status} ${xhr.statusText || ''}`.trim());
+                    return;
+                }
+                done += blob.size;
+                off += blob.size;
+                const now = performance.now();
+                if (now - lastT > 400) {
+                    speed = ((done - lastD) / (now - lastT)) * 1000;
+                    lastT = now;
+                    lastD = done;
+                }
+                updateTask(task, done, totalSize, speed);
+                if (off < file.size) {
+                    sendChunk();
+                } else {
+                    fi++;
+                    next();
+                }
+            };
+            xhr.onerror = () =>
+                finishTask(task, false, `${file.name} 上传失败：网络错误`);
+            xhr.send(blob);
         };
-        xhr.onerror = () => finishTask(task, false, '网络错误');
-        xhr.send(blob);
+        sendChunk();
     };
-    sendChunk();
+    next();
 }
