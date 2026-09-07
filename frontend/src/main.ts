@@ -1,4 +1,5 @@
 import './style.css';
+import { invoke } from '@tauri-apps/api/core';
 import {
     MSG_VIDEO,
     MSG_CONFIG,
@@ -32,6 +33,7 @@ import { AudioPlayer } from './audio';
 import {
     setTransferToken, handleDownloadRequest, handleUploadRequest,
     showTransferError, setSessionDirs, handleClipboardFilesMsg, initTransferUi,
+    uploadLocalFiles, isTauri,
 } from './transfer';
 import { showConfirm } from './modal';
 import { setServer, getServer, splitUserHost, resolveServer } from './server';
@@ -249,34 +251,55 @@ function handleMessage(b: Uint8Array): void {
     }
 }
 
-/* ---------- 剪贴板共享 ---------- */
+/* ---------- 剪贴板共享（Tauri 走系统剪贴板，无 WebView 权限弹窗） ---------- */
 async function clipWrite(text: string): Promise<void> {
+    if (isTauri()) {
+        try {
+            await invoke('clip_write_text', { text });
+            clipCache = text;
+        } catch { /* 忽略：写入失败不打断 */ }
+        return;
+    }
     try {
         await navigator.clipboard.writeText(text);
         clipCache = text;
     } catch {
-        /* 无用户手势时写入可能被拒；内容已在远程，提示用户手动粘贴 */
+        /* 浏览器非手势写入被拒：内容已在远程，不阻塞 */
     }
 }
 
-/* 页面获得焦点/可见时读取浏览器剪贴板，内容变化则推送服务端 */
+/* 读取本地剪贴板并同步远程；Tauri 同时检测本地复制的文件自动上传 */
 async function clipReadPush(): Promise<void> {
     if (!clipboardEnabled) return;
+    if (isTauri()) {
+        try {
+            const p = await invoke<{ text?: string | null; files: string[] }>('clip_poll');
+            if (p.text && p.text !== clipCache) {
+                clipCache = p.text;
+                send(msgClipboard(p.text));
+            }
+            if (p.files && p.files.length) {
+                uploadLocalFiles(p.files);
+            }
+        } catch { /* 忽略 */ }
+        return;
+    }
+    /* 浏览器兜底 */
     try {
         const t = await navigator.clipboard.readText();
         if (t && t !== clipCache) {
             clipCache = t;
             send(msgClipboard(t));
         }
-    } catch {
-        /* 无权限/非手势读取失败则忽略 */
-    }
+    } catch { /* 忽略 */ }
 }
 
 window.addEventListener('focus', () => { void clipReadPush(); });
 document.addEventListener('visibilitychange', () => {
     if (!document.hidden) void clipReadPush();
 });
+/* 剪贴板共享开启时轻量轮询：让“本地复制 → 自动同步/上传”更即时 */
+setInterval(() => { if (clipboardEnabled && active) void clipReadPush(); }, 1500);
 
 /* 应用远程光标：转成 data URL 后设为 canvas 的 CSS cursor（含热点） */
 function applyCursor(c: CursorImage): void {
