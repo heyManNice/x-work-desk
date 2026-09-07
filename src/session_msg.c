@@ -417,6 +417,27 @@ static void handle_input_msg(runtime *rt, uint8_t t, const uint8_t *data, size_t
         atomic_store(&rt->cap.req_keyframe, 1);
 }
 
+/* 客户端请求注销当前会话（等同在远程桌面里注销系统）：
+ * 从会话表移除并断开连接 → 引用归零后 destroy_worker 异步 teardown
+ * （杀 Xorg/桌面进程），桌面被销毁，下次登录重建全新会话。 */
+static void handle_logout_msg(conn *c, runtime *rt)
+{
+    if (!rt_state_is(rt, S_RUNNING))
+        return; /* 仅已建立的会话可注销 */
+    log_info("客户端请求注销会话: %s (%s)", rt->user, rt->proc.display_str);
+    pthread_mutex_lock(&rt->lock);
+    rt->state = S_CLOSED; /* 不再被登录复用/接管 */
+    pthread_mutex_unlock(&rt->lock);
+    session_unregister(rt); /* 释放会话表引用 */
+    conn *cur = atomic_exchange(&rt->conn, NULL);
+    if (cur)
+    {
+        push_text_msg(cur, MSG_CLOSE, NULL, 0, "会话已注销，桌面已退出");
+        net_close_conn(cur); /* session_on_close 释放连接引用 → 归零则异步销毁 */
+    }
+    (void)c;
+}
+
 static void handle_takeover_msg(conn *c, runtime *rt)
 {
     if (!rt_state_is(rt, S_CONFIRM))
@@ -478,6 +499,9 @@ void session_on_message(conn *c, const uint8_t *data, size_t len)
         break;
     case MSG_TAKEOVER_CANCEL:
         net_close_conn(c); /* 取消接管：断开连接，前端回到登录页 */
+        break;
+    case MSG_LOGOUT:
+        handle_logout_msg(c, rt);
         break;
     case MSG_SET_FPS:
         if (!rt_state_is(rt, S_RUNNING))

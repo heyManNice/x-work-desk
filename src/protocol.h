@@ -29,6 +29,7 @@
 #define MSG_SET_ANIMATIONS 0x19  /* 桌面动画开关：enable(1) */
 #define MSG_SET_AUDIO 0x1a       /* 音频传输开关：enable(1) */
 #define MSG_SET_CLIPBOARD 0x1b   /* 剪贴板共享开关：enable(1) */
+#define MSG_LOGOUT 0x1c          /* 客户端→服务端：注销当前会话（销毁桌面，等同远程注销） */
 
 /* MSG_TRANSFER_REQUEST action 值 */
 #define TRANSFER_ACT_DOWNLOAD 1  /* 扩展请求下载文件：文本=文件路径列表(换行分隔) */

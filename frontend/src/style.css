@@ -269,6 +269,17 @@ body,
     color: #fca5a5;
 }
 
+/* 注销退出：比“断开连接”更醒目的警示色 */
+#logout-btn {
+    font-weight: 700;
+    color: #ff5b5b !important;
+    text-decoration: underline;
+}
+
+#logout-btn:hover {
+    color: #ff8f8f !important;
+}
+
 #screen {
     width: 100%;
     height: 100%;

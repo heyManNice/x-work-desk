@@ -25,6 +25,7 @@ import {
     msgKeyframe,
     msgTakeover,
     msgTakeoverCancel,
+    msgLogout,
     msgClipboard,
 } from './protocol';
 import { VideoRenderer } from './decoder';
@@ -61,6 +62,7 @@ const btnSpinner = $('.spinner');
 const loginError = $('#login-error') as HTMLElement;
 const canvas = $('#screen') as HTMLCanvasElement;
 const disconnectBtn = $('#disconnect-btn');
+const logoutBtn = $('#logout-btn');
 const debugHud = $('#debug-hud') as HTMLElement;
 const connectingOverlay = $('#connecting-overlay');
 
@@ -397,6 +399,22 @@ disconnectBtn.addEventListener('click', (e) => {
     e.preventDefault();
     if (ws) { ws.close(); ws = null; }
     onDisconnect();
+});
+
+/* 注销退出：真正销毁当前远程会话（等同在远程注销系统） */
+logoutBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    if (!active) return;
+    const ok = await showConfirm(
+        '注销退出',
+        '将注销并销毁当前远程桌面会话（等同在远程系统里注销），\n打开的窗口/未保存内容会丢失。确定退出吗？',
+    );
+    if (!ok) return;
+    send(msgLogout());
+    /* 服务端注销后会断开；此处兜底：1.5s 仍未断开则本地关闭 */
+    window.setTimeout(() => {
+        if (active && ws) { ws.close(); ws = null; }
+    }, 1500);
 });
 
 /* 刷新/关闭前标记“正在重连”：刷新后重新登录时静默接管旧会话，
