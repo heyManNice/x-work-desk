@@ -12,13 +12,14 @@ import {
 } from 'solid-js';
 import {
     Monitor, Plus, Play, Pencil, Trash2, Minus, Copy, Square, X,
-    Sun, Moon, LogOut, Unplug,
+    Sun, Moon, LogOut, Unplug, Link,
 } from 'lucide-solid';
 import {
     isMac, winMinimize, winToggleMaximize, winClose,
-    winIsMaximized, onWinMaximizeChange, platform,
+    winIsMaximized, onWinMaximizeChange, platform, clipWriteText,
 } from './platform';
 import { resolveServer, type ServerTarget } from './server';
+import { showConfirm } from './modal';
 import type { HostConfig, RatioMode } from './core/host';
 import {
     loadHosts, saveHosts, upsertHost, removeHost,
@@ -110,6 +111,71 @@ function resolvePassword(v: string | null): void {
     passResolver = null;
     /* 保留 title/label：收起动画期间面板内容不空白 */
     setPw((p) => ({ ...p, open: false }));
+}
+
+/* ---------------- 主机右键菜单 ---------------- */
+
+const [ctxMenu, setCtxMenu] = createSignal<{ x: number; y: number; host: HostConfig } | null>(null);
+
+/* 菜单打开时：点击任意处 / Esc / 失焦 关闭 */
+window.addEventListener('click', () => setCtxMenu(null));
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') setCtxMenu(null); });
+window.addEventListener('blur', () => setCtxMenu(null));
+
+function openHostMenu(e: MouseEvent, h: HostConfig): void {
+    e.preventDefault();
+    e.stopPropagation();
+    const MW = 176;
+    const MH = 232;
+    const x = Math.min(Math.max(8, e.clientX), window.innerWidth - MW - 8);
+    const y = Math.min(Math.max(8, e.clientY), window.innerHeight - MH - 8);
+    setCtxMenu({ x, y, host: h });
+}
+
+function ctxDo(fn: (m: { x: number; y: number; host: HostConfig }) => void): void {
+    const m = ctxMenu();
+    if (!m) return;
+    setCtxMenu(null);
+    fn(m);
+}
+
+async function copyClip(t: string): Promise<void> {
+    try { await clipWriteText(t); } catch { /* 忽略 */ }
+}
+
+function ctxConnect(): void {
+    ctxDo((m) => { void connectHost(m.host); });
+}
+function ctxEdit(): void {
+    ctxDo((m) => openEditorEdit(m.host));
+}
+async function ctxLogout(): Promise<void> {
+    const m = ctxMenu();
+    if (!m) return;
+    setCtxMenu(null);
+    const t = tabs().find((x) => x.hostId === m.host.id);
+    if (!t) return;
+    const s = sessionMap.get(t.id);
+    if (s) {
+        const did = await s.logout();
+        if (did) closeTab(t.id);
+    }
+}
+async function ctxCopyName(): Promise<void> {
+    ctxDo((m) => { void copyClip(m.host.name || m.host.host); });
+}
+async function ctxCopyHost(): Promise<void> {
+    ctxDo((m) => { void copyClip(m.host.host); });
+}
+async function ctxDelete(): Promise<void> {
+    const m = ctxMenu();
+    if (!m) return;
+    setCtxMenu(null);
+    const ok = await showConfirm(
+        '删除主机',
+        `确定删除主机“${m.host.name || hostDisplay(m.host)}”吗？\n已打开的连接标签也会一并关闭。`,
+    );
+    if (ok) deleteHostById(m.host.id);
 }
 
 /* ---------------- 动作 ---------------- */
@@ -293,6 +359,7 @@ function Sidebar() {
                             class="host-item"
                             classList={{ active: activeHostId() === h.id }}
                             onClick={() => void connectHost(h)}
+                            onContextMenu={(e) => openHostMenu(e, h)}
                         >
                             <span class="host-dot" />
                             <div class="host-meta">
@@ -314,8 +381,7 @@ function Sidebar() {
                 </Show>
             </ul>
             <div class="sidebar-foot">
-                <span>{hosts().length} 台主机</span>
-                <button class="btn" style={{ padding: '3px 10px', 'font-size': '11px' }} onClick={openEditorForNew}>新建</button>
+                <span>{hosts().length} 台主机 · 右键管理</span>
             </div>
         </aside>
     );
@@ -573,6 +639,27 @@ function HostEditor() {
     );
 }
 
+/* ---------------- 组件：主机右键菜单 ---------------- */
+
+function HostContextMenu() {
+    const m = () => ctxMenu();
+    return (
+        <Show when={m()}>
+            <div class="ctx-menu" role="menu" style={{ left: `${m()!.x}px`, top: `${m()!.y}px` }}>
+                <div class="ctx-arrow" />
+                <button class="ctx-item" onClick={ctxConnect}><Play size={13} /> 连接</button>
+                <button class="ctx-item" onClick={() => void ctxLogout()}><LogOut size={13} /> 注销</button>
+                <button class="ctx-item" onClick={ctxEdit}><Pencil size={13} /> 编辑</button>
+                <div class="ctx-sep" />
+                <button class="ctx-item" onClick={() => void ctxCopyName()}><Copy size={13} /> 复制名字</button>
+                <button class="ctx-item" onClick={() => void ctxCopyHost()}><Link size={13} /> 复制 IP</button>
+                <div class="ctx-sep" />
+                <button class="ctx-item danger" onClick={() => void ctxDelete()}><Trash2 size={13} /> 删除</button>
+            </div>
+        </Show>
+    );
+}
+
 /* ---------------- 组件：密码询问 ---------------- */
 
 function PasswordDialog() {
@@ -603,7 +690,7 @@ function PasswordDialog() {
                         placeholder="输入密码"
                         autocomplete="off"
                         onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') resolvePassword(null); }}
-                        style={{ height: '32px', padding: '0 10px', 'border-radius': '7px', border: '1px solid var(--border)', background: 'var(--bg-elev-2)', color: 'var(--text)', outline: 'none', 'font-size': '13px' }}
+                        style={{ height: '32px', padding: '0 10px', 'border-radius': '8px', background: 'var(--bg-elev-2)', color: 'var(--text)', outline: 'none', 'font-size': '13px' }}
                     />
                 </div>
                 <div class="mp-foot">
@@ -628,6 +715,7 @@ export default function App() {
             </div>
             <HostEditor />
             <PasswordDialog />
+            <HostContextMenu />
         </div>
     );
 }
