@@ -251,7 +251,7 @@ export function FileButton(props: { ctx: FmCtx; label?: string }) {
             title="远程文件（SFTP）"
             onClick={toggle}
         >
-            {isThisOpen() ? <FolderOpen size={hasLabel() ? 13 : 15} /> : <Folder size={hasLabel() ? 13 : 15} />}
+            {isThisOpen() ? <FolderOpen size={hasLabel() ? 11 : 15} /> : <Folder size={hasLabel() ? 11 : 15} />}
             {hasLabel() && <span>文件</span>}
         </button>
     );

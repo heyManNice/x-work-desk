@@ -142,7 +142,7 @@ export function SysCpuButton(props: { ctx: FmCtx }) {
             onClick={toggle}
             title={`CPU 占用率：${label()}（点击展开详情）`}
         >
-            <Cpu size={13} />
+            <Cpu size={11} />
             <span>{label()}</span>
         </button>
     );
@@ -159,10 +159,14 @@ export function SysMemButton(props: { ctx: FmCtx }) {
         }
         togglePopup('sysmem');
     };
+    const pct = () => {
+        const t = mem().total;
+        return t > 0 ? Math.min(100, Math.round((usedKB() / t) * 100)) : 0;
+    };
     const label = () => {
         if (failed()) return '—';
         if (!ready()) return '…';
-        return `${cap(usedKB())} / ${cap(mem().total)}`;
+        return `${pct()}%`;
     };
     return (
         <button
@@ -171,9 +175,9 @@ export function SysMemButton(props: { ctx: FmCtx }) {
             class="tab-btn sys-btn"
             classList={{ active: isPopup('sysmem') }}
             onClick={toggle}
-            title={`内存：${label()}（点击展开详情）`}
+            title={`内存使用率：${label()}（已用 ${cap(usedKB())} / ${cap(mem().total)}，点击展开详情）`}
         >
-            <MemoryStick size={13} />
+            <MemoryStick size={11} />
             <span>{label()}</span>
         </button>
     );
