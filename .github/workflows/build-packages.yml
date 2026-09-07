@@ -1,0 +1,70 @@
+name: Build desktop packages
+
+# 仅手动触发（需要出包时在 Actions 手动 Run workflow）
+on:
+  workflow_dispatch:
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-msi-x64
+            os: windows-latest
+            builder: --win msi --x64
+            glob: '*.msi'
+          - name: windows-msi-arm64
+            os: windows-latest
+            builder: --win msi --arm64
+            glob: '*.msi'
+          - name: linux-deb-x64
+            os: ubuntu-latest
+            builder: --linux deb --x64
+            glob: '*.deb'
+          - name: linux-deb-arm64
+            os: ubuntu-latest
+            builder: --linux deb --arm64
+            glob: '*.deb'
+          - name: macos-dmg-x64
+            os: macos-13
+            builder: --mac dmg --x64
+            glob: '*.dmg'
+          - name: macos-dmg-arm64
+            os: macos-14
+            builder: --mac dmg --arm64
+            glob: '*.dmg'
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      # 无签名证书的 runner：禁止自动查找签名身份（macOS）
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Package
+        run: npx electron-builder ${{ matrix.builder }} --publish never
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: frontend/release/${{ matrix.glob }}
+          if-no-files-found: error

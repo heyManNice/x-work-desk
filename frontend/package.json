@@ -36,12 +36,7 @@
         ],
         "win": {
             "target": [
-                {
-                    "target": "msi",
-                    "arch": [
-                        "x64"
-                    ]
-                }
+                "msi"
             ],
             "artifactName": "XWorkDesk-${version}-${arch}.${ext}"
         }
