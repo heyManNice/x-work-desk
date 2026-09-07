@@ -192,6 +192,14 @@ static int write_xorg_conf(const char *path, int w, int h)
                      "echo 'Section \"ServerFlags\"'; "
                      "echo '    Option \"DontVTSwitch\" \"true\"'; "
                      "echo '    Option \"AllowEmptyInitialConfiguration\" \"true\"'; "
+                     /* 关键：禁止 udev 自动添加/启用本机物理输入设备。
+                      * 否则会话 Xorg 会打开与实体机共享的 /dev/input/event*
+                      * （VMware 虚拟键鼠），两个 X server 同时收到物理事件，
+                      * 导致实体机操作串到远程用户桌面。会话只应接收
+                      * xworkd 经 XTEST 注入的前端输入（XTEST 不依赖
+                      * 物理输入设备，禁用后依然可用）。 */
+                     "echo '    Option \"AutoAddDevices\" \"false\"'; "
+                     "echo '    Option \"AutoEnableDevices\" \"false\"'; "
                      "echo 'EndSection'; "
                      "echo 'Section \"Device\"'; "
                      "echo '    Identifier \"dummy\"'; "
