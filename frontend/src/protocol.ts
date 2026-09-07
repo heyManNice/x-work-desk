@@ -11,6 +11,8 @@ export const MSG_CLIPBOARD = 0x08;
 export const MSG_TRANSFER_TOKEN = 0x09;
 export const MSG_TRANSFER_REQUEST = 0x0a;
 export const MSG_TRANSFER_ERROR = 0x0b;
+export const MSG_CLIPBOARD_FILES = 0x0c; /* 远程剪贴板复制了文件：每行一个 realpath */
+export const MSG_SESSION_DIRS = 0x0d;   /* home/desktop 目录下发 */
 
 export const TRANSFER_ACT_DOWNLOAD = 1;
 export const TRANSFER_ACT_UPLOADDIR = 2;

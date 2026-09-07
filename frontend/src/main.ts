@@ -14,6 +14,8 @@ import {
     MSG_TRANSFER_TOKEN,
     MSG_TRANSFER_REQUEST,
     MSG_TRANSFER_ERROR,
+    MSG_CLIPBOARD_FILES,
+    MSG_SESSION_DIRS,
     parseTransferRequest,
     TRANSFER_ACT_DOWNLOAD,
     TRANSFER_ACT_UPLOADDIR,
@@ -27,7 +29,10 @@ import {
 import { VideoRenderer } from './decoder';
 import { InputRelay } from './input';
 import { AudioPlayer } from './audio';
-import { setTransferToken, handleDownloadRequest, handleUploadRequest, showTransferError } from './transfer';
+import {
+    setTransferToken, handleDownloadRequest, handleUploadRequest,
+    showTransferError, setSessionDirs, handleClipboardFilesMsg, initTransferUi,
+} from './transfer';
 import { showConfirm } from './modal';
 import { setServer, getServer, splitUserHost, resolveServer } from './server';
 import {
@@ -150,6 +155,7 @@ function handleLoginResult(b: Uint8Array): void {
         sessionStorage.removeItem('xwd-reconnect'); /* 登录成功，重连标记失效 */
         loginBtn.hidden = true;
         showDesktop();
+        initTransferUi(); /* 登录后显示传输入口（上传按钮/拖放区） */
     } else {
         loginFail(r.text);
     }
@@ -207,6 +213,12 @@ function handleMessage(b: Uint8Array): void {
             break;
         case MSG_TRANSFER_REQUEST:
             handleTransferRequestMsg(b);
+            break;
+        case MSG_CLIPBOARD_FILES:
+            handleClipboardFilesMsg(new TextDecoder().decode(b.subarray(1)));
+            break;
+        case MSG_SESSION_DIRS:
+            setSessionDirs(new TextDecoder().decode(b.subarray(1)));
             break;
         case MSG_CLIPBOARD:
             handleClipboardMsg(b);
@@ -286,6 +298,7 @@ function applyCursor(c: CursorImage): void {
 
 function showDesktop(): void {
     active = true;
+    document.body.classList.add('xwd-connected');
     loginScreen.classList.remove('active');
     deskScreen.classList.add('active');
     /* 接管空闲会话时 CONFIG 可能已先到达（渲染器已配置），直接隐藏提示层 */
@@ -309,6 +322,7 @@ function loginFail(text?: string): void {
 
 function onDisconnect(): void {
     active = false;
+    document.body.classList.remove('xwd-connected');
     audioPlayer.stop(); /* 断开时停止音频播放 */
     relay?.setActive(false);
     /* 保留解码器：同分辨率重连时不重建，避免画面闪烁；

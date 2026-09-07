@@ -1,11 +1,19 @@
-/* transfer.ts —— 文件传输（HTTP 数据面）+ 右下角传输队列进度条。
- * 控制面由服务端经 WS 推送（MSG_TRANSFER_TOKEN / MSG_TRANSFER_REQUEST），
- * 数据面走 HTTP（指向登录时解析的目标服务器）：
- *   下载：GET /api/transfer/download?token&path（fetch + ReadableStream 流式）
- *   上传：POST /api/transfer/upload?token&dir&name&offset（XHR 分片，1MB/片）
+/* transfer.ts —— 文件传输（客户端新方案：复制粘贴 / 拖放，无需浏览器右键菜单）。
+ *
+ * 上传（本地→远程桌面 ~/Desktop）：
+ *   - 把本地文件拖进窗口（Tauri 拿真实路径）或点右上「上传」按钮
+ *   - Tauri：Rust 命令 upload_local_files 直连服务端（跨源无 CORS 烦恼、可写盘）
+ *   - 浏览器（同源兜底）：input[type=file] + XHR 分片上传（服务端已加 CORS）
+ * 下载（远程→本地）：
+ *   - 远程文件管理器选中文件 Ctrl+C → 服务端识别 file:// 推送 MSG_CLIPBOARD_FILES
+ *   - 客户端右下角出现「已复制 N 个远程文件」卡 → 点保存：Tauri 选目录写盘 / 浏览器 blob
+ * 数据面 HTTP：GET /api/transfer/download?token&path；POST /api/transfer/upload（1MB/片）
  */
 
 import { getServer } from './server';
+import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 
 let token = '';
 
@@ -13,13 +21,22 @@ export function setTransferToken(t: string): void {
     token = t;
 }
 
-/* 记录最近一次真实用户交互时间：浏览器要求用户激活才能弹文件选择器。
- * 用户在远程桌面右键触发上传时，WS 推送返回通常仍在激活窗口（约 5s）内，
- * 据此决定是直接弹选择器还是先显示右下角提示条。 */
-let lastGestureAt = 0;
-window.addEventListener('pointerdown', () => { lastGestureAt = performance.now(); }, { passive: true });
-window.addEventListener('pointerup', () => { lastGestureAt = performance.now(); }, { passive: true });
-window.addEventListener('keydown', () => { lastGestureAt = performance.now(); }, { passive: true });
+/* 服务端登录后下发的会话目录（home/desktop），用于上传落点展示 */
+let remoteDesktop = '';
+let remoteHome = '';
+export function setSessionDirs(text: string): void {
+    const lines = text.split('\n').filter((s) => s.length > 0);
+    for (let i = 0; i + 1 < lines.length; i += 2) {
+        if (lines[i] === 'home') remoteHome = lines[i + 1];
+        else if (lines[i] === 'desktop') remoteDesktop = lines[i + 1];
+    }
+    const tip = document.getElementById('xwd-upload-tip');
+    if (tip) tip.textContent = remoteDesktop ? `发送到远程桌面 ${remoteDesktop}` : '发送到远程桌面';
+}
+
+function isTauri(): boolean {
+    return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
 
 interface TransferTask {
     kind: 'download' | 'upload';
@@ -34,6 +51,8 @@ interface TransferTask {
 
 let tasks: TransferTask[] = [];
 let taskSeq = 0;
+/* 当前批次的活跃任务（上传/下载进度事件统一更新它） */
+let curTask: TransferTask | null = null;
 
 function ensureQueue(): HTMLElement {
     let q = document.getElementById('transfer-queue');
@@ -113,11 +132,8 @@ function finishTask(t: TransferTask, ok: boolean, msg: string): void {
 /* ---------------- 下载 ---------------- */
 
 export function handleDownloadRequest(pathsText: string): void {
-    const paths = pathsText.split('\n').filter((s) => s.length > 0);
-    for (const p of paths) {
-        const name = p.split('/').pop() || 'file';
-        startDownload(p, name);
-    }
+    /* 服务端 TRANSFER_REQUEST 下载（旧 Nautilus 扩展已移除，兼容保留） */
+    void handleClipboardFilesMsg(pathsText);
 }
 
 function startDownload(path: string, name: string): void {
@@ -172,8 +188,9 @@ function startDownload(path: string, name: string): void {
 
 /* ---------------- 上传 ---------------- */
 
-export function handleUploadRequest(dir: string): void {
-    openFileChooser(dir);
+export function handleUploadRequest(_dir: string): void {
+    /* 旧扩展触发上传（Nautilus 右键已移除）——统一走新上传入口 */
+    void pickAndUpload();
 }
 
 /* 右下角错误提醒 toast（如路径权限不足被服务端拒绝） */
@@ -197,50 +214,21 @@ export function showTransferError(msg: string): void {
     }, 4500);
 }
 
-function openFileChooser(dir: string): void {
+/* 浏览器兜底：直接弹文件选择器选本地文件（Tauri 走 Rust 对话框选真实路径） */
+function openFileChooser(): void {
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
     input.onchange = () => {
         const files = Array.from(input.files || []);
-        if (files.length > 0) uploadFiles(files, dir);
+        if (files.length > 0) uploadFiles(files);
     };
-    /* 浏览器要求用户激活才能弹文件选择器：用户在远程桌面右键触发上传时，
-     * 距最近一次真实交互（pointerdown 等）通常仍在激活窗口（约 5s）内，
-     * 直接 click 即可弹出，无需中间弹窗。超出窗口则显示右下角轻量提示条，
-     * 点击后再弹（点击本身提供激活）。 */
-    if (performance.now() - lastGestureAt < 3000) {
-        input.click();
-    } else {
-        showChooserHint(dir, input);
-    }
-}
-
-/* 右下角轻量提示条（非居中弹窗），点击后弹文件选择器 */
-function showChooserHint(dir: string, input: HTMLInputElement): void {
-    let hint = document.getElementById('upload-hint') as HTMLElement | null;
-    if (!hint) {
-        hint = document.createElement('div');
-        hint.id = 'upload-hint';
-        hint.className = 'upload-hint';
-        document.body.appendChild(hint);
-    }
-    hint.textContent = `点击选择文件上传到 ${dir}`;
-    hint.hidden = false;
-    const close = () => {
-        hint.hidden = true;
-        hint.removeEventListener('click', onClick);
-    };
-    const onClick = () => {
-        close();
-        input.click(); /* 用户手势内弹选择器 */
-    };
-    hint.addEventListener('click', onClick);
-    setTimeout(close, 10000); /* 10s 自动消失 */
+    input.click();
 }
 
 /* 多文件上传共用一个进度条：总进度 = 累计已传字节 / 全部文件总大小 */
-function uploadFiles(files: File[], dir: string): void {
+function uploadFiles(files: File[], dir?: string): void {
+    const dest = dir || ''; /* 空 = 服务端默认落到会话用户桌面 */
     const totalSize = files.reduce((s, f) => s + f.size, 0);
     const name = files.length === 1 ? files[0].name : `上传 ${files.length} 个文件`;
     const task = addTask('upload', name);
@@ -266,7 +254,7 @@ function uploadFiles(files: File[], dir: string): void {
             xhr.open(
                 'POST',
                 `${getServer().apiBase}/api/transfer/upload?token=${encodeURIComponent(token)}` +
-                `&dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(file.name)}&offset=${off}`,
+                `&dir=${encodeURIComponent(dest)}&name=${encodeURIComponent(file.name)}&offset=${off}`,
             );
             xhr.onload = () => {
                 if (xhr.status !== 200) {
@@ -297,4 +285,182 @@ function uploadFiles(files: File[], dir: string): void {
         sendChunk();
     };
     next();
+}
+
+/* ---------------- 新方案：客户端入口（复制 / 拖放 / 按钮） ---------------- */
+
+function escapeHtml(s: string): string {
+    return s.replace(/[&<>"']/g, (ch) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as Record<string, string>
+    )[ch]!);
+}
+
+/* 右下角下载提示卡：远程剪贴板复制了文件（Nautilus Ctrl+C 等） */
+function showClipboardDownloadCard(paths: string[]): void {
+    removeClipCard();
+    const card = document.createElement('div');
+    card.id = 'clip-dl-card';
+    card.className = 'clip-dl-card';
+    const n = paths.length;
+    const label = n === 1 ? (paths[0].split('/').pop() || '文件') : `${n} 个文件`;
+    card.innerHTML = `
+        <div class="clip-dl-head">
+            <span class="clip-dl-icon">📋</span>
+            <span class="clip-dl-text">已从远程复制 <b>${escapeHtml(label)}</b></span>
+        </div>
+        <button class="clip-dl-btn" type="button">保存到本地…</button>`;
+    (card.querySelector('.clip-dl-btn') as HTMLButtonElement).onclick = () => {
+        card.remove();
+        void saveRemoteFiles(paths);
+    };
+    document.body.appendChild(card);
+}
+function removeClipCard(): void {
+    const c = document.getElementById('clip-dl-card');
+    if (c) c.remove();
+}
+
+/* 服务端推来远程复制文件列表（MSG_CLIPBOARD_FILES） */
+export function handleClipboardFilesMsg(pathsText: string): void {
+    const paths = pathsText.split('\n').filter((s) => s.length > 0);
+    if (paths.length === 0) return;
+    showClipboardDownloadCard(paths);
+}
+
+/* 保存远程文件到本地：Tauri 选目录写盘；浏览器逐文件触发下载 */
+async function saveRemoteFiles(paths: string[]): Promise<void> {
+    if (isTauri()) {
+        let dir: string | null = null;
+        try {
+            dir = await invoke<string | null>('pick_save_dir');
+        } catch { /* dialog 取消/异常都视为放弃 */ }
+        if (!dir) return;
+        await downloadRemoteToDir(paths, dir);
+    } else {
+        for (const p of paths) startDownload(p, p.split('/').pop() || 'file');
+    }
+}
+
+/* Tauri：Rust 命令逐文件流式下载到指定本地目录 */
+async function downloadRemoteToDir(paths: string[], dir: string): Promise<void> {
+    const label = paths.length === 1
+        ? (paths[0].split('/').pop() || 'file')
+        : `下载 ${paths.length} 个文件`;
+    const task = addTask('download', label);
+    curTask = task;
+    try {
+        const res = await invoke<{ ok: boolean; msg: string }>('download_remote_files', {
+            api: getServer().apiBase, token, paths, dir,
+        });
+        finishTask(task, res.ok, res.ok ? '已保存' : res.msg);
+    } catch (e) {
+        finishTask(task, false, `下载失败：${String(e)}`);
+    } finally {
+        if (curTask === task) curTask = null;
+    }
+}
+
+/* 上传入口：Tauri 弹系统文件选择；浏览器兜底 input[type=file] */
+async function pickAndUpload(): Promise<void> {
+    if (isTauri()) {
+        let paths: string[] = [];
+        try {
+            paths = await invoke<string[]>('pick_upload_files');
+        } catch (e) {
+            showTransferError(`选择文件失败：${String(e)}`);
+            return;
+        }
+        if (!paths || paths.length === 0) return; /* 用户取消 */
+        await uploadLocalToRemote(paths);
+    } else {
+        openFileChooser();
+    }
+}
+
+async function uploadLocalToRemote(paths: string[]): Promise<void> {
+    const label = paths.length === 1
+        ? (paths[0].split('/').pop() || 'file')
+        : `上传 ${paths.length} 个文件`;
+    const task = addTask('upload', label);
+    curTask = task;
+    try {
+        const res = await invoke<{ ok: boolean; msg: string }>('upload_local_files', {
+            api: getServer().apiBase, token, dir: remoteDesktop, files: paths,
+        });
+        finishTask(task, res.ok, res.ok
+            ? (res.msg ? `已上传${res.msg ? '到 ' + res.msg : ''}` : '完成')
+            : res.msg);
+    } catch (e) {
+        finishTask(task, false, `上传失败：${String(e)}`);
+    } finally {
+        if (curTask === task) curTask = null;
+    }
+}
+
+/* 拖放高亮遮罩 */
+function showDropOverlay(on: boolean): void {
+    let ov = document.getElementById('drop-overlay') as HTMLElement | null;
+    if (on) {
+        if (!ov) {
+            ov = document.createElement('div');
+            ov.id = 'drop-overlay';
+            ov.className = 'drop-overlay';
+            ov.innerHTML = '<div class="drop-inner"><div class="drop-icon">⬇</div>' +
+                '<div>松开以发送文件到远程桌面</div></div>';
+            document.body.appendChild(ov);
+        }
+        ov.classList.add('show');
+    } else if (ov) {
+        ov.classList.remove('show');
+    }
+}
+
+let progressUnlisten: UnlistenFn | null = null;
+let dragUnlisten: UnlistenFn | null = null;
+/* Tauri：订阅 Rust 侧事件（传输进度 + 窗口拖放），仅绑定一次 */
+async function bindTauriEvents(): Promise<void> {
+    if (!isTauri()) return;
+    try {
+        if (!progressUnlisten) {
+            progressUnlisten = await listen<{ done: number; total: number }>(
+                'xwd-transfer-progress',
+                (e) => {
+                    if (curTask) updateTask(curTask, e.payload.done, e.payload.total, 0);
+                },
+            );
+        }
+        if (!dragUnlisten) {
+            /* Tauri 框架内置拖放事件（tauri://drag-enter/over/drop/leave） */
+            dragUnlisten = await getCurrentWebview().onDragDropEvent((e) => {
+                const p = e.payload;
+                if (p.type === 'enter' || p.type === 'over') {
+                    showDropOverlay(true);
+                } else if (p.type === 'leave') {
+                    showDropOverlay(false);
+                } else if (p.type === 'drop') {
+                    showDropOverlay(false);
+                    const paths = p.paths.filter((s) => s.length > 0);
+                    if (paths.length > 0) void uploadLocalToRemote(paths);
+                }
+            });
+        }
+    } catch { /* 非 Tauri 或事件系统异常：忽略 */ }
+}
+
+let transferUiInited = false;
+/* 登录成功后调用：显示上传按钮与拖放区（只建一次 DOM） */
+export function initTransferUi(): void {
+    if (!transferUiInited) {
+        transferUiInited = true;
+        const bar = document.createElement('div');
+        bar.id = 'xwd-upload-ui';
+        bar.innerHTML =
+            '<button id="xwd-upload-btn" type="button" title="选择本地文件上传到远程桌面">⬆ 上传</button>' +
+            '<div id="xwd-upload-tip"></div>';
+        (bar.querySelector('#xwd-upload-btn') as HTMLButtonElement).onclick = () => { void pickAndUpload(); };
+        document.body.appendChild(bar);
+        void bindTauriEvents();
+    }
+    const tip = document.getElementById('xwd-upload-tip');
+    if (tip) tip.textContent = remoteDesktop ? `发送到远程桌面 ${remoteDesktop}` : '发送到远程桌面';
 }
