@@ -1983,16 +1983,13 @@ canvas {
     transform: translate(-50%, 0);
     transform-origin: top center;
     animation: npanel-in 0.16s ease;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
 }
 
 .sys-head {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 8px 6px 12px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-elev-2);
+    padding: 9px 8px 7px 12px;
 }
 
 .sys-title {
