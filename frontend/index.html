@@ -1,10 +1,12 @@
 <!doctype html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>XWorkDesk</title>
 </head>
+
 <body>
     <!-- Solid 应用根：标题栏 / 侧栏 / 标签 / 会话视图 / 主机编辑 全部由组件渲染 -->
     <div id="app-root"></div>
@@ -13,7 +15,9 @@
     <div id="modal-mask" class="modal-layer" hidden>
         <div class="modal-panel modal-small" role="dialog" aria-modal="true">
             <div class="mp-head"><span class="mp-title" id="modal-title">提示</span></div>
-            <div class="mp-body"><div id="modal-text" class="modal-text"></div></div>
+            <div class="mp-body">
+                <div id="modal-text" class="modal-text"></div>
+            </div>
             <div class="mp-foot">
                 <span class="mp-spacer"></span>
                 <button id="modal-cancel" class="btn">取消</button>
@@ -25,4 +29,5 @@
 
     <script type="module" src="/src/main.tsx"></script>
 </body>
+
 </html>

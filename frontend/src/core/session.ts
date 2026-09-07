@@ -79,6 +79,7 @@ export class Session {
 
     private hudTimer = 0;
     private clipTimer = 0;
+    private ro: ResizeObserver | null = null;
     private frameCount = 0;
     private bwBytes = 0;
     private decSum = 0;
@@ -143,24 +144,8 @@ export class Session {
         ovText.textContent = '正在连接…';
         overlay.append(spinner, ovText);
 
-        /* 工具条：注销 / 断开 / 刷新 */
-        const tools = document.createElement('div');
-        tools.className = 'session-tools';
-        const bLogout = document.createElement('button');
-        bLogout.className = 'btn danger';
-        bLogout.textContent = '注销退出';
-        bLogout.addEventListener('click', () => void this.logout());
-        const bDisconnect = document.createElement('button');
-        bDisconnect.className = 'btn';
-        bDisconnect.textContent = '断开连接';
-        bDisconnect.addEventListener('click', () => this.disconnect());
-        const bRefresh = document.createElement('button');
-        bRefresh.className = 'btn';
-        bRefresh.textContent = '请求刷新';
-        bRefresh.addEventListener('click', () => { this.send(msgKeyframe()); });
-        tools.append(bLogout, bDisconnect, bRefresh);
-
-        stage.append(canvas, hud, overlay, tools);
+        /* 工具条已上移到标签栏（断开/注销），会话内不再放操作按钮 */
+        stage.append(canvas, hud, overlay);
         root.appendChild(stage);
 
         this.stage = stage;
@@ -187,12 +172,53 @@ export class Session {
         this.relay.setRatio(this.opt.host.ratio);
         this.relay.setSize(this.cfgW, this.cfgH);
 
+        /* 容器尺寸变化（窗口缩放/标签激活等）时重排画布 CSS 显示尺寸 */
+        this.ro = new ResizeObserver(() => this.layoutCanvas());
+        this.ro.observe(stage);
         this.applyRatio();
+    }
+
+    /* 画布 CSS 布局：把（可能是物理高分辨率）缓冲区等比缩放到容器内显示。
+     * 关键：桌面显示缩放≠1 时 devicePixelRatio>1，视频缓冲分辨率远大于
+     * 容器 CSS 像素，若不显式设置 CSS 尺寸会溢出窗口。 */
+    private layoutCanvas(): void {
+        const st = this.stage;
+        const cv = this.canvas;
+        if (!st || !cv) return;
+        const sw = st.clientWidth || 1;
+        const sh = st.clientHeight || 1;
+        const vw = this.cfgW || 1;
+        const vh = this.cfgH || 1;
+        let w: number;
+        let h: number;
+        let l = 0;
+        let t = 0;
+        const ratio = this.opt.host.ratio;
+        if (ratio === 'stretch') {
+            w = sw;
+            h = sh;
+        } else if (ratio === 'pixel') {
+            /* 点对点：1 视频像素 = 1 CSS 像素 */
+            w = vw;
+            h = vh;
+        } else {
+            /* fit：等比 contain 居中，四周留黑边 */
+            const s = Math.min(sw / vw, sh / vh);
+            w = Math.round(vw * s);
+            h = Math.round(vh * s);
+            l = Math.round((sw - w) / 2);
+            t = Math.round((sh - h) / 2);
+        }
+        cv.style.left = `${l}px`;
+        cv.style.top = `${t}px`;
+        cv.style.width = `${w}px`;
+        cv.style.height = `${h}px`;
     }
 
     /* 显示比例：fit 等比居中 / stretch 拉伸 / pixel 点对点（CSS 控制） */
     private applyRatio(): void {
         this.stage.dataset.ratio = this.opt.host.ratio;
+        this.layoutCanvas();
     }
 
     setRatio(mode: HostConfig['ratio']): void {
@@ -227,6 +253,7 @@ export class Session {
         this.renderer?.destroy();
         this.canvas.width = w;
         this.canvas.height = h;
+        this.layoutCanvas();
 
         try {
             this.ws = new WebSocket(target.wsUrl);
@@ -283,15 +310,16 @@ export class Session {
         this.releaseClipTimer();
     }
 
-    /* 注销：销毁远程会话后断开 */
-    async logout(): Promise<void> {
+    /* 注销：销毁远程会话后断开。返回 true 表示已发起注销/断开，调用方应关闭标签 */
+    async logout(): Promise<boolean> {
         const ok = await showConfirm(
             '注销退出',
             '注销将销毁远程桌面会话并退出登录。\n\n确定注销吗？',
         );
-        if (!ok || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            if (ok) this.disconnect();
-            return;
+        if (!ok) return false;
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            this.disconnect();
+            return true;
         }
         this.send(msgLogout());
         /* 兜底：服务端应在注销后关闭连接 */
@@ -300,11 +328,14 @@ export class Session {
                 try { this.ws.close(); } catch { /* 忽略 */ }
             }
         }, 1500);
+        return true;
     }
 
     destroy(): void {
         this.destroyed = true;
         window.clearInterval(this.hudTimer);
+        this.ro?.disconnect();
+        this.ro = null;
         this.releaseClipTimer();
         this.relay?.setActive(false);
         this.relay?.releaseAll();

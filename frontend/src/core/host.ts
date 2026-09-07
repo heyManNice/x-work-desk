@@ -37,8 +37,8 @@ export function defaultHost(): HostConfig {
         quality: 23,
         audio: true,
         clipboard: true,
-        anim: false,
-        staticSkip: false,
+        anim: true,
+        staticSkip: true,
         debug: false,
     };
 }

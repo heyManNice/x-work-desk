@@ -125,7 +125,7 @@ export async function startBrowserDownload(
         let done = 0;
         let lastT = performance.now();
         let lastD = 0;
-        for (;;) {
+        for (; ;) {
             const { done: d, value } = await reader.read();
             if (d) break;
             chunks.push(value);

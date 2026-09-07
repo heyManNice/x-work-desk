@@ -48,6 +48,7 @@
         "electron@44.2.0": true
     },
     "dependencies": {
+        "lucide-solid": "^1.42.0",
         "solid-js": "^1.9.15"
     }
 }

@@ -11,6 +11,10 @@ import {
     onMount, onCleanup, type Accessor,
 } from 'solid-js';
 import {
+    Monitor, Plus, Play, Pencil, Trash2, Minus, Copy, Square, X,
+    Sun, Moon, LogOut, Unplug,
+} from 'lucide-solid';
+import {
     isMac, winMinimize, winToggleMaximize, winClose,
     winIsMaximized, onWinMaximizeChange, platform,
 } from './platform';
@@ -196,14 +200,23 @@ createEffect(() => {
     sessionMap.forEach((s, tid) => s.setActive(tid === id));
 });
 
-/* ---------------- 图标 ---------------- */
+/* 断开：断开连接并清除当前标签 */
+function disconnectActive(): void {
+    const id = activeId();
+    if (id == null) return;
+    sessionMap.get(id)?.disconnect();
+    closeTab(id);
+}
 
-const IconPlay = () => (<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>);
-const IconEdit = () => (<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" /></svg>);
-const IconTrash = () => (<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6M10 11v6M14 11v6" /></svg>);
-const IconPlus = () => (<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>);
-const IconClose = () => (<svg viewBox="0 0 12 12" width="11" height="11"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" /></svg>);
-const IconDesktop = () => (<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2.5" /><path d="M8 21h8M12 17v4" /></svg>);
+/* 注销：销毁远程会话后清除当前标签 */
+async function logoutActive(): Promise<void> {
+    const id = activeId();
+    if (id == null) return;
+    const s = sessionMap.get(id);
+    if (!s) { closeTab(id); return; }
+    const did = await s.logout();
+    if (did) closeTab(id);
+}
 
 /* ---------------- 组件：标题栏 ---------------- */
 
@@ -230,25 +243,25 @@ function TitleBar() {
                     <button class="macdot macdot-min" onClick={() => winMinimize()} title="最小化" />
                     <button class="macdot macdot-max" onClick={() => winToggleMaximize()} title="最大化" />
                 </div>
-                <div class="tb-logo"><IconDesktop /></div>
+                <div class="tb-logo"><Monitor size={17} /></div>
                 <span class="tb-appname">XWorkDesk</span>
             </div>
             <div class="tb-group tb-center"><span class="tb-current">{cur()}</span></div>
             <div class="tb-group tb-right">
                 <button class="tb-btn" onClick={() => setTheme(theme() === 'dark' ? 'light' : 'dark')} title="切换深色/浅色">
-                    <svg class="ico-sun" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.5" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
-                    <svg class="ico-moon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
+                    <Sun class="ico-sun" size={15} />
+                    <Moon class="ico-moon" size={15} />
                 </button>
                 <div class="tb-winbtns">
                     <button class="tb-ctl" onClick={() => onCtl('min')} title="最小化">
-                        <svg viewBox="0 0 12 12" width="11" height="11"><path d="M1 6h10" stroke="currentColor" stroke-width="1.1" /></svg>
+                        <Minus size={12} />
                     </button>
                     <button class="tb-ctl tb-max-btn" classList={{ 'is-maxed': maxed() }} onClick={() => onCtl('max')} title={maxed() ? '还原' : '最大化'}>
-                        <svg class="ico-restore" viewBox="0 0 12 12" width="11" height="11"><path d="M4 2.5h5.5V8M2.5 4h5.5v5.5" fill="none" stroke="currentColor" stroke-width="1.1" /></svg>
-                        <svg class="ico-max" viewBox="0 0 12 12" width="11" height="11"><rect x="2" y="2" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1.1" /></svg>
+                        <Copy class="ico-restore" size={12} />
+                        <Square class="ico-max" size={11} />
                     </button>
                     <button class="tb-ctl tb-close" onClick={() => onCtl('close')} title="关闭">
-                        <IconClose />
+                        <X size={12} />
                     </button>
                 </div>
             </div>
@@ -267,7 +280,7 @@ function Sidebar() {
         <aside class="sidebar">
             <div class="sidebar-head">
                 <span class="sidebar-title">连接</span>
-                <button class="icon-btn" onClick={openEditorForNew} title="新建主机"><IconPlus /></button>
+                <button class="icon-btn" onClick={openEditorForNew} title="新建主机"><Plus size={16} /></button>
             </div>
             <ul class="host-list">
                 <For each={hosts()}>
@@ -283,9 +296,9 @@ function Sidebar() {
                                 <div class="host-addr">{hostDisplay(h)}</div>
                             </div>
                             <div class="host-ops">
-                                <button class="host-op" title="连接" onClick={(e) => { e.stopPropagation(); void connectHost(h); }}><IconPlay /></button>
-                                <button class="host-op" title="编辑" onClick={(e) => { e.stopPropagation(); openEditorEdit(h); }}><IconEdit /></button>
-                                <button class="host-op del" title="删除" onClick={(e) => { e.stopPropagation(); deleteHostById(h.id); }}><IconTrash /></button>
+                                <button class="host-op" title="连接" onClick={(e) => { e.stopPropagation(); void connectHost(h); }}><Play size={13} /></button>
+                                <button class="host-op" title="编辑" onClick={(e) => { e.stopPropagation(); openEditorEdit(h); }}><Pencil size={13} /></button>
+                                <button class="host-op del" title="删除" onClick={(e) => { e.stopPropagation(); deleteHostById(h.id); }}><Trash2 size={13} /></button>
                             </div>
                         </li>
                     )}
@@ -324,12 +337,23 @@ function TabBar() {
                                 onClick={(e) => { e.stopPropagation(); closeTab(t.id); }}
                                 title="关闭标签"
                             >
-                                <IconClose />
+                                <X size={12} />
                             </button>
                         </div>
                     )}
                 </For>
             </div>
+            {/* 断开 / 注销：作用于当前激活标签，位于标签栏最右 */}
+            <Show when={activeId() != null}>
+                <div class="tabbar-actions">
+                    <button class="tab-btn" onClick={disconnectActive} title="断开连接并关闭此标签">
+                        <Unplug size={13} /> 断开
+                    </button>
+                    <button class="tab-btn danger" onClick={() => void logoutActive()} title="注销远程会话并关闭此标签">
+                        <LogOut size={13} /> 注销
+                    </button>
+                </div>
+            </Show>
         </div>
     );
 }
@@ -371,15 +395,16 @@ function SessionPane(props: { id: number }) {
 function Workspace() {
     return (
         <section class="main">
-            <TabBar />
+            {/* 无标签时隐藏标签栏 */}
+            <Show when={tabs().length > 0}>
+                <TabBar />
+            </Show>
             <div class="workspace">
                 <Show when={tabs().length === 0} fallback={<For each={tabs()}>{(t) => <SessionPane id={t.id} />}</For>}>
                     <div class="empty">
-                        <div class="empty-logo">
-                            <svg viewBox="0 0 24 24" width="62" height="62" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2.5" /><path d="M8 22h8M12 18v4" /></svg>
-                        </div>
+                        <div class="empty-logo"><Monitor size={56} /></div>
                         <p class="empty-hint">从左侧选择一个主机开始连接，或新建一个</p>
-                        <button class="btn primary" onClick={openEditorForNew}>＋ 新建主机</button>
+                        <button class="btn primary" onClick={openEditorForNew}><Plus size={15} /> 新建主机</button>
                     </div>
                 </Show>
             </div>
@@ -466,7 +491,7 @@ function HostEditor() {
                     <div class="modal-panel" onClick={(e) => e.stopPropagation()}>
                         <div class="mp-head">
                             <span class="mp-title">{isNew() ? '新建主机' : '编辑主机'}</span>
-                            <button class="mp-x" onClick={() => setEditor({ open: false, editing: null })}><IconClose /></button>
+                            <button class="mp-x" onClick={() => setEditor({ open: false, editing: null })}><X size={13} /></button>
                         </div>
                         <div class="mp-body">
                             <div class="he-grid he-grid-basic">
