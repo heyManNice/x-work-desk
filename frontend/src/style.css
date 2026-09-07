@@ -2164,3 +2164,48 @@ canvas {
     flex-direction: column;
     gap: 3px;
 }
+
+/* CPU / 内存 面板补充 */
+.sys-plot.big {
+    height: 92px;
+}
+
+.sys-cap {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 26px;
+    font-weight: 600;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+}
+
+.sys-cap small {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-faint);
+}
+
+.sys-subline {
+    font-size: 11px;
+    color: var(--text-faint);
+    word-break: break-all;
+    line-height: 1.5;
+}
+
+.sys-kv {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+    line-height: 1.9;
+    color: var(--text-dim);
+}
+
+.sys-kv b {
+    color: var(--text);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}

@@ -33,7 +33,7 @@ import { Session, type SessionState, type SessionStatus } from './core/session';
 import { TerminalSession } from './core/termSession';
 import { FileButton, FilePanelHost, fmSessionEnded, type FmCtx } from './core/filemgr';
 import { activePopup } from './core/popups';
-import { SysButton, SysPanelHost } from './core/system';
+import { SysCpuButton, SysMemButton, SysCpuPanelHost, SysMemPanelHost } from './core/system';
 import {
     NBell, NotifyPanelHost,
     startTask, patchTask, finishTask,
@@ -676,7 +676,8 @@ function TabBar() {
 function TextActions(props: { type: ConnKind; fm: FmCtx | null }) {
     return (
         <>
-            <Show when={props.fm}>{(c) => <SysButton ctx={c()} />}</Show>
+            <Show when={props.fm}>{(c) => <SysCpuButton ctx={c()} />}</Show>
+            <Show when={props.fm}>{(c) => <SysMemButton ctx={c()} />}</Show>
             <Show when={props.fm}>{(c) => <FileButton ctx={c()} label="文件" />}</Show>
             <Show when={props.type === 'desktop'}>
                 <button class="tab-btn" onClick={toggleFullscreen} title={fsActive() ? '退出全屏' : '全屏显示'}>
@@ -1063,7 +1064,8 @@ export default function App() {
             <HostContextMenu />
             <NotifyPanelHost />
             <FilePanelHost />
-            <SysPanelHost />
+            <SysCpuPanelHost />
+            <SysMemPanelHost />
         </div>
     );
 }

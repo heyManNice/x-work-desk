@@ -1,27 +1,32 @@
-/* core/system.tsx —— 远端系统资源监控（CPU / 内存 / Top 进程 / 磁盘）。
+/* core/system.tsx —— 远端系统资源监控（CPU 与内存 两个独立按钮/面板）。
  *
- * 数据来源：经 SSH（ssh2 主进程长连接）每 5s 采集一次远端 /proc、ps、df，
- * 顶部按钮实时显示「CPU% 内存used/内存total」（>900MB 用 GB）；点击展开详情面板：
- * CPU 占用折线图、内存占用、内存占用最大的几个软件、磁盘挂载与占用。
+ * 数据来源：经 SSH（ssh2 主进程长连接）每 5s 采集一次远端 /proc、ps、df。
+ *   - CPU 按钮：显示占用率%，点击展开 CPU 面板（占用曲线图、核数/型号、CPU 占用 Top）
+ *   - 内存按钮：显示 已用/总量（>900MB 用 GB），点击展开内存面板
+ *     （内存条、可用/缓存/Swap 明细、内存占用 Top 软件、磁盘挂载与占用）
  *
- * 采集以「标签」为单位、模块级单例引用计数：同一标签的顶栏/全屏悬浮条共用一条
- * SSH 监控连接，标签结束/最后一个订阅方卸载时才关闭。
+ * 采集以「标签」为单位、模块级单例引用计数：同一标签的顶栏/全屏悬浮条与两个按钮
+ * 共用一条 SSH 监控连接，标签结束/最后一个订阅方卸载时才关闭。
  */
 
 import { createSignal, Show, For, onMount, onCleanup } from 'solid-js';
-import { Cpu, X, HardDrive } from 'lucide-solid';
+import { Cpu, MemoryStick, HardDrive, X } from 'lucide-solid';
 import { sysOpen, sysSample, sysClose } from '../platform';
 import { isPopup, togglePopup, closePopup } from './popups';
 import type { FmCtx } from './filemgr';
 
-/* ---------------- 面板数据状态 ---------------- */
+/* ---------------- 面板数据状态（模块级共享） ---------------- */
 
-const [pos, setPos] = createSignal({ x: 0, y: 0 });
+const [cpuPos, setCpuPos] = createSignal({ x: 0, y: 0 });
+const [memPos, setMemPos] = createSignal({ x: 0, y: 0 });
 const [cpu, setCpu] = createSignal(0);
-const [mem, setMem] = createSignal({ total: 0, avail: 0 });   /* kB */
+const [cores, setCores] = createSignal(0);
+const [model, setModel] = createSignal('');
+const [cpuProcs, setCpuProcs] = createSignal<Array<{ name: string; cpuPct: number }>>([]);
+const [mem, setMem] = createSignal({ total: 0, avail: 0, buffers: 0, cached: 0, swapTotal: 0, swapFree: 0 }); /* kB */
 const [procs, setProcs] = createSignal<Array<{ name: string; rss: number }>>([]);
 const [disks, setDisks] = createSignal<Array<{ mount: string; totalKB: number; usedKB: number; availKB: number; pct: number }>>([]);
-const [hist, setHist] = createSignal<number[]>([]);           /* 最近 CPU 采样（折线图） */
+const [hist, setHist] = createSignal<number[]>([]);           /* 最近 CPU 采样（曲线） */
 const [ready, setReady] = createSignal(false);
 const [failed, setFailed] = createSignal(false);
 
@@ -49,6 +54,9 @@ async function sampleOnce(key: string): Promise<void> {
         if (monKey !== key) return;
         if (!r.ok) { setFailed(true); return; }
         setCpu(r.cpu);
+        setCores(r.cores || 0);
+        setModel(r.model || '');
+        setCpuProcs(r.cpuProcs || []);
         setMem(r.mem);
         setProcs(r.procs || []);
         setDisks(r.disks || []);
@@ -88,52 +96,51 @@ export function sysDetach(): void {
 
 /* ---------------- 工具 ---------------- */
 
-/* 使用内存超过 900MB → GB 单位（used 与 total 统一用同单位展示） */
-function fmtPair(usedKb: number, totalKb: number): string {
-    const gb = usedKb >= 900 * 1024;
-    const one = (kb: number) => {
-        if (!gb) return `${Math.round(kb / 1024)}M`;
+/* 单值容量显示：数值 >=900MB 用 GB */
+function cap(kb: number): string {
+    if (kb >= 900 * 1024) {
         const g = kb / 1024 / 1024;
         return `${g >= 100 ? g.toFixed(0) : g.toFixed(1)}G`;
-    };
-    return `${one(usedKb)}/${one(totalKb)}`;
+    }
+    return `${Math.round(kb / 1024)}M`;
 }
 
 function usedKB(): number {
     return Math.max(0, mem().total - mem().avail);
 }
 
+function live(): boolean {
+    return ready() && !failed();
+}
+
 const fmtGB = (kb: number) => `${((kb / 1024 / 1024) >= 10 ? (kb / 1024 / 1024).toFixed(0) : (kb / 1024 / 1024).toFixed(1))}G`;
 
-/* ---------------- 顶部按钮（有文字，工具栏最左） ---------------- */
+/* ---------------- 顶部按钮：CPU / 内存（各自独立展开） ---------------- */
 
-export function SysButton(props: { ctx: FmCtx }) {
+export function SysCpuButton(props: { ctx: FmCtx }) {
     let btn: HTMLButtonElement | undefined;
     onMount(() => sysAttach(props.ctx));
     onCleanup(() => sysDetach());
-
     const toggle = () => {
         if (btn) {
             const r = btn.getBoundingClientRect();
-            setPos({ x: Math.max(120, r.left + r.width / 2), y: r.bottom + 8 });
+            setCpuPos({ x: Math.max(120, r.left + r.width / 2), y: r.bottom + 8 });
         }
-        togglePopup('sys');
+        togglePopup('syscpu');
     };
-
     const label = () => {
-        if (failed()) return '资源不可用';
-        if (!ready()) return '读取中…';
-        return `${Math.round(cpu())}% ${fmtPair(usedKB(), mem().total)}`;
+        if (failed()) return '—';
+        if (!ready()) return '…';
+        return `${Math.round(cpu())}%`;
     };
-
     return (
         <button
             ref={btn}
-            data-popup-trigger="sys"
+            data-popup-trigger="syscpu"
             class="tab-btn sys-btn"
-            classList={{ active: isPopup('sys') }}
+            classList={{ active: isPopup('syscpu') }}
             onClick={toggle}
-            title="系统资源（点击展开：CPU/内存/进程/磁盘）"
+            title={`CPU 占用率：${label()}（点击展开详情）`}
         >
             <Cpu size={13} />
             <span>{label()}</span>
@@ -141,33 +148,60 @@ export function SysButton(props: { ctx: FmCtx }) {
     );
 }
 
-/* ---------------- 详情面板 ---------------- */
+export function SysMemButton(props: { ctx: FmCtx }) {
+    let btn: HTMLButtonElement | undefined;
+    onMount(() => sysAttach(props.ctx));
+    onCleanup(() => sysDetach());
+    const toggle = () => {
+        if (btn) {
+            const r = btn.getBoundingClientRect();
+            setMemPos({ x: Math.max(120, r.left + r.width / 2), y: r.bottom + 8 });
+        }
+        togglePopup('sysmem');
+    };
+    const label = () => {
+        if (failed()) return '—';
+        if (!ready()) return '…';
+        return `${cap(usedKB())} / ${cap(mem().total)}`;
+    };
+    return (
+        <button
+            ref={btn}
+            data-popup-trigger="sysmem"
+            class="tab-btn sys-btn"
+            classList={{ active: isPopup('sysmem') }}
+            onClick={toggle}
+            title={`内存：${label()}（点击展开详情）`}
+        >
+            <MemoryStick size={13} />
+            <span>{label()}</span>
+        </button>
+    );
+}
 
-export function SysPanelHost() {
+/* ---------------- 详情面板：CPU / 内存 ---------------- */
+
+export function SysCpuPanelHost() {
     const pts = () => {
         const h = hist();
         const n = h.length;
         if (n < 2) return '';
         return h.map((v, i) => {
-            const x = (i / (n - 1)) * 280;
-            const y = 66 - Math.min(100, Math.max(0, v)) * 0.62;
+            const x = (i / (n - 1)) * 340;
+            const y = 92 - Math.min(100, Math.max(0, v)) * 0.86;
             return `${x.toFixed(1)},${y.toFixed(1)}`;
         }).join(' ');
     };
-    const memPct = () => {
-        const t = mem().total;
-        return t > 0 ? Math.min(100, Math.round((usedKB() / t) * 100)) : 0;
-    };
     return (
-        <Show when={isPopup('sys')}>
+        <Show when={isPopup('syscpu')}>
             <div
                 class="sys-panel popup-panel"
-                style={{ left: `${pos().x}px`, top: `${pos().y}px` }}
+                style={{ left: `${cpuPos().x}px`, top: `${cpuPos().y}px` }}
             >
                 <div class="sys-head">
-                    <span class="sys-title"><Cpu size={13} /> 系统资源</span>
+                    <span class="sys-title"><Cpu size={13} /> CPU</span>
                     <span class="sys-upd">每 5 秒刷新</span>
-                    <button class="sys-x" onClick={() => closePopup('sys')} title="关闭"><X size={13} /></button>
+                    <button class="sys-x" onClick={() => closePopup('syscpu')} title="关闭"><X size={13} /></button>
                 </div>
                 <div class="sys-body">
                     <Show when={!ready() && !failed()}>
@@ -176,45 +210,95 @@ export function SysPanelHost() {
                     <Show when={failed()}>
                         <div class="sys-empty">无法通过 SSH 读取系统资源</div>
                     </Show>
-                    <Show when={ready()}>
-                        {/* CPU 折线图 */}
+                    <Show when={live()}>
                         <div class="sys-sec">
-                            <div class="sys-label"><span>CPU 占用</span><b>{Math.round(cpu())}%</b></div>
-                            <svg class="sys-plot" viewBox="0 0 280 70" preserveAspectRatio="none">
-                                <line x1="0" y1="6" x2="280" y2="6" class="sys-grid" />
-                                <line x1="0" y1="29" x2="280" y2="29" class="sys-grid" />
-                                <line x1="0" y1="52" x2="280" y2="52" class="sys-grid" />
+                            <div class="sys-cap">{Math.round(cpu())}%<small>使用率</small></div>
+                            <Show when={cores() || model()}>
+                                <div class="sys-subline">{cores() ? `${cores()} 核` : ''}{model() ? ` · ${model()}` : ''}</div>
+                            </Show>
+                        </div>
+                        <div class="sys-sec">
+                            <div class="sys-label"><span>占用曲线</span><b>{Math.round(cpu())}%</b></div>
+                            <svg class="sys-plot big" viewBox="0 0 340 100" preserveAspectRatio="none">
+                                <line x1="0" y1="8" x2="340" y2="8" class="sys-grid" />
+                                <line x1="0" y1="34" x2="340" y2="34" class="sys-grid" />
+                                <line x1="0" y1="60" x2="340" y2="60" class="sys-grid" />
+                                <line x1="0" y1="86" x2="340" y2="86" class="sys-grid" />
                                 <polyline points={pts()} class="sys-line" />
                             </svg>
                         </div>
-
-                        {/* 内存 */}
                         <div class="sys-sec">
-                            <div class="sys-label">
-                                <span>内存 {fmtPair(usedKB(), mem().total)}</span>
-                                <b>{memPct()}%</b>
-                            </div>
-                            <div class="sys-bar"><div class="sys-bar-fill mem" style={{ width: `${memPct()}%` }} /></div>
-                            <div class="sys-sub">可用 {fmtPair(mem().avail, mem().total)}</div>
+                            <div class="sys-label"><span>CPU 占用 Top</span></div>
+                            <For each={cpuProcs().slice(0, 6)}>
+                                {(p) => (
+                                    <div class="sys-row">
+                                        <span class="sys-row-name" title={p.name}>{p.name}</span>
+                                        <span class="sys-row-val">{p.cpuPct.toFixed(1)}%</span>
+                                    </div>
+                                )}
+                            </For>
                         </div>
+                    </Show>
+                </div>
+            </div>
+        </Show>
+    );
+}
 
-                        {/* Top 进程 */}
+export function SysMemPanelHost() {
+    const memPct = () => {
+        const t = mem().total;
+        return t > 0 ? Math.min(100, Math.round((usedKB() / t) * 100)) : 0;
+    };
+    const swapUsed = () => Math.max(0, mem().swapTotal - mem().swapFree);
+    const swapPct = () => {
+        const t = mem().swapTotal;
+        return t > 0 ? Math.min(100, Math.round((swapUsed() / t) * 100)) : 0;
+    };
+    return (
+        <Show when={isPopup('sysmem')}>
+            <div
+                class="sys-panel popup-panel"
+                style={{ left: `${memPos().x}px`, top: `${memPos().y}px` }}
+            >
+                <div class="sys-head">
+                    <span class="sys-title"><MemoryStick size={13} /> 内存</span>
+                    <span class="sys-upd">每 5 秒刷新</span>
+                    <button class="sys-x" onClick={() => closePopup('sysmem')} title="关闭"><X size={13} /></button>
+                </div>
+                <div class="sys-body">
+                    <Show when={!ready() && !failed()}>
+                        <div class="sys-empty">正在读取远端系统资源…</div>
+                    </Show>
+                    <Show when={failed()}>
+                        <div class="sys-empty">无法通过 SSH 读取系统资源</div>
+                    </Show>
+                    <Show when={live()}>
+                        <div class="sys-sec">
+                            <div class="sys-cap">{cap(usedKB())}<small> / {cap(mem().total)}</small></div>
+                            <div class="sys-bar"><div class="sys-bar-fill mem" style={{ width: `${memPct()}%` }} /></div>
+                            <div class="sys-label"><span>内存使用</span><b>{memPct()}%</b></div>
+                        </div>
+                        <div class="sys-sec">
+                            <div class="sys-label"><span>明细</span></div>
+                            <div class="sys-kv"><span>可用</span><b>{cap(mem().avail)}</b></div>
+                            <div class="sys-kv"><span>缓存</span><b>{cap((mem().buffers || 0) + (mem().cached || 0))}</b></div>
+                            <div class="sys-kv"><span>交换分区</span><b>{mem().swapTotal > 0 ? `${cap(swapUsed())} / ${cap(mem().swapTotal)}` : '未启用'}</b></div>
+                            <Show when={mem().swapTotal > 0}>
+                                <div class="sys-bar thin"><div class="sys-bar-fill disk" style={{ width: `${swapPct()}%` }} /></div>
+                            </Show>
+                        </div>
                         <div class="sys-sec">
                             <div class="sys-label"><span>内存占用 Top</span></div>
                             <For each={procs().slice(0, 6)}>
                                 {(p) => (
                                     <div class="sys-row">
                                         <span class="sys-row-name" title={p.name}>{p.name}</span>
-                                        <span class="sys-row-val">
-                                            {Math.round(p.rss / 1024)}M
-                                            <em>{mem().total > 0 ? ((p.rss / mem().total) * 100).toFixed(1) : '0'}%</em>
-                                        </span>
+                                        <span class="sys-row-val">{Math.round(p.rss / 1024)}M<em>{mem().total > 0 ? ((p.rss / mem().total) * 100).toFixed(1) : '0'}%</em></span>
                                     </div>
                                 )}
                             </For>
                         </div>
-
-                        {/* 磁盘 */}
                         <div class="sys-sec">
                             <div class="sys-label"><span><HardDrive size={11} /> 磁盘</span></div>
                             <For each={disks()}>

@@ -225,8 +225,15 @@ export interface SysSample {
     ok: boolean;
     msg?: string;
     cpu: number;                    /* 使用率 % */
-    mem: { total: number; avail: number };   /* kB */
-    procs: Array<{ name: string; rss: number }>;  /* rss: kB */
+    cores: number;                  /* 逻辑核数 */
+    model: string;                  /* CPU 型号 */
+    cpuProcs: Array<{ name: string; cpuPct: number }>;   /* CPU 占用 Top */
+    mem: {
+        total: number; avail: number;   /* kB */
+        buffers: number; cached: number;
+        swapTotal: number; swapFree: number;
+    };
+    procs: Array<{ name: string; rss: number }>;  /* rss: kB，内存占用 Top */
     disks: Array<{ mount: string; totalKB: number; usedKB: number; availKB: number; pct: number }>;
 }
 
@@ -238,7 +245,11 @@ export async function sysOpen(opt: { id: string; host: string; port: number; use
 
 export async function sysSample(id: string): Promise<SysSample> {
     const b = bridge()?.sys;
-    if (!b) return { ok: false, cpu: 0, mem: { total: 0, avail: 0 }, procs: [], disks: [] };
+    if (!b) return {
+        ok: false, cpu: 0, cores: 0, model: '', cpuProcs: [],
+        mem: { total: 0, avail: 0, buffers: 0, cached: 0, swapTotal: 0, swapFree: 0 },
+        procs: [], disks: [],
+    };
     return b.sample(id);
 }
 
