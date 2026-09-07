@@ -20,7 +20,7 @@ import { VideoRenderer } from '../decoder';
 import { InputRelay } from '../input';
 import { AudioPlayer } from '../audio';
 import type { ServerTarget } from '../server';
-import type { HostConfig } from './host';
+import { scaleFactor, type HostConfig } from './host';
 import {
     clipWriteText, clipPoll,
     downloadRemoteFiles, uploadLocalFiles,
@@ -254,6 +254,8 @@ export class Session {
             w = vw;
             h = vh;
         }
+        /* 分辨率倍率换算：真实分辨率 = 基础分辨率 × host.scale */
+        [w, h] = this.scaled(w, h);
         this.cfgW = w;
         this.cfgH = h;
         this.renderer?.destroy();
@@ -375,10 +377,24 @@ export class Session {
         if (!this.active) return;
         const res = this.opt.host.res;
         if (res && res !== 'auto') return;
-        const [w, h] = this.viewportSize();
+        const [w, h] = this.scaled(...this.viewportSize());
         if (w !== this.cfgW || h !== this.cfgH) {
             this.send(msgResize(w, h));
         }
+    }
+
+    /* 分辨率倍率换算：真实分辨率 = 基础分辨率 × host.scale；偶数化并限幅到 4096 */
+    private scaled(w: number, h: number): [number, number] {
+        const f = scaleFactor(this.opt.host.scale);
+        if (f === 1) return [w, h];
+        const even = (v: number) => {
+            const x = Math.round(v);
+            return x % 2 ? x + 1 : x;
+        };
+        return [
+            Math.min(4096, even(w * f)),
+            Math.min(4096, even(h * f)),
+        ];
     }
 
     private viewportSize(): [number, number] {

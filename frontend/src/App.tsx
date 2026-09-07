@@ -817,6 +817,8 @@ const RES_OPTIONS = [
     ['auto', '自动（跟随窗口）'], ['3840x2160', '4K 3840×2160'], ['2560x1440', '2K 2560×1440'],
     ['1920x1080', '1080P 1920×1080'], ['1280x720', '720P 1280×720'],
 ] as const;
+/* 分辨率倍率：真实分辨率 = 所选基础分辨率 × 该倍率（如 1920×1080 × 1/2 → 960×540） */
+const SCALE_OPTIONS: string[] = ['1/4', '1/3', '1/2', '2/3', '1', '4/3', '3/2', '2'];
 const RATIO_OPTIONS: Array<[RatioMode, string]> = [
     ['fit', '适应（等比居中）'], ['stretch', '拉伸填充'], ['pixel', '点对点'],
 ];
@@ -837,6 +839,7 @@ function HostEditor() {
     let rUser!: HTMLInputElement;
     let rPass!: HTMLInputElement;
     let rRes!: HTMLSelectElement;
+    let rScale!: HTMLSelectElement;
     let rRatio!: HTMLSelectElement;
     let rBitrate!: HTMLSelectElement;
     let rFps!: HTMLSelectElement;
@@ -867,6 +870,7 @@ function HostEditor() {
             user: rUser.value.trim(),
             pass: rPass.value.trim(),
             res: rRes.value,
+            scale: rScale.value || '1',
             ratio: rRatio.value as RatioMode,
             bitrate: num(rBitrate.value, 0),
             fps: num(rFps.value, 30),
@@ -920,6 +924,11 @@ function HostEditor() {
                                     <label class="field"><span>分辨率</span>
                                         <select ref={rRes} value={h().res}>
                                             {RES_OPTIONS.map(([v, t]) => <option value={v}>{t}</option>)}
+                                        </select>
+                                    </label>
+                                    <label class="field"><span>分辨率倍率</span>
+                                        <select ref={rScale} value={h().scale || '1'}>
+                                            {SCALE_OPTIONS.map((v) => <option value={v}>{v}</option>)}
                                         </select>
                                     </label>
                                     <label class="field"><span>画面比例</span>

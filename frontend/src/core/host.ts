@@ -10,6 +10,7 @@ export interface HostConfig {
     pass?: string;         /* 可选保存；留空则连接时询问 */
     /* 连接配置 */
     res: string;           /* 'auto' 或 '1920x1080' 等 */
+    scale: string;         /* 分辨率倍率 '1/4'..'2'：真实分辨率 = 基础分辨率 × 倍率 */
     ratio: RatioMode;
     bitrate: number;       /* kbps，0 = 自动 */
     fps: number;
@@ -31,6 +32,7 @@ export function defaultHost(): HostConfig {
         user: '',
         pass: '',
         res: 'auto',
+        scale: '1',
         ratio: 'fit',
         bitrate: 0,
         fps: 30,
@@ -83,4 +85,13 @@ export function removeHost(list: HostConfig[], id: string): HostConfig[] {
 /* 从 host 串生成展示用地址文本 */
 export function hostDisplay(h: HostConfig): string {
     return h.user ? `${h.user}@${h.host || '?'}` : (h.host || '未命名');
+}
+
+/* 分辨率倍率字符串 → 数值：'1/4'→0.25、'3/2'→1.5、'2'→2；非法/空 → 1 */
+export function scaleFactor(s: string | undefined): number {
+    const m = /^(\d+)(?:\s*\/\s*(\d+))?$/.exec((s || '1').trim());
+    if (!m) return 1;
+    const a = Number(m[1]);
+    const b = m[2] ? Number(m[2]) : 1;
+    return b === 0 ? 1 : a / b;
 }
