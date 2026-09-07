@@ -290,52 +290,38 @@ async function logoutActive(): Promise<void> {
 
 /* ---------------- 组件：标题栏 ---------------- */
 
-function TitleBar() {
+/* 顶部工具：主题 + 窗口控制（并入右侧顶栏，与标签/操作同一行） */
+function TopTools() {
     const [maxed, setMaxed] = createSignal(false);
     onMount(() => {
         void winIsMaximized().then(setMaxed);
         return onWinMaximizeChange((m) => setMaxed(m));
     });
-    const cur = () => {
-        const t = tabs().find((x) => x.id === activeId());
-        return t ? t.sub : '';
-    };
     const onCtl = (act: string) => {
         if (act === 'min') winMinimize();
         else if (act === 'max') winToggleMaximize();
         else if (act === 'close') winClose();
     };
     return (
-        <header class="titlebar">
-            <div class="tb-group tb-left">
-                <div class="tb-macdots">
-                    <button class="macdot macdot-close" onClick={() => winClose()} title="关闭" />
-                    <button class="macdot macdot-min" onClick={() => winMinimize()} title="最小化" />
-                    <button class="macdot macdot-max" onClick={() => winToggleMaximize()} title="最大化" />
-                </div>
-                <div class="tb-logo"><Monitor size={17} /></div>
-                <span class="tb-appname">XWorkDesk</span>
-            </div>
-            <div class="tb-group tb-center"><span class="tb-current">{cur()}</span></div>
-            <div class="tb-group tb-right">
-                <button class="tb-btn" onClick={() => setTheme(theme() === 'dark' ? 'light' : 'dark')} title="切换深色/浅色">
-                    <Sun class="ico-sun" size={15} />
-                    <Moon class="ico-moon" size={15} />
+        <>
+            <button class="tb-btn" onClick={() => setTheme(theme() === 'dark' ? 'light' : 'dark')} title="切换深色/浅色">
+                <Sun class="ico-sun" size={15} />
+                <Moon class="ico-moon" size={15} />
+            </button>
+            <div class="tb-winbtns">
+                <button class="tb-ctl" onClick={() => onCtl('min')} title="最小化"><Minus size={12} /></button>
+                <button class="tb-ctl tb-max-btn" classList={{ 'is-maxed': maxed() }} onClick={() => onCtl('max')} title={maxed() ? '还原' : '最大化'}>
+                    <Copy class="ico-restore" size={12} />
+                    <Square class="ico-max" size={11} />
                 </button>
-                <div class="tb-winbtns">
-                    <button class="tb-ctl" onClick={() => onCtl('min')} title="最小化">
-                        <Minus size={12} />
-                    </button>
-                    <button class="tb-ctl tb-max-btn" classList={{ 'is-maxed': maxed() }} onClick={() => onCtl('max')} title={maxed() ? '还原' : '最大化'}>
-                        <Copy class="ico-restore" size={12} />
-                        <Square class="ico-max" size={11} />
-                    </button>
-                    <button class="tb-ctl tb-close" onClick={() => onCtl('close')} title="关闭">
-                        <X size={12} />
-                    </button>
-                </div>
+                <button class="tb-ctl tb-close" onClick={() => onCtl('close')} title="关闭"><X size={12} /></button>
             </div>
-        </header>
+            <div class="tb-macdots">
+                <button class="macdot macdot-close" onClick={() => winClose()} title="关闭" />
+                <button class="macdot macdot-min" onClick={() => winMinimize()} title="最小化" />
+                <button class="macdot macdot-max" onClick={() => winToggleMaximize()} title="最大化" />
+            </div>
+        </>
     );
 }
 
@@ -349,7 +335,7 @@ function Sidebar() {
     return (
         <aside class="sidebar">
             <div class="sidebar-head">
-                <span class="sidebar-title">连接</span>
+                <div class="sb-logo" title="XWorkDesk"><Monitor size={16} /><span class="sb-appname">XWorkDesk</span></div>
                 <button class="icon-btn" onClick={openEditorForNew} title="新建主机"><Plus size={16} /></button>
             </div>
             <ul class="host-list">
@@ -362,10 +348,7 @@ function Sidebar() {
                             onContextMenu={(e) => openHostMenu(e, h)}
                         >
                             <span class="host-dot" />
-                            <div class="host-meta">
-                                <div class="host-name">{h.name || hostDisplay(h)}</div>
-                                <div class="host-addr">{hostDisplay(h)}</div>
-                            </div>
+                            <div class="host-name" title={hostDisplay(h)}>{h.name || hostDisplay(h)}</div>
                             <div class="host-ops">
                                 <button class="host-op" title="连接" onClick={(e) => { e.stopPropagation(); void connectHost(h); }}><Play size={13} /></button>
                                 <button class="host-op" title="编辑" onClick={(e) => { e.stopPropagation(); openEditorEdit(h); }}><Pencil size={13} /></button>
@@ -381,7 +364,7 @@ function Sidebar() {
                 </Show>
             </ul>
             <div class="sidebar-foot">
-                <span>{hosts().length} 台主机 · 右键管理</span>
+                <span>共 {hosts().length} 台主机</span>
             </div>
         </aside>
     );
@@ -413,17 +396,20 @@ function TabBar() {
                     )}
                 </For>
             </div>
-            {/* 断开 / 注销：作用于当前激活标签，位于标签栏最右 */}
-            <Show when={activeId() != null}>
-                <div class="tabbar-actions">
-                    <button class="tab-btn" onClick={disconnectActive} title="断开连接并关闭此标签">
-                        <Unplug size={13} /> 断开
-                    </button>
-                    <button class="tab-btn danger" onClick={() => void logoutActive()} title="注销远程会话并关闭此标签">
-                        <LogOut size={13} /> 注销
-                    </button>
-                </div>
-            </Show>
+            {/* 右侧同排：断开/注销(激活时) + 主题 + 窗口控制 */}
+            <div class="topbar-right">
+                <Show when={activeId() != null}>
+                    <div class="tabbar-actions">
+                        <button class="tab-btn" onClick={disconnectActive} title="断开连接并关闭此标签">
+                            <Unplug size={13} /> 断开
+                        </button>
+                        <button class="tab-btn danger" onClick={() => void logoutActive()} title="注销远程会话并关闭此标签">
+                            <LogOut size={13} /> 注销
+                        </button>
+                    </div>
+                </Show>
+                <TopTools />
+            </div>
         </div>
     );
 }
@@ -465,10 +451,7 @@ function SessionPane(props: { id: number }) {
 function Workspace() {
     return (
         <section class="main">
-            {/* 无标签时隐藏标签栏 */}
-            <Show when={tabs().length > 0}>
-                <TabBar />
-            </Show>
+            <TabBar />
             <div class="workspace">
                 <Show when={tabs().length === 0} fallback={<For each={tabs()}>{(t) => <SessionPane id={t.id} />}</For>}>
                     <div class="empty">
@@ -690,7 +673,7 @@ function PasswordDialog() {
                         placeholder="输入密码"
                         autocomplete="off"
                         onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') resolvePassword(null); }}
-                        style={{ height: '32px', padding: '0 10px', 'border-radius': '8px', background: 'var(--bg-elev-2)', color: 'var(--text)', outline: 'none', 'font-size': '13px' }}
+                        style={{ height: '32px', padding: '0 10px', 'border-radius': '8px', background: 'var(--field-bg)', color: 'var(--text)', outline: 'none', 'font-size': '13px' }}
                     />
                 </div>
                 <div class="mp-foot">
@@ -708,7 +691,6 @@ function PasswordDialog() {
 export default function App() {
     return (
         <div class="app-shell">
-            <TitleBar />
             <div class="app-body">
                 <Sidebar />
                 <Workspace />

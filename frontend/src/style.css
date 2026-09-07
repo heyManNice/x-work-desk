@@ -15,6 +15,9 @@
     --sidebar-bg: #1b1c21;
     --border: #3a3d45;
     /* 极少用：仅特殊强调 */
+    /* 输入槽背景：与所在面板(--bg-elev-2)形成凹陷对比 */
+    --field-bg: #23262d;
+    --chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239aa0a6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     --text: #e8e9ea;
     --text-dim: #9aa0a6;
     --text-faint: #6b7075;
@@ -39,6 +42,9 @@ html[data-theme='light'] {
     --bg-elev-3: #e2e5ea;
     --sidebar-bg: #e7eaee;
     --border: #d8dce2;
+    /* 输入槽背景：比所在面板更暗形成凹陷 */
+    --field-bg: #e1e5ea;
+    --chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2357606a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     --text: #1f2328;
     --text-dim: #57606a;
     --text-faint: #8b949e;
@@ -208,8 +214,8 @@ html[data-theme='light'] .ico-moon {
 }
 
 .tb-ctl {
-    width: 40px;
-    height: var(--titlebar-h);
+    width: 34px;
+    height: 100%;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -298,15 +304,37 @@ html[data-platform='darwin'] .tb-winbtns {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 10px 8px 14px;
+    height: var(--tab-h);
+    flex: 0 0 var(--tab-h);
+    padding: 0 8px 0 12px;
+    -webkit-app-region: drag;
+    user-select: none;
 }
 
-.sidebar-title {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    color: var(--text-faint);
-    text-transform: uppercase;
+.sb-logo {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.sb-logo svg {
+    color: var(--accent);
+    flex: 0 0 auto;
+}
+
+.sb-appname {
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sidebar-head .icon-btn {
+    -webkit-app-region: no-drag;
 }
 
 .icon-btn {
@@ -338,19 +366,23 @@ html[data-platform='darwin'] .tb-winbtns {
 .host-item {
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 8px 9px;
+    gap: 8px;
+    padding: 6px 10px;
     border-radius: 8px;
     cursor: pointer;
-    position: relative;
+    background: var(--bg-elev);
 }
 
 .host-item:hover {
-    background: var(--hover);
+    background: var(--bg-elev-2);
 }
 
 .host-item.active {
-    background: var(--active);
+    background: rgba(76, 141, 255, 0.26);
+}
+
+html[data-theme='light'] .host-item.active {
+    background: rgba(31, 111, 235, 0.15);
 }
 
 .host-dot {
@@ -365,22 +397,11 @@ html[data-platform='darwin'] .tb-winbtns {
     background: var(--accent);
 }
 
-.host-meta {
+.host-name {
     flex: 1;
     min-width: 0;
-}
-
-.host-name {
     font-size: 13px;
     font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.host-addr {
-    font-size: 11px;
-    color: var(--text-faint);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -438,8 +459,11 @@ html[data-platform='darwin'] .tb-winbtns {
     flex: 0 0 var(--tab-h);
     display: flex;
     align-items: stretch;
-    background: var(--bg-elev);
+    background: var(--bg);
+    /* 与右面板内容背景一致 */
     overflow: hidden;
+    -webkit-app-region: drag;
+    /* 顶行空白处可拖动窗口（无系统标题栏） */
 }
 
 .tab-list {
@@ -447,6 +471,22 @@ html[data-platform='darwin'] .tb-winbtns {
     align-items: stretch;
     overflow-x: auto;
     flex: 1;
+}
+
+/* 右侧同排：断开/注销 + 主题 + 窗口控制 */
+.topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 100%;
+    padding: 0 4px;
+    flex: 0 0 auto;
+    -webkit-app-region: no-drag;
+}
+
+.tab,
+.tab-btn {
+    -webkit-app-region: no-drag;
 }
 
 .tab {
@@ -469,18 +509,8 @@ html[data-platform='darwin'] .tb-winbtns {
 }
 
 .tab.active {
-    background: var(--bg);
+    background: var(--bg-elev);
     color: var(--text);
-}
-
-.tab.active::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: var(--accent);
 }
 
 .tab-label {
@@ -680,20 +710,31 @@ html[data-platform='darwin'] .tb-winbtns {
     height: 30px;
     padding: 0 9px;
     border-radius: 8px;
-    background: var(--bg-elev-2);
+    background-color: var(--field-bg);
     color: var(--text);
     font-size: 13px;
     outline: none;
 }
 
+/* 下拉：隐藏原生箭头改为自绘 chevron，距右边缘 11px */
+.field select {
+    -webkit-appearance: none;
+    appearance: none;
+    padding-right: 32px;
+    background-image: var(--chevron);
+    background-repeat: no-repeat;
+    background-position: right 11px center;
+    background-size: 12px;
+}
+
 .field input:hover,
 .field select:hover {
-    background: var(--bg-elev-3);
+    background-color: var(--bg-elev-3);
 }
 
 .field input:focus,
 .field select:focus {
-    background: var(--bg-elev-3);
+    background-color: var(--bg-elev-3);
     caret-color: var(--accent);
 }
 
