@@ -1,9 +1,11 @@
 /* transfer.ts —— 文件传输（HTTP 数据面）+ 右下角传输队列进度条。
  * 控制面由服务端经 WS 推送（MSG_TRANSFER_TOKEN / MSG_TRANSFER_REQUEST），
- * 数据面走 HTTP：
+ * 数据面走 HTTP（指向登录时解析的目标服务器）：
  *   下载：GET /api/transfer/download?token&path（fetch + ReadableStream 流式）
  *   上传：POST /api/transfer/upload?token&dir&name&offset（XHR 分片，1MB/片）
  */
+
+import { getServer } from './server';
 
 let token = '';
 
@@ -120,7 +122,8 @@ export function handleDownloadRequest(pathsText: string): void {
 
 function startDownload(path: string, name: string): void {
     const task = addTask('download', name);
-    const url = `/api/transfer/download?token=${encodeURIComponent(token)}&path=${encodeURIComponent(path)}`;
+    const api = getServer().apiBase;
+    const url = `${api}/api/transfer/download?token=${encodeURIComponent(token)}&path=${encodeURIComponent(path)}`;
     fetch(url)
         .then(async (resp) => {
             if (!resp.ok) {
@@ -262,7 +265,7 @@ function uploadFiles(files: File[], dir: string): void {
             const xhr = new XMLHttpRequest();
             xhr.open(
                 'POST',
-                `/api/transfer/upload?token=${encodeURIComponent(token)}` +
+                `${getServer().apiBase}/api/transfer/upload?token=${encodeURIComponent(token)}` +
                 `&dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(file.name)}&offset=${off}`,
             );
             xhr.onload = () => {

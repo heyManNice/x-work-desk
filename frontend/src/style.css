@@ -523,3 +523,12 @@ body,
     transform: translateY(8px);
     transition: opacity 0.3s ease, transform 0.3s ease;
 }
+
+/* ---------- 登录输入提示 ---------- */
+.field-hint {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--muted);
+    opacity: 0.85;
+    line-height: 1.4;
+}

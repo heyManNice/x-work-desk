@@ -73,6 +73,13 @@ export class VideoRenderer {
 
     feed(data: Uint8Array, isKey: boolean): void {
         if (!this.configured || !this.decoder) return;
+        /* WebKitGTK 等实现的 configure() 是异步完成：state 未到 'configured'
+         * 就 decode 会抛 InvalidStateError。此时丢弃帧，等服务端下个关键帧
+         * （configure 后已请求）到达时解码器通常已就绪。 */
+        if (this.decoder.state !== 'configured') {
+            this.haveKey = false;
+            return;
+        }
         if (!isKey && !this.haveKey) return; // 等待首个关键帧，不喂 delta
         if (this.decoder.decodeQueueSize > 8) return; // 低延迟：丢弃积压帧
         try {

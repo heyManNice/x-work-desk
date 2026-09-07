@@ -29,6 +29,7 @@ import { InputRelay } from './input';
 import { AudioPlayer } from './audio';
 import { setTransferToken, handleDownloadRequest, handleUploadRequest, showTransferError } from './transfer';
 import { showConfirm } from './modal';
+import { setServer, getServer, splitUserHost, resolveServer } from './server';
 import {
     initStats, setResolution, onVideoFrame, onDecodeTime,
     requestKeyframeTime, onKeyframeReceived, resetStats
@@ -64,6 +65,7 @@ let clipboardEnabled = false;
 let clipCache = '';
 let pendingLogin: { user: string; pass: string; w: number; h: number } | null = null;
 let active = false;
+let loginWaiting = false; /* 登录请求已发出、尚未收到结果（连接失败判定用） */
 let resizeTimer = 0;
 
 /* 前端可视区域物理分辨率：innerWidth/Height 是视口 CSS 像素（随窗口大小变化，
@@ -103,11 +105,13 @@ function connect(): void {
         if (pendingLogin && ws.readyState === WebSocket.OPEN) {
             send(msgLogin(pendingLogin.user, pendingLogin.pass, pendingLogin.w, pendingLogin.h));
             pendingLogin = null;
+            loginWaiting = true;
         }
         return;
     }
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    /* 服务器地址在登录提交时解析并 setServer；连接用其 wsUrl（Tauri/跨机可连远程） */
+    loginWaiting = true;
+    ws = new WebSocket(getServer().wsUrl);
     ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
@@ -122,7 +126,14 @@ function connect(): void {
     };
 
     ws.onclose = () => {
-        if (active) onDisconnect();
+        if (loginWaiting) {
+            /* 登录结果未收到即断开：连接失败（网络/地址错误，或 WebView/浏览器
+             * 安全策略拦截了到 http/ws 后端的连接） */
+            loginWaiting = false;
+            loginFail('无法连接到服务器：请检查 账号@主机 地址与端口。\n若服务器仅支持 http，可能被浏览器的安全策略拦截');
+        } else if (active) {
+            onDisconnect();
+        }
     };
 
     ws.onerror = () => { };
@@ -134,6 +145,7 @@ function handleClipboardMsg(b: Uint8Array): void {
 
 function handleLoginResult(b: Uint8Array): void {
     const r = parseLoginResult(b);
+    loginWaiting = false;
     if (r.ok) {
         sessionStorage.removeItem('xwd-reconnect'); /* 登录成功，重连标记失效 */
         loginBtn.hidden = true;
@@ -286,6 +298,7 @@ function showDesktop(): void {
 }
 
 function loginFail(text?: string): void {
+    loginWaiting = false;
     loginBtn.disabled = false;
     loginBtn.classList.remove('loading');
     btnSpinner.hidden = true;
@@ -316,11 +329,19 @@ function onDisconnect(): void {
 loginForm.addEventListener('submit', (e) => {
     e.preventDefault();
     loginError.hidden = true;
-    const user = userInput.value.trim();
     const pass = passInput.value;
+    /* 用户名框支持 user@host[:port]：拆分出账号与目标服务器 */
+    const { user, hostPort } = splitUserHost(userInput.value);
     if (!user || !pass) {
         return;
     }
+    const srv = resolveServer(hostPort);
+    if (!srv) {
+        loginError.textContent = '无法确定服务器：请以 user@host 形式输入主机地址';
+        loginError.hidden = false;
+        return;
+    }
+    setServer(srv);
     /* 在用户手势内同步做一次同文档导航（history.pushState）：Chrome 的密码
      * 管理器把"提交了含密码的表单 + 发生同文档导航"识别为登录成功，从而弹出
      * 保存密码提示（Chromium 原生行为，CL 802593005）。页面不刷新，WS 登录
@@ -357,6 +378,14 @@ window.addEventListener('resize', () => {
 
 /* 初始化渲染器与输入 */
 renderer = new VideoRenderer(canvas);
+/* 诊断（Tauri/WebKit 调试）：把 WebCodecs 可用性与错误写入窗口标题，
+ * 便于在无界面环境用 xdotool 读标题确认（WebKitGTK 可能不支持 WebCodecs） */
+try {
+    document.title =
+        typeof VideoDecoder === 'undefined' || typeof VideoFrame === 'undefined'
+            ? 'XWD-ERR:WebCodecs 不可用'
+            : 'XWD-OK:WebCodecs 可用';
+} catch { /* ignore */ }
 renderer.onKeyframeRequest = () => requestKeyframe();
 renderer.onResize = () => {
     /* 不再在这里隐藏提示层：等收到第一帧实际渲染的画面再隐藏，
@@ -366,6 +395,7 @@ renderer.onError = (msg) => {
     connectingOverlay.hidden = false;
     const p = connectingOverlay.querySelector('p');
     if (p) p.textContent = msg;
+    try { document.title = 'XWD-ERR:' + String(msg).slice(0, 40); } catch { /* ignore */ }
 };
 renderer.onDecodeTime = (ms) => {
     onDecodeTime(ms);
