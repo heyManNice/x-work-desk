@@ -28,6 +28,14 @@ contextBridge.exposeInMainWorld('xwd', {
             ipcRenderer.on('xwd:win-max', listener);
             return () => ipcRenderer.removeListener('xwd:win-max', listener);
         },
+        /* 窗口级全屏 */
+        setFullScreen: (on) => ipcRenderer.invoke('xwd:winSetFs', on),
+        isFullScreen: () => ipcRenderer.invoke('xwd:winIsFs'),
+        onFullScreenChange: (cb) => {
+            const listener = (_e, fs) => cb(fs);
+            ipcRenderer.on('xwd:win-fs', listener);
+            return () => ipcRenderer.removeListener('xwd:win-fs', listener);
+        },
     },
     /* SSH 终端会话（ssh2） */
     ssh: {

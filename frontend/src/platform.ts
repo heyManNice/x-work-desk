@@ -27,6 +27,9 @@ interface DesktopBridge {
         close(): void;
         isMaximized(): Promise<boolean>;
         onMaximizeChange(cb: (maxed: boolean) => void): () => void;
+        setFullScreen(on: boolean): Promise<boolean>;
+        isFullScreen(): Promise<boolean>;
+        onFullScreenChange(cb: (fs: boolean) => void): () => void;
     };
     ssh?: {
         connect(opt: { id: string; host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; msg?: string }>;
@@ -107,6 +110,21 @@ export function onWinMaximizeChange(cb: (maxed: boolean) => void): () => void {
     const b = bridge()?.windowControl;
     if (!b) return () => { /* 忽略 */ };
     return b.onMaximizeChange(cb);
+}
+
+/* 窗口级全屏（沉浸模式）：桌面壳用 Electron setFullScreen；浏览器回退 HTML5 fullscreen */
+export async function winSetFullScreen(on: boolean): Promise<void> {
+    try { await bridge()?.windowControl?.setFullScreen(on); } catch { /* 忽略 */ }
+}
+
+export async function winIsFullScreen(): Promise<boolean> {
+    try { return await bridge()?.windowControl?.isFullScreen() ?? false; } catch { return false; }
+}
+
+export function onWinFullScreenChange(cb: (fs: boolean) => void): () => void {
+    const b = bridge()?.windowControl;
+    if (!b) return () => { /* 忽略 */ };
+    return b.onFullScreenChange(cb);
 }
 
 /* 写系统剪贴板（桌面壳无 WebView 权限弹窗；浏览器回退 navigator.clipboard） */

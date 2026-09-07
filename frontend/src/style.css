@@ -641,6 +641,12 @@ html[data-theme='light'] .host-item.active {
     background: var(--bg);
 }
 
+/* 沉浸全屏（桌面壳窗口级全屏）：隐藏侧栏与标签/顶栏，仅留视频画面铺满 */
+.xwd-fs .sidebar,
+.xwd-fs .tabbar {
+    display: none;
+}
+
 /* 会话视图（每标签一个，绝对铺满，仅 active 显示） */
 .session-view {
     position: absolute;
@@ -1235,70 +1241,72 @@ canvas {
     background: var(--hover);
 }
 
-/* ============ 全屏顶部悬浮工具栏（收起=顶部细线，hover 下滑展开） ============ */
-/* HTML5 fullscreen 的目标元素是会话视图，全屏时原顶栏不可见。常态只在屏幕顶部
- * 露出一条细线手柄，鼠标移到线上整条工具栏下滑展开（文件/退出全屏/断开/注销）。 */
+/* ============ 全屏悬浮工具栏（顶部居中细线，hover 下滑出 fit 内容工具栏） ============ */
+/* 桌面壳用窗口级全屏：DOM 全保留、弹层/面板仍可用；沉浸时原顶栏/侧栏隐藏，
+ * 只在屏幕顶部居中露一条细线手柄，hover 后 fit 内容的工具栏（文字按钮组）下滑展开。 */
 .fs-wrap {
-    position: absolute;
+    position: fixed;
     top: 0;
     left: 0;
     right: 0;
-    z-index: 80;
-    display: none;
-    /* 覆盖主题变量：浮层固定用深色半透明底，深浅主题、明暗画面下都清晰 */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    pointer-events: none;
+    /* 只让细线与展开的卡片可交互，其余区域透传给远程画面 */
+    z-index: 1300;
+    /* 覆盖主题变量：浮层固定用深色半透明配色，明暗画面/深浅主题下都清晰 */
     --text: #f2f4f7;
     --text-dim: #c6ccd4;
-    --hover: rgba(255, 255, 255, 0.10);
-    --active: rgba(255, 255, 255, 0.18);
+    --hover: rgba(255, 255, 255, 0.12);
+    --active: rgba(255, 255, 255, 0.2);
     --danger: #ff6b63;
 }
 
-.fs-wrap.fs {
-    display: block;
-}
-
-/* 顶部细线（收起态的可视手柄，hover 触发展开） */
+/* 顶部细线手柄（收起态可见，hover 展开） */
 .fs-peek {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 6px;
+    pointer-events: auto;
+    width: 96px;
+    height: 5px;
+    border-radius: 0 0 6px 6px;
     cursor: pointer;
-    z-index: 2;
     background: linear-gradient(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.15));
     transition: background 0.15s ease;
 }
 
-.fs-wrap:hover .fs-peek {
-    background: linear-gradient(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.3));
+.fs-peek:hover {
+    background: linear-gradient(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.32));
 }
 
-/* 工具栏本体：默认藏在屏幕上沿之外，展开时滑下 */
-.fs-bar {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 2px;
-    padding: 7px 10px 9px 14px;
-    background: rgba(16, 18, 24, 0.88);
-    border-radius: 0 0 12px 12px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
-    transform: translateY(-100%);
+/* 工具栏容器：默认藏在屏幕上沿之外（仅细线可见），hover 细线滑出 */
+.fs-inner {
+    pointer-events: auto;
+    transform: translateY(calc(-100% - 10px));
     transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.3, 1);
     will-change: transform;
 }
 
-.fs-wrap.open .fs-bar {
+.fs-wrap.open .fs-inner {
     transform: none;
 }
 
-.fs-bar .tab-btn.active {
+/* fit 内容的工具栏卡片（顶部贴细线，底部圆角） */
+.fs-card {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 10px;
+    background: rgba(16, 18, 24, 0.88);
+    border-radius: 0 0 12px 12px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+.fs-card .tab-btn.active {
     background: var(--active);
     color: var(--text);
 }
 
-/* 元素全屏时背景纯黑（视频容器） */
+/* 元素全屏时背景纯黑（视频容器；浏览器同源部署回退 HTML5 fullscreen 用） */
 .session-view:fullscreen {
     background: #000;
     display: block;

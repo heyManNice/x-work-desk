@@ -190,6 +190,15 @@ function registerIpc() {
     });
     ipcMain.on('xwd:winClose', () => win && win.close());
     ipcMain.handle('xwd:winIsMax', () => !!(win && win.isMaximized()));
+    /* 窗口级全屏（渲染层全屏沉浸模式；DOM 全保留，弹层/面板仍可用） */
+    ipcMain.handle('xwd:winSetFs', (_e, on) => {
+        if (!win) return false;
+        win.setFullScreen(!!on);
+        /* 主动同步一次状态（X11/Windows 无 enter/leave-full-screen，resize 推送可能延迟） */
+        if (!win.isDestroyed()) sendWinFs(win.isFullScreen());
+        return true;
+    });
+    ipcMain.handle('xwd:winIsFs', () => !!(win && win.isFullScreen()));
 
     /* ---- SSH 终端会话（ssh2） ---- */
     ipcMain.handle('xwd:ssh:connect', (_e, opt) => startSshSession(opt || {}));
@@ -563,6 +572,10 @@ function sendWinMax(maxed) {
     if (win && !win.isDestroyed()) win.webContents.send('xwd:win-max', maxed);
 }
 
+function sendWinFs(fs) {
+    if (win && !win.isDestroyed()) win.webContents.send('xwd:win-fs', fs);
+}
+
 /* ---------------- 窗口 ---------------- */
 
 function createWindow() {
@@ -591,6 +604,16 @@ function createWindow() {
     win.setMenuBarVisibility(false);
     win.on('maximize', () => sendWinMax(true));
     win.on('unmaximize', () => sendWinMax(false));
+    /* 全屏状态变化同步给渲染层（X11/Windows 无 enter/leave-full-screen 事件，靠 resize 兜底检测） */
+    let lastFs = false;
+    const pushFs = () => {
+        if (!win) return;
+        const fs = win.isFullScreen();
+        if (fs !== lastFs) { lastFs = fs; sendWinFs(fs); }
+    };
+    win.on('resize', pushFs);
+    win.on('enter-full-screen', () => sendWinFs(true)); /* macOS */
+    win.on('leave-full-screen', () => sendWinFs(false));
 
     const devUrl = process.env.XWD_DEV_URL;
     if (devUrl) {
