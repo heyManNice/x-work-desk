@@ -458,7 +458,10 @@ static void handle_takeover_msg(conn *c, runtime *rt)
      * 断开连接只解绑不注销——只有 GNOME 桌面内注销才会销毁会话。 */
     conn *old = atomic_exchange(&sess->conn, NULL);
     if (old)
+    {
+        push_text_msg(old, MSG_CLOSE, NULL, 0, "此账号已在其他设备登录，本连接已被接管");
         net_close_conn(old); /* 前一人前端回到登录页 */
+    }
 
     push_login_result(c, 1, "ok");
     push_transfer_token(c, sess->token);
@@ -502,6 +505,14 @@ void session_on_message(conn *c, const uint8_t *data, size_t len)
         break;
     case MSG_LOGOUT:
         handle_logout_msg(c, rt);
+        break;
+    case MSG_REQUEST_CONFIG:
+        /* 接管后可能错过 CONFIG：重发 CONFIG 与关键帧，保证新端能解码出画面 */
+        if (rt_state_is(rt, S_RUNNING))
+        {
+            atomic_store(&rt->cap.need_config, 1);
+            atomic_store(&rt->cap.req_keyframe, 1);
+        }
         break;
     case MSG_SET_FPS:
         if (!rt_state_is(rt, S_RUNNING))

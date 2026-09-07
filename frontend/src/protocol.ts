@@ -30,6 +30,7 @@ export const MSG_SET_ANIMATIONS = 0x19;
 export const MSG_SET_AUDIO = 0x1a;
 export const MSG_SET_CLIPBOARD = 0x1b;
 export const MSG_LOGOUT = 0x1c; /* 注销当前会话（销毁桌面） */
+export const MSG_REQUEST_CONFIG = 0x1e; /* 请求重发 CONFIG（接管后补拉流） */
 
 export const VIDEO_FLAG_KEY = 0x01;
 export const MOUSE_FLAG_MOTION = 0x01;
@@ -218,4 +219,8 @@ export function msgClipboard(text: string): Uint8Array {
 
 export function msgLogout(): Uint8Array {
     return new Uint8Array([MSG_LOGOUT]);
+}
+
+export function msgRequestConfig(): Uint8Array {
+    return new Uint8Array([MSG_REQUEST_CONFIG]);
 }

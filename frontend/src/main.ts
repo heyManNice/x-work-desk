@@ -26,6 +26,7 @@ import {
     msgTakeover,
     msgTakeoverCancel,
     msgLogout,
+    msgRequestConfig,
     msgClipboard,
 } from './protocol';
 import { VideoRenderer } from './decoder';
@@ -160,6 +161,13 @@ function handleLoginResult(b: Uint8Array): void {
         loginBtn.hidden = true;
         showDesktop();
         initTransferUi(); /* 登录后显示传输入口（上传按钮/拖放区） */
+        /* 接管/继承后若渲染器仍未配置（可能错过 CONFIG），补发请求重发 CONFIG，
+         * 避免黑屏（服务端只会在 need_config 时发一次 CONFIG） */
+        window.setTimeout(() => {
+            if (active && renderer && !renderer.isConfigured) {
+                send(msgRequestConfig());
+            }
+        }, 900);
     } else {
         loginFail(r.text);
     }
@@ -245,9 +253,12 @@ function handleMessage(b: Uint8Array): void {
         case MSG_VIDEO:
             handleVideoMsg(b);
             break;
-        case MSG_CLOSE:
+        case MSG_CLOSE: {
+            const reason = new TextDecoder().decode(b.subarray(1));
             onDisconnect();
+            if (reason) loginFail(reason); /* 被接管/被注销等给出明确原因 */
             break;
+        }
         default:
             break;
     }
