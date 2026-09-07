@@ -160,7 +160,18 @@ function registerIpc() {
     ipcMain.handle('xwd:clipWriteText', (_e, text) => {
         clipboard.writeText(String(text ?? ''));
     });
-    ipcMain.handle('xwd:clipPoll', () => clipPoll());
+    ipcMain.handle('xwd:clipPoll', () => {
+        const r = clipPoll();
+        /* 返回前确保全部字段可结构化克隆（IPC），并打印结构便于诊断 */
+        const safe = {
+            text: typeof r.text === 'string' && r.text.length ? r.text : null,
+            files: Array.isArray(r.files) ? r.files.filter((f) => typeof f === 'string') : [],
+        };
+        try {
+            console.log('[clipPoll] ->', JSON.stringify({ textLen: safe.text ? safe.text.length : 0, files: safe.files }));
+        } catch { /* 忽略 */ }
+        return safe;
+    });
     ipcMain.handle('xwd:download', (_e, opt) => downloadRemoteFiles(opt || {}));
     ipcMain.handle('xwd:upload', (_e, opt) => uploadLocalFiles(opt || {}));
 }
