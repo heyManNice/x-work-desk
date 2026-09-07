@@ -29,6 +29,7 @@ import {
 } from './core/host';
 import { Session, type SessionState, type SessionStatus } from './core/session';
 import { TerminalSession } from './core/termSession';
+import { FileButton, FilePanelHost, fmSessionEnded } from './core/filemgr';
 import {
     NBell, NotifyPanelHost,
     startTask, patchTask, finishTask,
@@ -453,6 +454,7 @@ function closeTab(id: number): void {
     sessionMap.get(id)?.destroy();
     sessionMap.delete(id);
     pendingMap.delete(id);
+    fmSessionEnded(id); /* 关闭对应 SFTP 文件会话 */
     const next = tabs().filter((t) => t.id !== id);
     setTabsSig(next);
     if (activeId() === id) {
@@ -608,6 +610,15 @@ function Sidebar() {
 
 function TabBar() {
     const activeTab = () => tabs().find((x) => x.id === activeId());
+    /* 当前活动会话的 SSH 凭据（用于 SFTP 文件面板） */
+    const fmCtx = () => {
+        const t = tabs().find((x) => x.id === activeId());
+        if (!t) return null;
+        const p = pendingMap.get(t.id);
+        if (!p) return null;
+        const host = p.type === 'terminal' ? (p.sshHost || sshHostOf(p.host)) : sshHostOf(p.host);
+        return { tabId: t.id, host, port: p.sshPort || 22, user: p.user, pass: p.pass };
+    };
     return (
         <div class="tabbar">
             {/* 收起时：标签栏最左的展开按钮 */}
@@ -640,6 +651,7 @@ function TabBar() {
             </div>
             {/* 右侧同排：全屏/断开/注销(按会话类型) + 主题 + 窗口控制 */}
             <div class="topbar-right">
+                <Show when={fmCtx()}>{(c) => <FileButton ctx={c()} />}</Show>
                 <Show when={activeTab()}>
                     {(a) => (
                         <div class="tabbar-actions">
@@ -998,6 +1010,7 @@ export default function App() {
             <PasswordDialog />
             <HostContextMenu />
             <NotifyPanelHost />
+            <FilePanelHost />
         </div>
     );
 }

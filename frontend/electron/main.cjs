@@ -11,7 +11,7 @@
  *     受 secure-context 限制的痛点）。contextIsolation 仍开启保护 preload。
  */
 
-const { app, BrowserWindow, ipcMain, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, dialog } = require('electron');
 const { Client } = require('ssh2');
 const path = require('path');
 const fs = require('fs');
@@ -210,6 +210,16 @@ function registerIpc() {
     /* ---- SSH 服务探测 / 一键安装 ---- */
     ipcMain.handle('xwd:ssh:probe', (_e, opt) => sshProbeServer(opt || {}));
     ipcMain.handle('xwd:ssh:installServer', (_e, opt) => sshInstallServer(opt || {}));
+
+    /* ---- 远程文件面板（SFTP） ---- */
+    ipcMain.handle('xwd:file:open', (_e, opt) => sftpOpen(opt || {}));
+    ipcMain.handle('xwd:file:list', (_e, opt) => sftpList(opt || {}));
+    ipcMain.handle('xwd:file:mkdir', (_e, opt) => sftpMkdir(opt || {}));
+    ipcMain.handle('xwd:file:rename', (_e, opt) => sftpRename(opt || {}));
+    ipcMain.handle('xwd:file:remove', (_e, opt) => sftpRemove(opt || {}));
+    ipcMain.handle('xwd:file:upload', (_e, opt) => sftpUpload(opt || {}));
+    ipcMain.handle('xwd:file:download', (_e, opt) => sftpDownload(opt || {}));
+    ipcMain.handle('xwd:file:close', (_e, id) => { sftpClose(id); return { ok: true }; });
 }
 
 /* ---- 一次性 SSH exec / sftp（服务探测与安装） ---- */
@@ -359,6 +369,195 @@ async function sshStartServer(opt) {
     return { ok: r.code === 0, needSudo, msg: ((r.out || '') + (r.err || '')).trim().slice(-600), code: r.code };
 }
 ipcMain.handle('xwd:ssh:startServer', (_e, opt) => sshStartServer(opt || {}));
+
+/* ---------------- 远程文件面板（基于 SFTP） ---------------- */
+const fileSessions = new Map(); /* id -> { client, sftp } */
+
+function sftpGet(id) {
+    const r = fileSessions.get(id);
+    return r && r.sftp ? r.sftp : null;
+}
+
+function sftpClose(id) {
+    const r = fileSessions.get(id);
+    if (!r) return;
+    try { r.client.end(); } catch { /* 忽略 */ }
+    fileSessions.delete(id);
+}
+
+function sftpJoin(dir, name) {
+    const d = dir == null || dir === '' ? '' : String(dir);
+    const n = String(name).replace(/^\/+/, '');
+    if (d === '/' || d === '') return '/' + n;
+    return d.replace(/\/+$/, '') + '/' + n;
+}
+
+function readdirEntries(sftp, p, cb) {
+    sftp.readdir(p, (err, list) => {
+        if (err) return cb(err, null);
+        const rows = (list || [])
+            .filter((f) => f && f.filename && f.filename !== '.' && f.filename !== '..')
+            .map((f) => {
+                const a = f.attrs || {};
+                const isDir = (a.mode & 0o040000) === 0o040000;
+                return {
+                    name: String(f.filename),
+                    isDir: !!isDir,
+                    size: a.size || 0,
+                    mtime: a.mtime != null ? a.mtime * 1000 : 0,
+                };
+            });
+        rows.sort((x, y) => {
+            if (x.isDir !== y.isDir) return x.isDir ? -1 : 1;
+            return x.name.localeCompare(y.name);
+        });
+        cb(null, rows);
+    });
+}
+
+/* 打开（建连 + 定位到用户主目录并列出） */
+function sftpOpen(opt) {
+    const id = opt.id;
+    sftpClose(id);
+    return new Promise((resolve) => {
+        const client = new Client();
+        const fail = (msg) => {
+            try { client.end(); } catch { /* 忽略 */ }
+            resolve({ ok: false, msg });
+        };
+        client.on('ready', () => {
+            const goSftp = (home) => {
+                client.sftp((err2, sftp) => {
+                    if (err2) return fail('sftp 打开失败: ' + err2.message);
+                    fileSessions.set(id, { client, sftp });
+                    const start = home && home.startsWith('/') ? home : '/';
+                    readdirEntries(sftp, start, (err3, rows) => {
+                        if (err3) { sftpClose(id); return resolve({ ok: false, msg: '读取目录失败: ' + err3.message }); }
+                        resolve({ ok: true, cwd: start, entries: rows });
+                    });
+                });
+            };
+            let called = false;
+            const onHome = (home) => { if (!called) { called = true; goSftp(home); } };
+            client.exec('printf %s "$HOME"', (err, stream) => {
+                if (err) return onHome('/');
+                const ch = [];
+                stream.on('data', (d) => ch.push(d));
+                stream.on('close', () => onHome(Buffer.concat(ch).toString().trim() || '/'));
+                stream.on('error', () => onHome('/'));
+            });
+        });
+        client.on('error', (e) => resolve({ ok: false, msg: '连接失败: ' + ((e && e.message) || String(e)) }));
+        const p = Number(opt.port) || 22;
+        client.connect({
+            host: String(opt.host || 'localhost'),
+            port: p,
+            username: String(opt.user || ''),
+            password: opt.pass ? String(opt.pass) : undefined,
+            readyTimeout: 12000,
+        });
+    });
+}
+
+function sftpList(opt) {
+    return new Promise((resolve) => {
+        const sftp = sftpGet(opt.id);
+        const p = String(opt.path || '/');
+        if (!sftp) return resolve({ ok: false, msg: '未连接' });
+        readdirEntries(sftp, p, (err, rows) => {
+            if (err) return resolve({ ok: false, msg: (err && err.message) || String(err) });
+            resolve({ ok: true, cwd: p, entries: rows });
+        });
+    });
+}
+
+function sftpMkdir(opt) {
+    return new Promise((resolve) => {
+        const sftp = sftpGet(opt.id);
+        if (!sftp) return resolve({ ok: false, msg: '未连接' });
+        sftp.mkdir(String(opt.path || ''), (e) => resolve(e ? { ok: false, msg: e.message } : { ok: true }));
+    });
+}
+
+function sftpRename(opt) {
+    return new Promise((resolve) => {
+        const sftp = sftpGet(opt.id);
+        if (!sftp) return resolve({ ok: false, msg: '未连接' });
+        sftp.rename(String(opt.from || ''), String(opt.to || ''), (e) => resolve(e ? { ok: false, msg: e.message } : { ok: true }));
+    });
+}
+
+/* 递归删除目录 */
+function rmrf(sftp, p, done) {
+    sftp.readdir(p, (e, list) => {
+        if (e) return sftp.rmdir(p, done);
+        let i = 0;
+        const next = () => {
+            if (i >= (list || []).length) return sftp.rmdir(p, (er) => done(er));
+            const f = (list || [])[i++];
+            const fp = sftpJoin(p, f.filename);
+            const isDir = (f.attrs.mode & 0o040000) === 0o040000;
+            if (isDir) rmrf(sftp, fp, () => next());
+            else sftp.unlink(fp, () => next()); /* 单项失败不阻断整体 */
+        };
+        next();
+    });
+}
+
+function sftpRemove(opt) {
+    return new Promise((resolve) => {
+        const sftp = sftpGet(opt.id);
+        const p = String(opt.path || '');
+        if (!sftp) return resolve({ ok: false, msg: p ? '未连接' : '路径为空' });
+        if (!opt.isDir) {
+            sftp.unlink(p, (e) => resolve(e ? { ok: false, msg: e.message } : { ok: true }));
+            return;
+        }
+        rmrf(sftp, p, (e) => resolve(e ? { ok: false, msg: e.message } : { ok: true }));
+    });
+}
+
+/* 上传：弹本地文件选择框，fastPut 到当前目录 */
+async function sftpUpload(opt) {
+    const sftp = sftpGet(opt.id);
+    const dir = String(opt.dir || '/');
+    if (!sftp) return { ok: false, msg: '未连接' };
+    let paths = [];
+    try {
+        const r = await dialog.showOpenDialog(win, {
+            title: '选择要上传的文件',
+            properties: ['openFile', 'multiSelections'],
+        });
+        if (r.canceled || !r.filePaths || !r.filePaths.length) return { ok: false, canceled: true };
+        paths = r.filePaths;
+    } catch (err) {
+        return { ok: false, msg: '选择文件失败: ' + ((err && err.message) || String(err)) };
+    }
+    const done = [];
+    for (const lp of paths) {
+        const name = path.basename(lp);
+        await new Promise((res) => {
+            sftp.fastPut(lp, sftpJoin(dir, name), (e) => { if (!e) done.push(name); res(); });
+        });
+    }
+    return { ok: true, uploaded: done };
+}
+
+/* 下载：静默保存到系统「下载」目录（自动避免重名） */
+function sftpDownload(opt) {
+    return new Promise((resolve) => {
+        const sftp = sftpGet(opt.id);
+        const rp = String(opt.path || '');
+        if (!sftp) return resolve({ ok: false, msg: !rp ? '路径为空' : '未连接' });
+        if (!rp) return resolve({ ok: false, msg: '路径为空' });
+        const name = sanitizeName(String(rp).split('/').pop() || 'file');
+        const dlDir = app.getPath('downloads');
+        const dest = uniquePath(path.join(dlDir, name));
+        sftp.fastGet(rp, dest, (e) => {
+            resolve(e ? { ok: false, msg: e.message } : { ok: true, dest, name });
+        });
+    });
+}
 
 function sendWinMax(maxed) {
     if (win && !win.isDestroyed()) win.webContents.send('xwd:win-max', maxed);

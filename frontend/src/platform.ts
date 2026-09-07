@@ -40,6 +40,16 @@ interface DesktopBridge {
         installServer(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; needSudo?: boolean; msg?: string }>;
         onInstallProgress?(cb: (p: { stage?: string; pct: number | null; label?: string }) => void): () => void;
     };
+    file?: {
+        open(c: FmCred): Promise<FmOpenRes>;
+        list(id: number, path: string): Promise<FmListRes>;
+        mkdir(id: number, path: string): Promise<FmSimple>;
+        rename(id: number, from: string, to: string): Promise<FmSimple>;
+        remove(id: number, path: string, isDir: boolean): Promise<FmSimple>;
+        upload(id: number, dir: string): Promise<FmUploadRes>;
+        download(id: number, path: string): Promise<FmDownRes>;
+        close(id: number): Promise<FmSimple>;
+    };
 }
 
 function bridge(): DesktopBridge | null {
@@ -199,4 +209,68 @@ export interface SshInstallProgress {
 export function sshOnInstallProgress(cb: (p: SshInstallProgress) => void): () => void {
     const b = bridge()?.ssh;
     return b && b.onInstallProgress ? b.onInstallProgress(cb) : () => { /* 忽略 */ };
+}
+
+/* ---------------- 远程文件面板（SFTP） ---------------- */
+
+export interface FmCred {
+    id: number;
+    host: string;
+    port: number;
+    user: string;
+    pass?: string;
+}
+
+export interface FmEntry {
+    name: string;
+    isDir: boolean;
+    size: number;
+    mtime: number;
+}
+
+export interface FmOpenRes { ok: boolean; cwd?: string; entries?: FmEntry[]; msg?: string; }
+export interface FmListRes { ok: boolean; cwd?: string; entries?: FmEntry[]; msg?: string; }
+export interface FmSimple { ok: boolean; msg?: string; }
+export interface FmUploadRes { ok: boolean; canceled?: boolean; uploaded?: string[]; msg?: string; }
+export interface FmDownRes { ok: boolean; dest?: string; name?: string; msg?: string; }
+
+export async function fmOpen(c: FmCred): Promise<FmOpenRes> {
+    const b = bridge()?.file;
+    if (!b) return { ok: false, msg: '桌面壳环境不支持远程文件' };
+    return b.open(c);
+}
+export async function fmList(id: number, path: string): Promise<FmListRes> {
+    const b = bridge()?.file;
+    if (!b) return { ok: false, msg: '桌面壳环境不支持远程文件' };
+    return b.list(id, path);
+}
+export async function fmMkdir(id: number, path: string): Promise<FmSimple> {
+    const b = bridge()?.file;
+    if (!b) return { ok: false, msg: '桌面壳环境不支持远程文件' };
+    return b.mkdir(id, path);
+}
+export async function fmRename(id: number, from: string, to: string): Promise<FmSimple> {
+    const b = bridge()?.file;
+    if (!b) return { ok: false, msg: '桌面壳环境不支持远程文件' };
+    return b.rename(id, from, to);
+}
+export async function fmRemove(id: number, path: string, isDir: boolean): Promise<FmSimple> {
+    const b = bridge()?.file;
+    if (!b) return { ok: false, msg: '桌面壳环境不支持远程文件' };
+    return b.remove(id, path, isDir);
+}
+export async function fmUpload(id: number, dir: string): Promise<FmUploadRes> {
+    const b = bridge()?.file;
+    if (!b) return { ok: false, msg: '桌面壳环境不支持远程文件' };
+    return b.upload(id, dir);
+}
+export async function fmDownload(id: number, path: string): Promise<FmDownRes> {
+    const b = bridge()?.file;
+    if (!b) return { ok: false, msg: '桌面壳环境不支持远程文件' };
+    return b.download(id, path);
+}
+export async function fmClose(id: number): Promise<FmSimple> {
+    const b = bridge()?.file;
+    if (!b) return { ok: false, msg: '桌面壳环境不支持远程文件' };
+    return b.close(id);
 }

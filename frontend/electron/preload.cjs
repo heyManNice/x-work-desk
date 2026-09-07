@@ -54,4 +54,15 @@ contextBridge.exposeInMainWorld('xwd', {
             return () => ipcRenderer.removeListener('xwd:ssh:install-progress', listener);
         },
     },
+    /* 远程文件面板（SFTP） */
+    file: {
+        open: (opt) => ipcRenderer.invoke('xwd:file:open', opt),
+        list: (id, path) => ipcRenderer.invoke('xwd:file:list', { id, path }),
+        mkdir: (id, path) => ipcRenderer.invoke('xwd:file:mkdir', { id, path }),
+        rename: (id, from, to) => ipcRenderer.invoke('xwd:file:rename', { id, from, to }),
+        remove: (id, path, isDir) => ipcRenderer.invoke('xwd:file:remove', { id, path, isDir }),
+        upload: (id, dir) => ipcRenderer.invoke('xwd:file:upload', { id, dir }),
+        download: (id, path) => ipcRenderer.invoke('xwd:file:download', { id, path }),
+        close: (id) => ipcRenderer.invoke('xwd:file:close', id),
+    },
 });
