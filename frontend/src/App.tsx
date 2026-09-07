@@ -10,10 +10,11 @@ import {
     createSignal, createEffect, For, Show,
     onMount, onCleanup, type Accessor,
 } from 'solid-js';
+import { render } from 'solid-js/web';
 import {
     Monitor, Plus, Pencil, Trash2, Minus, Copy, Square, X,
-    Sun, Moon, LogOut, Unplug, Link, PanelLeftOpen, PanelLeftClose,
-    Maximize2, Minimize2, Terminal as TerminalIcon,
+    Folder, FolderOpen, Sun, Moon, LogOut, Unplug, Link,
+    PanelLeftOpen, PanelLeftClose, Maximize2, Minimize2, Terminal as TerminalIcon,
 } from 'lucide-solid';
 import {
     isMac, winMinimize, winToggleMaximize, winClose,
@@ -29,7 +30,7 @@ import {
 } from './core/host';
 import { Session, type SessionState, type SessionStatus } from './core/session';
 import { TerminalSession } from './core/termSession';
-import { FileButton, FilePanelHost, fmSessionEnded } from './core/filemgr';
+import { FileButton, FilePanelHost, fmSessionEnded, openFmAt, isFmOpen, type FmCtx } from './core/filemgr';
 import {
     NBell, NotifyPanelHost,
     startTask, patchTask, finishTask,
@@ -687,8 +688,77 @@ function TabBar() {
     );
 }
 
+/* 全屏顶部悬浮工具栏：HTML5 fullscreen 的目标元素就是会话视图，全屏时原顶栏不可见，
+ * 故在全屏视图内部挂一个顶部浮层——常态只在屏幕顶部露一条细线，鼠标移到线上
+ * 整条工具栏下滑展开，展示右上角那组带文字按钮（文件/退出全屏/断开/注销）。
+ * 由 SessionPane 挂载到桌面会话视图内部（仅桌面远程支持全屏）。 */
+function FullscreenBar(props: { root: () => HTMLElement | null; fm: FmCtx | null }) {
+    const [fs, setFs] = createSignal(false);
+    const [open, setOpen] = createSignal(false);
+    let retractT: ReturnType<typeof setTimeout> | undefined;
+
+    /* 进入全屏默认收起成细线（hover 才展开） */
+    createEffect(() => { if (fs()) setOpen(false); });
+
+    onMount(() => {
+        const chk = () => setFs(document.fullscreenElement === props.root());
+        chk();
+        document.addEventListener('fullscreenchange', chk);
+        onCleanup(() => {
+            document.removeEventListener('fullscreenchange', chk);
+            if (retractT) { clearTimeout(retractT); retractT = undefined; }
+        });
+    });
+
+    const expand = () => {
+        if (retractT) { clearTimeout(retractT); retractT = undefined; }
+        setOpen(true);
+    };
+    const retractSoon = () => {
+        if (retractT) clearTimeout(retractT);
+        retractT = setTimeout(() => { retractT = undefined; setOpen(false); }, 320);
+    };
+
+    const fmOpen = () => (props.fm ? isFmOpen(props.fm.tabId) : false);
+
+    /* 文件：先退出全屏，再打开顶栏的 SFTP 文件面板（面板/确认框/进度提示都在全屏视图之外） */
+    const openFile = async () => {
+        const c = props.fm;
+        if (!c) return;
+        if (document.fullscreenElement) {
+            try { await document.exitFullscreen(); } catch { /* 忽略 */ }
+        }
+        const b = document.querySelector<HTMLButtonElement>('[data-popup-trigger="file"]');
+        openFmAt(b, c);
+    };
+
+    return (
+        <div class="fs-wrap" classList={{ fs: fs(), open: open() }} onMouseEnter={expand} onMouseLeave={retractSoon}>
+            <div class="fs-peek" />
+            <div class="fs-bar">
+                <Show when={props.fm}>
+                    <button class="tab-btn" classList={{ active: fmOpen() }} onClick={() => void openFile()} title="远程文件（SFTP）">
+                        {fmOpen() ? <FolderOpen size={13} /> : <Folder size={13} />} 文件
+                    </button>
+                </Show>
+                <button class="tab-btn" onClick={() => { if (document.fullscreenElement) void document.exitFullscreen(); }} title="退出全屏">
+                    <Minimize2 size={13} /> 退出全屏
+                </button>
+                <button class="tab-btn" onClick={disconnectActive} title="断开并关闭此标签">
+                    <Unplug size={13} /> 断开
+                </button>
+                <button class="tab-btn danger" onClick={() => void logoutActive()} title="注销远程会话并关闭此标签">
+                    <LogOut size={13} /> 注销
+                </button>
+            </div>
+        </div>
+    );
+}
+
 function SessionPane(props: { id: number }) {
     let rootEl: HTMLDivElement | undefined;
+    let fsHolder: HTMLDivElement | undefined;
+    let fsDisp: (() => void) | undefined;
     onMount(() => {
         const pend = pendingMap.get(props.id);
         const rec = tabs().find((t) => t.id === props.id);
@@ -724,29 +794,25 @@ function SessionPane(props: { id: number }) {
         sessionMap.set(props.id, sess);
         sess.setActive(activeId() === props.id);
 
-        /* 全屏悬浮工具条：仅桌面远程（全屏时鼠标移到顶部中央出现“退出全屏”） */
+        /* 全屏顶部悬浮工具栏：仅桌面远程（全屏时顶部细线 → hover 下滑出文字按钮组） */
         if (pend.type !== 'terminal') {
-            const fsBar = document.createElement('div');
-            fsBar.className = 'fs-toolbar';
-            fsBar.hidden = true;
-            const btnFs = document.createElement('button');
-            btnFs.className = 'btn primary';
-            btnFs.textContent = '退出全屏';
-            btnFs.addEventListener('click', () => {
-                if (document.fullscreenElement) void document.exitFullscreen();
-            });
-            fsBar.appendChild(btnFs);
-            rootEl.appendChild(fsBar);
-            rootEl.addEventListener('mousemove', (e) => {
-                if (document.fullscreenElement === rootEl) fsBar.hidden = !(e.clientY < 70);
-            });
-            rootEl.addEventListener('mouseleave', () => { fsBar.hidden = true; });
-            document.addEventListener('fullscreenchange', function onFs() {
-                if (document.fullscreenElement !== rootEl) fsBar.hidden = true;
-            });
+            const holder = document.createElement('div');
+            rootEl.appendChild(holder);
+            fsHolder = holder;
+            const fm: FmCtx = {
+                tabId: props.id,
+                host: sshHostOf(pend.host),
+                port: pend.sshPort || 22,
+                user: pend.user,
+                pass: pend.pass,
+            };
+            fsDisp = render(() => <FullscreenBar root={() => rootEl} fm={fm} />, holder);
         }
     });
     onCleanup(() => {
+        /* 先卸载全屏悬浮工具栏，再销毁会话（Session.destroy 会清空根节点） */
+        if (fsDisp) { try { fsDisp(); } catch { /* 忽略 */ } fsDisp = undefined; }
+        if (fsHolder) { fsHolder.remove(); fsHolder = undefined; }
         const sess = sessionMap.get(props.id);
         if (sess) {
             sess.destroy();

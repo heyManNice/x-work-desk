@@ -96,7 +96,12 @@ async function loadPath(p: string): Promise<void> {
     }
 }
 
-function openFmAt(btn: HTMLElement | null | undefined, c: FmCtx): void {
+/** 文件面板当前是否正为该标签会话打开（顶栏/全屏悬浮工具栏图标态复用） */
+export function isFmOpen(tabId: number): boolean {
+    return isPopup('file') && ctx()?.tabId === tabId;
+}
+
+export function openFmAt(btn: HTMLElement | null | undefined, c: FmCtx): void {
     if (btn) {
         const rect = btn.getBoundingClientRect();
         setPos({ x: rect.left + rect.width / 2, y: rect.bottom + 8 });
@@ -232,7 +237,7 @@ export function FileButton(props: { ctx: FmCtx; label?: string }) {
     let btn: HTMLButtonElement | undefined;
     const c = () => props.ctx;
     const hasLabel = () => !!props.label;
-    const isThisOpen = () => isPopup('file') && ctx()?.tabId === c().tabId;
+    const isThisOpen = () => isFmOpen(c().tabId);
     const toggle = () => {
         if (isThisOpen()) { doCloseFm(); return; }
         openFmAt(btn, c());
