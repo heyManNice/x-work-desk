@@ -228,9 +228,10 @@ function fmtTime(m: number): string {
 
 /* ---------------- 工具栏按钮 ---------------- */
 
-export function FileButton(props: { ctx: FmCtx }) {
+export function FileButton(props: { ctx: FmCtx; label?: string }) {
     let btn: HTMLButtonElement | undefined;
     const c = () => props.ctx;
+    const hasLabel = () => !!props.label;
     const isThisOpen = () => isPopup('file') && ctx()?.tabId === c().tabId;
     const toggle = () => {
         if (isThisOpen()) { doCloseFm(); return; }
@@ -240,12 +241,13 @@ export function FileButton(props: { ctx: FmCtx }) {
         <button
             ref={btn}
             data-popup-trigger="file"
-            class="tb-btn fm-btn"
-            classList={{ active: isThisOpen() }}
+            class="fm-btn"
+            classList={{ 'tab-btn': hasLabel(), 'tb-btn': !hasLabel(), active: isThisOpen() }}
             title="远程文件（SFTP）"
             onClick={toggle}
         >
-            {isThisOpen() ? <FolderOpen size={15} /> : <Folder size={15} />}
+            {isThisOpen() ? <FolderOpen size={hasLabel() ? 13 : 15} /> : <Folder size={hasLabel() ? 13 : 15} />}
+            {hasLabel() && <span>文件</span>}
         </button>
     );
 }

@@ -655,11 +655,12 @@ function TabBar() {
                     )}
                 </For>
             </div>
-            {/* 右侧同排：有文字操作组 + 纯图标组 + 窗口控制（窗口控制固定最右） */}
+            {/* 右侧同排：有文字操作组(最左：文件) + 纯图标组 + 窗口控制（窗口控制固定最右） */}
             <div class="topbar-right">
                 <Show when={activeTab()}>
                     {(a) => (
                         <div class="tabbar-actions">
+                            <Show when={fmCtx()}>{(c) => <FileButton ctx={c()} label="文件" />}</Show>
                             <Show when={a().type === 'desktop'}>
                                 <button class="tab-btn" onClick={toggleFullscreen} title={fsActive() ? '退出全屏' : '全屏显示'}>
                                     {fsActive() ? <Minimize2 size={13} /> : <Maximize2 size={13} />} 全屏
@@ -676,9 +677,7 @@ function TabBar() {
                         </div>
                     )}
                 </Show>
-                <Show when={activeTab()}><span class="tb-divider" /></Show>
                 <div class="tb-icons">
-                    <Show when={fmCtx()}>{(c) => <FileButton ctx={c()} />}</Show>
                     <NBell />
                     <ThemeToggle />
                 </div>

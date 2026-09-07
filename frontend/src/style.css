@@ -1109,12 +1109,12 @@ canvas {
     -webkit-user-drag: none;
 }
 
-/* 标签栏右端：断开 / 注销 */
+/* 标签栏右端：断开 / 注销（含最左的“文件”） */
 .tabbar-actions {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 0 8px;
+    gap: 2px;
+    padding: 0 4px;
     flex: 0 0 auto;
 }
 
@@ -1650,6 +1650,7 @@ canvas {
 
 .fm-btn.active {
     color: var(--accent);
+    background: var(--active);
 }
 
 .fmpanel {
@@ -1907,21 +1908,11 @@ canvas {
     display: none;
 }
 
-/* 顶栏分组：有文字按钮组 与 纯图标组 分开 */
+/* 顶栏分组：纯图标组 */
 .tb-icons {
     display: flex;
     align-items: center;
     gap: 2px;
-    -webkit-app-region: no-drag;
-}
-
-.tb-divider {
-    width: 1px;
-    height: 15px;
-    background: var(--border);
-    margin: 0 6px;
-    align-self: center;
-    flex: 0 0 auto;
     -webkit-app-region: no-drag;
 }
 
