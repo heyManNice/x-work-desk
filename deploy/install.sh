@@ -79,23 +79,15 @@ for u in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do
     fi
 done
 
-# ---- 文件传输：安装 Nautilus 右键菜单扩展（仅在 GNOME 环境） ----
-if command -v nautilus >/dev/null 2>&1; then
-    if ! python3 -c "import gi; gi.require_version('Nautilus','4.0'); from gi.repository import Nautilus" >/dev/null 2>&1; then
-        echo "安装 python3-nautilus（Nautilus Python 扩展支持）..."
-        apt-get install -y python3-nautilus
-    fi
-    NAUT_EXT_DIR="/usr/share/nautilus-python/extensions"
-    mkdir -p "$NAUT_EXT_DIR"
-    install -m 0644 "$REPO_DIR/deploy/nautilus/xworkd_menu.py" \
-        "$NAUT_EXT_DIR/xworkd_menu.py"
-    echo "Nautilus 扩展已安装: $NAUT_EXT_DIR/xworkd_menu.py"
-    # 让正在运行的 Nautilus 实例加载新扩展（无窗口则无需）
+# ---- 文件传输（新方案：客户端拖放/复制粘贴，不依赖 Nautilus 扩展）----
+# 清理旧版 Nautilus 右键菜单扩展（如有历史安装残留）
+NAUT_EXT_DIR="/usr/share/nautilus-python/extensions"
+if [ -f "$NAUT_EXT_DIR/xworkd_menu.py" ]; then
+    rm -f "$NAUT_EXT_DIR/xworkd_menu.py"
+    echo "已移除旧版 Nautilus 右键扩展: $NAUT_EXT_DIR/xworkd_menu.py"
     if pgrep -x nautilus >/dev/null 2>&1; then
         pkill -x nautilus 2>/dev/null || true
     fi
-else
-    echo "未检测到 Nautilus（非 GNOME 桌面），跳过文件传输扩展安装"
 fi
 
 systemctl daemon-reload

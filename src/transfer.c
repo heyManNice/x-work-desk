@@ -30,10 +30,12 @@
 static void http_resp(conn *c, int code, const char *msg,
                       const uint8_t *body, size_t body_len)
 {
-    char hdr[256];
+    char hdr[512];
     int hn = snprintf(hdr, sizeof hdr,
                       "HTTP/1.1 %d %s\r\nContent-Length: %zu\r\n"
-                      "Content-Type: text/plain\r\nConnection: close\r\n\r\n",
+                      "Content-Type: text/plain\r\n"
+                      "Access-Control-Allow-Origin: *\r\n"
+                      "Connection: close\r\n\r\n",
                       code, msg, body_len);
     if (conn_queue_raw(c, (const uint8_t *)hdr, (size_t)hn))
     {
@@ -191,6 +193,7 @@ static int handle_download(conn *c, const char *q)
     int hn = snprintf(hdr, sizeof hdr,
                       "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
                       "Content-Length: %lld\r\nContent-Disposition: attachment; filename=\"%s\"\r\n"
+                      "Access-Control-Allow-Origin: *\r\n"
                       "Cache-Control: no-cache\r\nConnection: close\r\n\r\n",
                       (long long)st.st_size, bn);
     if (!conn_queue_raw(c, (const uint8_t *)hdr, (size_t)hn))
@@ -210,18 +213,31 @@ static int handle_upload(conn *c, const char *q,
 {
     char token[64], dir[2048], name[1024], offs[32];
     if (!util_query_get(q, "token", token, sizeof token) ||
-        !util_query_get(q, "dir", dir, sizeof dir) ||
         !util_query_get(q, "name", name, sizeof name) ||
         !util_query_get(q, "offset", offs, sizeof offs))
     {
         http_resp(c, 400, "Bad Request", NULL, 0);
         return 1;
     }
+    if (!util_query_get(q, "dir", dir, sizeof dir))
+        dir[0] = 0;
     runtime *rt = session_by_token(token);
     if (!rt)
     {
         http_resp(c, 403, "Forbidden", NULL, 0);
         return 1;
+    }
+    /* 目录缺省时落到该用户桌面（登录时服务端已确保 ~/Desktop 存在） */
+    if (!dir[0])
+    {
+        struct passwd *pw = getpwnam(rt->user);
+        if (!pw || !pw->pw_dir || !pw->pw_dir[0])
+        {
+            runtime_unref(rt);
+            http_resp(c, 403, "Forbidden", NULL, 0);
+            return 1;
+        }
+        snprintf(dir, sizeof dir, "%s/Desktop", pw->pw_dir);
     }
     char real_dir[4096];
     if (!util_path_in_user_home(rt->user, dir, real_dir, sizeof real_dir))
@@ -297,6 +313,23 @@ int transfer_handle_http(conn *c, const char *method, const char *path_q,
     memcpy(path, path_q, pl);
     path[pl] = 0;
     const char *q = qm ? qm + 1 : "";
+
+    /* CORS 预检（Tauri/跨源 WebView 的 XHR/fetch 上传需要） */
+    if (!strcmp(method, "OPTIONS"))
+    {
+        static const char h[] =
+            "HTTP/1.1 204 No Content\r\n"
+            "Access-Control-Allow-Origin: *\r\n"
+            "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+            "Access-Control-Allow-Headers: *\r\n"
+            "Access-Control-Max-Age: 86400\r\n"
+            "Content-Length: 0\r\nConnection: close\r\n\r\n";
+        if (conn_queue_raw(c, (const uint8_t *)h, sizeof h - 1))
+            c->close_after_flush = 1;
+        else
+            net_close_conn(c);
+        return 1;
+    }
 
     if (!strcmp(method, "POST") && !strcmp(path, "/api/transfer/request"))
         return handle_request(c, q, xworkd_token, body, body_len);
