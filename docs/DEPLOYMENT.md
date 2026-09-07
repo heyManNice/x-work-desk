@@ -84,7 +84,7 @@ systemctl 超时，不再卡住事件循环）。运行时改分辨率依赖 `cv
 （ES1371）在 PipeWire 下时序不稳定，输出全零导致音频采集静音。部署脚本
 安装 WirePlumber 规则，仅当节点带 `cpu.vm.name`（即虚拟机内）时禁用
 ALSA PCI 输出/输入节点，会话回退到 Dummy Output，桌面音频经软件 sink 的
-monitor 稳定采集。浏览器端播放声音，虚拟机本地无需出声。实体机没有
+monitor 稳定采集。客户端播放声音，虚拟机本地无需出声。实体机没有
 `cpu.vm.name`，真实声卡不受影响；不需要时删除
 `/etc/xdg/wireplumber/wireplumber.conf.d/50-xworkd-vm-audio.conf` 并重启各
 用户 wireplumber。
@@ -123,8 +123,8 @@ sudo setsid nohup ./build/xworkd --auth shadow \
 > 当前服务为明文 HTTP/WS，传输登录密码与桌面画面。**公网/跨网段必须加 TLS**。
 
 最小可行方案：nginx 反代 + `wss://`（示例见
-`deploy/nginx-xworkd.conf.example`，前端会自动按页面协议选择 ws/wss）。
-反代后只放行 443，5268 仅监听 127.0.0.1 或内网。
+`deploy/nginx-xworkd.conf.example`）。桌面客户端填写主机地址时用 `https://host`
+前缀即可自动切到 wss。反代后只放行 443，5268 仅监听 127.0.0.1 或内网。
 
 现状与建议：
 
@@ -132,7 +132,7 @@ sudo setsid nohup ./build/xworkd --auth shadow \
   在反代层限流；
 - **审计**：认证成功/失败打 journald，生产环境请保留日志并定期归档；
 - **端口**：默认绑定 0.0.0.0，请按需收紧防火墙；
-- **同一用户多开**：每个浏览器标签页是一个独立会话，目前无每用户上限，
+- **同一用户多开**：每个客户端连接都是一个独立会话，目前无每用户上限，
   资源敏感时需自行加限制或靠反代层控制。
 
 ## 6. 资源规划
@@ -149,7 +149,8 @@ sudo setsid nohup ./build/xworkd --auth shadow \
 
 - **登录失败 "无 shadow 条目"**：账号不存在，先 `useradd`。
 - **登录失败 "账户已锁定"**：`sudo passwd -u <user>` 解锁。
-- **黑屏**：浏览器需 Chrome/Edge（WebCodecs）；GNOME 首次启动约 5~10 秒。
+- **视频黑屏**：客户端为 Electron（Chromium）无需额外设置；多为 GNOME 首次
+  启动约 5~10 秒或服务端旧会话残留（见 README）。
 - **提示 keyring 未解锁**：keyring 密码与账号密码不一致（见第 3 节）。
 - **端口被占**：`sudo systemctl stop xworkd` 或换 `--port` 重新安装。
 - **`Xvfb`/`xauth` 缺失**：`sudo apt install xvfb xauth`。
