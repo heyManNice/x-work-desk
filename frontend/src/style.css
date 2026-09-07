@@ -1274,18 +1274,22 @@ canvas {
 }
 
 @keyframes ndot-pop {
-    from { transform: scale(0); }
-    to { transform: scale(1); }
+    from {
+        transform: scale(0);
+    }
+
+    to {
+        transform: scale(1);
+    }
 }
 
-/* 悬浮面板：fixed 渲染在 App 根部（避开顶栏 overflow:hidden 裁切） */
+/* 悬浮面板：fixed 渲染在 App 根部（避开顶栏 overflow:hidden 裁切）；无边框扁平 */
 .npanel {
     position: fixed;
     z-index: 1400;
     width: 320px;
     max-width: calc(100vw - 24px);
-    background: var(--bg-elev);
-    border: 1px solid var(--border);
+    background: var(--bg-elev-3);
     border-radius: 10px;
     display: flex;
     flex-direction: column;
@@ -1296,17 +1300,22 @@ canvas {
 }
 
 @keyframes npanel-in {
-    from { opacity: 0; transform: translate(-50%, -6px) scale(0.96); }
-    to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+    from {
+        opacity: 0;
+        transform: translate(-50%, -6px) scale(0.96);
+    }
+
+    to {
+        opacity: 1;
+        transform: translate(-50%, 0) scale(1);
+    }
 }
 
 .npanel-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 10px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-elev-2);
+    padding: 9px 12px;
 }
 
 .npanel-title {
@@ -1367,10 +1376,21 @@ canvas {
     margin-top: 1px;
 }
 
-.nitem.k-info .nitem-ico { color: var(--accent); }
-.nitem.k-success .nitem-ico { color: var(--ok); }
-.nitem.k-error .nitem-ico { color: var(--danger); }
-.nitem.k-progress .nitem-ico { color: var(--accent); }
+.nitem.k-info .nitem-ico {
+    color: var(--accent);
+}
+
+.nitem.k-success .nitem-ico {
+    color: var(--ok);
+}
+
+.nitem.k-error .nitem-ico {
+    color: var(--danger);
+}
+
+.nitem.k-progress .nitem-ico {
+    color: var(--accent);
+}
 
 .nitem-main {
     flex: 1 1 auto;
@@ -1384,8 +1404,13 @@ canvas {
     word-break: break-word;
 }
 
-.nitem.k-error .nitem-title { color: var(--danger); }
-.nitem.k-success .nitem-title { color: var(--ok); }
+.nitem.k-error .nitem-title {
+    color: var(--danger);
+}
+
+.nitem.k-success .nitem-title {
+    color: var(--ok);
+}
 
 .nitem-body {
     font-size: 11.5px;
@@ -1455,8 +1480,13 @@ canvas {
 }
 
 @keyframes nindet {
-    from { transform: translateX(-100%); }
-    to { transform: translateX(280%); }
+    from {
+        transform: translateX(-100%);
+    }
+
+    to {
+        transform: translateX(280%);
+    }
 }
 
 /* 气泡（右上角堆叠） */
@@ -1477,25 +1507,35 @@ canvas {
     display: flex;
     gap: 8px;
     align-items: flex-start;
-    background: var(--bg-elev);
-    border: 1px solid var(--border);
-    border-left-width: 3px;
-    border-radius: 9px;
-    padding: 8px 9px;
+    background: var(--bg-elev-3);
+    border-radius: 10px;
+    padding: 9px 10px;
     animation: toast-in 0.22s ease;
 }
 
 @keyframes toast-in {
-    from { opacity: 0; transform: translateX(14px); }
-    to { opacity: 1; transform: translateX(0); }
+    from {
+        opacity: 0;
+        transform: translateX(14px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
 }
 
-.toast.k-info { border-left-color: var(--accent); }
-.toast.k-success { border-left-color: var(--ok); }
-.toast.k-error { border-left-color: var(--danger); }
-.toast.k-info .toast-ico { color: var(--accent); }
-.toast.k-success .toast-ico { color: var(--ok); }
-.toast.k-error .toast-ico { color: var(--danger); }
+.toast.k-info .toast-ico {
+    color: var(--accent);
+}
+
+.toast.k-success .toast-ico {
+    color: var(--ok);
+}
+
+.toast.k-error .toast-ico {
+    color: var(--danger);
+}
 
 .toast-ico {
     flex: 0 0 auto;
@@ -1514,8 +1554,13 @@ canvas {
     font-weight: 600;
 }
 
-.toast.k-error .toast-title { color: var(--danger); }
-.toast.k-success .toast-title { color: var(--ok); }
+.toast.k-error .toast-title {
+    color: var(--danger);
+}
+
+.toast.k-success .toast-title {
+    color: var(--ok);
+}
 
 .toast-body {
     font-size: 11.5px;
@@ -1551,5 +1596,7 @@ canvas {
 }
 
 @keyframes nspin {
-    to { transform: rotate(360deg); }
+    to {
+        transform: rotate(360deg);
+    }
 }
