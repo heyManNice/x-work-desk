@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -247,49 +247,12 @@ async fn upload_local_files(
 
 /* ---------------- 系统剪贴板（自动、无弹窗） ---------------- */
 
-/* 写文本到本地系统剪贴板（供远程剪贴板文本同步到本地，无 WebView 权限弹窗） */
+/* 把文本写入本地系统剪贴板（供远程剪贴板文本同步到本地，无 WebView 权限弹窗） */
 #[tauri::command]
 fn clip_write_text(app: AppHandle, text: String) -> Result<(), String> {
     app.clipboard()
         .write_text(text)
         .map_err(|e| e.to_string())
-}
-
-/* 本地透明 TCP 转发：监听 127.0.0.1 随机端口，把连接原样转发到目标服务器。
- *
- * 背景：Tauri/WebKitGTK 页面是安全上下文，明文 ws:// 到非 localhost 会被
- * 混合内容规则拦下（无法关闭）。通过把 WebSocket 改连 ws://127.0.0.1:<本端口>
- * （localhost 豁免放行），由本隧道在 Rust 侧无限制地直连远端明文 TCP，
- * 从而实现“远程 IP 也能连”而无需任何证书/CA。
- *
- * 返回本地监听端口；每个接受连接起独立线程双向 copy。监听线程常驻。 */
-#[tauri::command]
-fn start_tunnel(target_host: String, target_port: u16) -> Result<u16, String> {
-    let listener = TcpListener::bind(("127.0.0.1", 0))
-        .map_err(|e| format!("绑定本地端口失败：{e}"))?;
-    let lp = listener.local_addr().map_err(|e| e.to_string())?.port();
-    std::thread::spawn(move || {
-        for conn in listener.incoming() {
-            let Ok(mut local) = conn else { continue };
-            let th = target_host.clone();
-            std::thread::spawn(move || {
-                if let Ok(mut remote) = TcpStream::connect((th.as_str(), target_port)) {
-                    let _ = local.set_nodelay(true);
-                    let _ = remote.set_nodelay(true);
-                    let mut l2 = local.try_clone().ok();
-                    let mut r2 = remote.try_clone().ok();
-                    let a = std::thread::spawn(move || {
-                        if let (Some(mut l), Some(mut r)) = (l2.take(), r2.take()) {
-                            let _ = std::io::copy(&mut l, &mut r);
-                        }
-                    });
-                    let _ = std::io::copy(&mut remote, &mut local);
-                    let _ = a.join();
-                }
-            });
-        }
-    });
-    Ok(lp)
 }
 
 /* 轮询本地系统剪贴板：当前文本 + 本地复制文件的路径列表。
@@ -375,8 +338,7 @@ pub fn run() {
             clip_write_text,
             clip_poll,
             download_remote_files,
-            upload_local_files,
-            start_tunnel
+            upload_local_files
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
