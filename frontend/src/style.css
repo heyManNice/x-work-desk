@@ -1989,7 +1989,7 @@ canvas {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 9px 8px 7px 12px;
+    padding: 9px 8px 3px 12px;
 }
 
 .sys-title {
@@ -2005,12 +2005,6 @@ canvas {
     color: var(--accent);
 }
 
-.sys-upd {
-    margin-left: auto;
-    font-size: 11px;
-    color: var(--text-faint);
-}
-
 .sys-x {
     width: 20px;
     height: 20px;
@@ -2019,6 +2013,7 @@ canvas {
     justify-content: center;
     border-radius: 5px;
     color: var(--text-dim);
+    margin-left: auto;
 }
 
 .sys-x:hover {
@@ -2027,7 +2022,7 @@ canvas {
 }
 
 .sys-body {
-    padding: 10px 12px 12px;
+    padding: 6px 12px 12px;
     max-height: min(540px, calc(100vh - 40px));
     overflow-y: auto;
     display: flex;

@@ -204,7 +204,6 @@ export function SysCpuPanelHost() {
             >
                 <div class="sys-head">
                     <span class="sys-title"><Cpu size={13} /> CPU</span>
-                    <span class="sys-upd">每 5 秒刷新</span>
                     <button class="sys-x" onClick={() => closePopup('syscpu')} title="关闭"><X size={13} /></button>
                 </div>
                 <div class="sys-body">
@@ -267,7 +266,6 @@ export function SysMemPanelHost() {
             >
                 <div class="sys-head">
                     <span class="sys-title"><MemoryStick size={13} /> 内存</span>
-                    <span class="sys-upd">每 5 秒刷新</span>
                     <button class="sys-x" onClick={() => closePopup('sysmem')} title="关闭"><X size={13} /></button>
                 </div>
                 <div class="sys-body">
