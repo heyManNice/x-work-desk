@@ -28,11 +28,11 @@ jobs:
             builder: --linux deb --arm64
             glob: '*.deb'
           - name: macos-dmg-x64
-            os: macos-13
+            os: macos-15-intel
             builder: --mac dmg --x64
             glob: '*.dmg'
           - name: macos-dmg-arm64
-            os: macos-14
+            os: macos-15
             builder: --mac dmg --arm64
             glob: '*.dmg'
     runs-on: ${{ matrix.os }}
