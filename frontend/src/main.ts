@@ -1,5 +1,5 @@
 import './style.css';
-import { invoke } from '@tauri-apps/api/core';
+import { clipWriteText, clipPoll } from './platform';
 import {
     MSG_VIDEO,
     MSG_CONFIG,
@@ -264,11 +264,11 @@ function handleMessage(b: Uint8Array): void {
     }
 }
 
-/* ---------- 剪贴板共享（Tauri 走系统剪贴板，无 WebView 权限弹窗） ---------- */
+/* ---------- 剪贴板共享（桌面壳走系统剪贴板，无 WebView 权限弹窗） ---------- */
 async function clipWrite(text: string): Promise<void> {
     if (isTauri()) {
         try {
-            await invoke('clip_write_text', { text });
+            await clipWriteText(text);
             clipCache = text;
         } catch { /* 忽略：写入失败不打断 */ }
         return;
@@ -286,7 +286,7 @@ async function clipReadPush(): Promise<void> {
     if (!clipboardEnabled) return;
     if (isTauri()) {
         try {
-            const p = await invoke<{ text?: string | null; files: string[] }>('clip_poll');
+            const p = await clipPoll();
             if (p.text && p.text !== clipCache) {
                 clipCache = p.text;
                 send(msgClipboard(p.text));

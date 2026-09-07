@@ -9,8 +9,12 @@
  */
 
 import { getServer } from './server';
-import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import {
+    isDesktop,
+    downloadRemoteFiles as platformDownload,
+    uploadLocalFiles as platformUpload,
+    onTransferProgress,
+} from './platform';
 
 let token = '';
 
@@ -27,8 +31,9 @@ export function setSessionDirs(text: string): void {
     }
 }
 
+/* 兼容名：桌面壳（Electron）内返回 true，语义同原 Tauri 时代 */
 export function isTauri(): boolean {
-    return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+    return isDesktop();
 }
 
 interface TransferTask {
@@ -232,9 +237,7 @@ async function downloadRemoteAuto(paths: string[]): Promise<void> {
     const task = addTask('download', label);
     curTask = task;
     try {
-        const res = await invoke<{ ok: boolean; msg: string }>('download_remote_files', {
-            api: getServer().apiBase, token, paths,
-        });
+        const res = await platformDownload({ api: getServer().apiBase, token, paths });
         finishTask(task, res.ok, res.msg);
     } catch (e) {
         finishTask(task, false, `下载失败：${String(e)}`);
@@ -255,22 +258,19 @@ export function uploadLocalFiles(paths: string[]): void {
         : `上传 ${paths.length} 个文件`;
     const task = addTask('upload', label);
     curTask = task;
-    invoke<{ ok: boolean; msg: string }>('upload_local_files', {
-        api: getServer().apiBase, token, dir: remoteDesktop, files: paths,
-    })
+    platformUpload({ api: getServer().apiBase, token, dir: remoteDesktop, files: paths })
         .then((res) => finishTask(task, res.ok, res.msg))
         .catch((e) => finishTask(task, false, `上传失败：${String(e)}`))
         .finally(() => { if (curTask === task) curTask = null; });
 }
 
-/* Tauri：订阅传输进度事件（登录成功后调用一次即可） */
-let progressUnlisten: UnlistenFn | null = null;
-let tauriBound = false;
+/* 桌面壳：订阅主进程传输进度事件（登录成功后调用一次即可） */
+let progressUnlisten: (() => void) | null = null;
+let transferBound = false;
 export function initTransferUi(): void {
-    if (!isTauri() || tauriBound) return;
-    tauriBound = true;
-    void listen<{ done: number; total: number }>(
-        'xwd-transfer-progress',
-        (e) => { if (curTask) updateTask(curTask, e.payload.done, e.payload.total, 0); },
-    ).then((u) => { progressUnlisten = u; }).catch(() => { /* 忽略 */ });
+    if (!isDesktop() || transferBound) return;
+    transferBound = true;
+    progressUnlisten = onTransferProgress(
+        (p) => { if (curTask) updateTask(curTask, p.done, p.total, 0); },
+    );
 }
