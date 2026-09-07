@@ -23,7 +23,8 @@
         "appId": "io.github.heymannice.xworkdesk",
         "productName": "XWorkDesk",
         "directories": {
-            "output": "release"
+            "output": "release",
+            "buildResources": "build-resources"
         },
         "files": [
             "dist/**",
@@ -34,7 +35,9 @@
             "target": [
                 {
                     "target": "msi",
-                    "arch": ["x64"]
+                    "arch": [
+                        "x64"
+                    ]
                 }
             ],
             "artifactName": "XWorkDesk-${version}-${arch}.${ext}"
