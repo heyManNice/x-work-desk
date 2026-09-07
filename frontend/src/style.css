@@ -1252,14 +1252,15 @@ canvas {
     right: 0;
     display: flex;
     justify-content: center;
-    pointer-events: none; /* 只让工具栏本体可交互，其余区域透传给远程画面 */
+    pointer-events: none;
+    /* 只让工具栏本体可交互，其余区域透传给远程画面 */
     z-index: 1300;
 }
 
-/* 工具栏：默认移到屏幕上沿之外、只露底部 8px（收起态手柄），hover 滑出 */
+/* 工具栏：默认移到屏幕上沿之外、只露底部约 3px（收起态手柄，原 8px 的 1/3），hover 滑出 */
 .fs-inner {
     pointer-events: auto;
-    transform: translateY(calc(-100% + 8px));
+    transform: translateY(calc(-100% + 3px));
     transition: transform 0.18s ease;
     will-change: transform;
 }

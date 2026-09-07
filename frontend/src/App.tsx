@@ -32,6 +32,7 @@ import {
 import { Session, type SessionState, type SessionStatus } from './core/session';
 import { TerminalSession } from './core/termSession';
 import { FileButton, FilePanelHost, fmSessionEnded, type FmCtx } from './core/filemgr';
+import { activePopup } from './core/popups';
 import {
     NBell, NotifyPanelHost,
     startTask, patchTask, finishTask,
@@ -693,11 +694,11 @@ function TextActions(props: { type: ConnKind; fm: FmCtx | null }) {
 }
 
 /* 全屏悬浮工具栏：桌面壳窗口级全屏下，原顶栏/侧栏被隐藏（DOM 全保留），屏幕顶部
- * 居中一条细线；hover 细线 → fit 内容的工具栏下滑展开（复用 TextActions 文字按钮组）。
+ * 常态只露工具栏底部一小截作手柄；hover 手柄展开，文件面板打开期间保持展开不收起。
  * 窗口级全屏不遮断 DOM，点“文件”可直接在全屏里弹出面板，无需退出全屏。 */
 function FullscreenBar() {
+    const [hovered, setHovered] = createSignal(false);
     const [open, setOpen] = createSignal(false);
-    let retractT: ReturnType<typeof setTimeout> | undefined;
 
     const activeTab = () => tabs().find((x) => x.id === activeId());
     /* 活动会话的 SSH 凭据（SFTP 文件面板，与 TabBar.fmCtx 同口径） */
@@ -710,31 +711,25 @@ function FullscreenBar() {
         return { tabId: t.id, host, port: p.sshPort || 22, user: p.user, pass: p.pass };
     };
 
-    /* 进入全屏默认收起成细线（hover 才展开）；活动标签非桌面会话时兜底退出全屏 */
+    /* 活动标签非桌面会话时兜底退出全屏 */
     createEffect(() => {
-        if (fsActive()) {
-            setOpen(false);
-            const t = tabs().find((x) => x.id === activeId());
-            if (!t || t.type !== 'desktop') {
-                void winSetFullScreen(false);
-            }
+        const t = tabs().find((x) => x.id === activeId());
+        if (fsActive() && (!t || t.type !== 'desktop')) {
+            void winSetFullScreen(false);
         }
     });
 
-    onCleanup(() => { if (retractT) { clearTimeout(retractT); retractT = undefined; } });
-
-    const expand = () => {
-        if (retractT) { clearTimeout(retractT); retractT = undefined; }
-        setOpen(true);
-    };
-    const retractSoon = () => {
-        if (retractT) clearTimeout(retractT);
-        retractT = setTimeout(() => { retractT = undefined; setOpen(false); }, 300);
-    };
+    /* 展开态 = hover 工具栏 或 文件面板正打开（点开文件面板期间不收） */
+    createEffect(() => {
+        setOpen(!!fsActive() && (hovered() || activePopup() === 'file'));
+    });
 
     return (
         <div class="fs-wrap" classList={{ open: open() }}>
-            <div class="fs-inner" onMouseEnter={expand} onMouseLeave={retractSoon}>
+            <div class="fs-inner"
+                onMouseEnter={() => setHovered(true)}
+                onMouseLeave={() => setHovered(false)}
+            >
                 <Show when={activeTab()}>
                     {(a) => (
                         <div class="fs-card">
