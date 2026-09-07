@@ -377,6 +377,7 @@ body,
 .modal-btn-ok:hover {
     filter: brightness(1.1);
 }
+
 /* ---------- 右下角文件传输队列进度条 ---------- */
 .transfer-queue {
     position: fixed;
@@ -401,8 +402,15 @@ body,
 }
 
 @keyframes transfer-in {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0); }
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 .transfer-head {
@@ -522,13 +530,4 @@ body,
     opacity: 0;
     transform: translateY(8px);
     transition: opacity 0.3s ease, transform 0.3s ease;
-}
-
-/* ---------- 登录输入提示 ---------- */
-.field-hint {
-    margin-top: 6px;
-    font-size: 12px;
-    color: var(--muted);
-    opacity: 0.85;
-    line-height: 1.4;
 }
