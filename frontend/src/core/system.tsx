@@ -142,7 +142,7 @@ export function SysCpuButton(props: { ctx: FmCtx }) {
             onClick={toggle}
             title={`CPU 占用率：${label()}（点击展开详情）`}
         >
-            <Cpu size={11} />
+            <Cpu size={13} />
             <span>{label()}</span>
         </button>
     );
@@ -177,7 +177,7 @@ export function SysMemButton(props: { ctx: FmCtx }) {
             onClick={toggle}
             title={`内存使用率：${label()}（已用 ${cap(usedKB())} / ${cap(mem().total)}，点击展开详情）`}
         >
-            <MemoryStick size={11} />
+            <MemoryStick size={13} />
             <span>{label()}</span>
         </button>
     );

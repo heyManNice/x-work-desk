@@ -681,15 +681,15 @@ function TextActions(props: { type: ConnKind; fm: FmCtx | null }) {
             <Show when={props.fm}>{(c) => <FileButton ctx={c()} label="文件" />}</Show>
             <Show when={props.type === 'desktop'}>
                 <button class="tab-btn" onClick={toggleFullscreen} title={fsActive() ? '退出全屏' : '全屏显示'}>
-                    {fsActive() ? <Minimize2 size={11} /> : <Maximize2 size={11} />} 全屏
+                    {fsActive() ? <Minimize2 size={13} /> : <Maximize2 size={13} />} 全屏
                 </button>
             </Show>
             <button class="tab-btn" onClick={() => { quitFullscreen(); disconnectActive(); }} title="断开并关闭此标签">
-                <Unplug size={11} /> 断开
+                <Unplug size={13} /> 断开
             </button>
             <Show when={props.type === 'desktop'}>
                 <button class="tab-btn danger" onClick={() => { quitFullscreen(); void logoutActive(); }} title="注销远程会话并关闭此标签">
-                    <LogOut size={11} /> 注销
+                    <LogOut size={13} /> 注销
                 </button>
             </Show>
         </>

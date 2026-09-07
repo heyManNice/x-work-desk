@@ -1127,8 +1127,8 @@ canvas {
 .tab-btn {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    padding: 4px 10px;
+    gap: 4px;
+    padding: 4px 7px;
     border-radius: 6px;
     color: var(--text-dim);
     font-size: 12px;
