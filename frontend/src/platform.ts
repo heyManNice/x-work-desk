@@ -11,6 +11,7 @@ export interface TransferProgress {
 }
 
 interface DesktopBridge {
+    platform?: string;
     clipWriteText(text: string): Promise<void>;
     clipPoll(): Promise<{ text: string | null; files: string[] }>;
     downloadRemoteFiles(opt: {
@@ -20,6 +21,13 @@ interface DesktopBridge {
         api: string; token: string; dir: string; files: string[];
     }): Promise<{ ok: boolean; msg: string }>;
     onTransferProgress(cb: (p: TransferProgress) => void): () => void;
+    windowControl?: {
+        minimize(): void;
+        toggleMaximize(): void;
+        close(): void;
+        isMaximized(): Promise<boolean>;
+        onMaximizeChange(cb: (maxed: boolean) => void): () => void;
+    };
 }
 
 function bridge(): DesktopBridge | null {
@@ -32,6 +40,51 @@ function bridge(): DesktopBridge | null {
 /* 是否运行在桌面壳（Electron）内 */
 export function isDesktop(): boolean {
     return bridge() !== null;
+}
+
+/* 平台：darwin / win32 / linux / 浏览器返回空串 */
+export function platform(): string {
+    return bridge()?.platform || '';
+}
+
+export function isMac(): boolean {
+    return platform() === 'darwin';
+}
+
+/* 订阅传输进度；返回取消函数（桌面壳，渲染层调用一次即可） */
+export function onTransferProgress(cb: (p: TransferProgress) => void): () => void {
+    const b = bridge();
+    if (!b) return () => { /* 无桌面壳：无进度事件 */ };
+    return b.onTransferProgress(cb);
+}
+
+/* ---- 窗口控制（自制标题栏；浏览器内为空操作） ---- */
+
+export function winMinimize(): void {
+    bridge()?.windowControl?.minimize();
+}
+
+export function winToggleMaximize(): void {
+    bridge()?.windowControl?.toggleMaximize();
+}
+
+export function winClose(): void {
+    bridge()?.windowControl?.close();
+}
+
+export async function winIsMaximized(): Promise<boolean> {
+    try {
+        return await bridge()?.windowControl?.isMaximized() ?? false;
+    } catch {
+        return false;
+    }
+}
+
+/* 订阅最大化状态变化，返回取消函数 */
+export function onWinMaximizeChange(cb: (maxed: boolean) => void): () => void {
+    const b = bridge()?.windowControl;
+    if (!b) return () => { /* 忽略 */ };
+    return b.onMaximizeChange(cb);
 }
 
 /* 写系统剪贴板（桌面壳无 WebView 权限弹窗；浏览器回退 navigator.clipboard） */
@@ -68,11 +121,4 @@ export async function uploadLocalFiles(opt: {
     const b = bridge();
     if (!b) return { ok: false, msg: '浏览器环境不支持自动上传' };
     return b.uploadLocalFiles(opt);
-}
-
-/* 订阅传输进度；返回取消函数（桌面壳，渲染层调用一次即可） */
-export function onTransferProgress(cb: (p: TransferProgress) => void): () => void {
-    const b = bridge();
-    if (!b) return () => { /* 无桌面壳：无进度事件 */ };
-    return b.onTransferProgress(cb);
 }

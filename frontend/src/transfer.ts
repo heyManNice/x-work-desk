@@ -1,56 +1,32 @@
-/* transfer.ts —— 剪贴板驱动传输（纯自动：无上传按钮、无拖拽、无弹窗/授权框）。
- *
- * 剪贴板共享 = 文本与文件的唯一传输通道，全程自动：
- *   - 远程复制文件 → 服务端推送 MSG_CLIPBOARD_FILES → 自动下载到本地下载目录
- *   - 远程剪贴板文本 → 自动写入本地系统剪贴板（Tauri 插件，无 WebView 权限弹窗）
- *   - 本地复制文件 → Tauri 检测系统剪贴板 uri-list → 自动上传远程桌面
- *   - 本地复制文本 → 自动同步到远程剪贴板
- * 浏览器（同源兜底）：文本回退 navigator.clipboard；下载回退 blob 保存
+/* transfer.ts —— 传输 UI 通用件（非会话绑定）：
+ *   - 右下角传输队列（下载/上传进度任务卡片）
+ *   - 错误提示 toast
+ *   - 浏览器回退下载（blob 保存；桌面壳由 platform.downloadRemoteFiles 走系统下载目录）
+ * 会话层（core/session.ts）通过 transferTask() 句柄驱动队列。
  */
 
-import { getServer } from './server';
-import {
-    isDesktop,
-    downloadRemoteFiles as platformDownload,
-    uploadLocalFiles as platformUpload,
-    onTransferProgress,
-} from './platform';
-
-let token = '';
-
-export function setTransferToken(t: string): void {
-    token = t;
+export interface TransferTaskHandle {
+    /* 更新进度（字节） */
+    set(done: number, total: number, speed?: number): void;
+    /* 结束任务；ok=false 显示原因并停留更久 */
+    finish(ok: boolean, msg?: string): void;
 }
 
-/* 服务端下发的会话桌面目录（本地文件上传自动落点；空则服务端默认 ~/Desktop） */
-let remoteDesktop = '';
-export function setSessionDirs(text: string): void {
-    const lines = text.split('\n').filter((s) => s.length > 0);
-    for (let i = 0; i + 1 < lines.length; i += 2) {
-        if (lines[i] === 'desktop') remoteDesktop = lines[i + 1];
-    }
-}
-
-/* 兼容名：桌面壳（Electron）内返回 true，语义同原 Tauri 时代 */
-export function isTauri(): boolean {
-    return isDesktop();
-}
-
-interface TransferTask {
+interface TaskRec {
     kind: 'download' | 'upload';
-    name: string;
-    total: number;
-    done: number;
-    status: 'active' | 'done' | 'error';
     el: HTMLElement;
     bar: HTMLElement;
-    text: HTMLElement;
+    meta: HTMLElement;
+    status: HTMLElement;
+    doneFlag: boolean;
+    holdTimer: number;
 }
 
-let tasks: TransferTask[] = [];
-let taskSeq = 0;
-/* 当前批次的活跃任务（上传/下载进度事件统一更新它） */
-let curTask: TransferTask | null = null;
+function fmtBytes(n: number): string {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
 
 function ensureQueue(): HTMLElement {
     let q = document.getElementById('transfer-queue');
@@ -63,13 +39,7 @@ function ensureQueue(): HTMLElement {
     return q;
 }
 
-function fmtBytes(n: number): string {
-    if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-    return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function addTask(kind: 'download' | 'upload', name: string): TransferTask {
+export function transferTask(kind: 'download' | 'upload', name: string): TransferTaskHandle {
     const q = ensureQueue();
     const el = document.createElement('div');
     el.className = 'transfer-item';
@@ -77,121 +47,44 @@ function addTask(kind: 'download' | 'upload', name: string): TransferTask {
     el.innerHTML = `
         <div class="transfer-head">
             <span class="transfer-icon">${icon}</span>
-            <span class="transfer-name" title="${name}">${name}</span>
+            <span class="transfer-name" title="${name.replace(/"/g, '&quot;')}">${name}</span>
             <span class="transfer-status">等待</span>
         </div>
-        <div class="transfer-track"><div class="transfer-bar" style="width:0%"></div></div>
+        <div class="transfer-track"><div class="transfer-bar"></div></div>
         <div class="transfer-meta"></div>`;
     q.appendChild(el);
-    const task: TransferTask = {
+    const rec: TaskRec = {
         kind,
-        name,
-        total: 0,
-        done: 0,
-        status: 'active',
         el,
         bar: el.querySelector('.transfer-bar') as HTMLElement,
-        text: el.querySelector('.transfer-meta') as HTMLElement,
+        meta: el.querySelector('.transfer-meta') as HTMLElement,
+        status: el.querySelector('.transfer-status') as HTMLElement,
+        doneFlag: false,
+        holdTimer: 0,
     };
-    taskSeq++;
-    tasks.push(task);
-    return task;
+    return {
+        set(done: number, total: number, speed = 0): void {
+            if (rec.doneFlag) return;
+            const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
+            rec.bar.style.width = `${pct}%`;
+            const sp = speed > 0 ? `　${fmtBytes(speed)}/s` : '';
+            rec.status.textContent = total > 0 ? `${pct.toFixed(0)}%` : '…';
+            rec.meta.textContent = `${fmtBytes(done)} / ${fmtBytes(total)}${sp}`;
+        },
+        finish(ok: boolean, msg = ''): void {
+            if (rec.doneFlag) return;
+            rec.doneFlag = true;
+            rec.status.textContent = ok ? '完成' : '失败';
+            rec.bar.style.width = ok ? '100%' : rec.bar.style.width;
+            el.classList.add(ok ? 'transfer-done' : 'transfer-error');
+            if (msg) rec.meta.textContent = msg;
+            const hold = ok ? 4000 : 8000;
+            rec.holdTimer = window.setTimeout(() => el.remove(), hold);
+        },
+    };
 }
 
-function updateTask(t: TransferTask, done: number, total: number, speed: number): void {
-    t.done = done;
-    t.total = total;
-    const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
-    t.bar.style.width = `${pct}%`;
-    const speedTxt = speed > 0 ? `${fmtBytes(speed)}/s` : '';
-    const st = t.el.querySelector('.transfer-status') as HTMLElement;
-    st.textContent = total > 0 ? `${pct.toFixed(0)}%` : '…';
-    t.text.textContent = `${fmtBytes(done)} / ${fmtBytes(total)}${speedTxt ? '　' + speedTxt : ''}`;
-}
-
-function finishTask(t: TransferTask, ok: boolean, msg: string): void {
-    t.status = ok ? 'done' : 'error';
-    const st = t.el.querySelector('.transfer-status') as HTMLElement;
-    st.textContent = ok ? '完成' : '失败';
-    t.bar.style.width = ok ? '100%' : t.bar.style.width;
-    t.el.classList.add(ok ? 'transfer-done' : 'transfer-error');
-    if (msg) {
-        t.text.textContent = msg;
-    }
-    /* 成功 4 秒 / 失败 8 秒后自动移除（失败停留更久便于查看原因） */
-    const hold = ok ? 4000 : 8000;
-    setTimeout(() => {
-        const idx = tasks.indexOf(t);
-        if (idx >= 0) tasks.splice(idx, 1);
-        t.el.remove();
-    }, hold);
-}
-
-/* ---------------- 下载 ---------------- */
-
-export function handleDownloadRequest(pathsText: string): void {
-    /* 服务端 TRANSFER_REQUEST 下载（旧 Nautilus 扩展已移除，兼容保留） */
-    void handleClipboardFilesMsg(pathsText);
-}
-
-function startDownload(path: string, name: string): void {
-    const task = addTask('download', name);
-    const api = getServer().apiBase;
-    const url = `${api}/api/transfer/download?token=${encodeURIComponent(token)}&path=${encodeURIComponent(path)}`;
-    fetch(url)
-        .then(async (resp) => {
-            if (!resp.ok) {
-                let reason = `HTTP ${resp.status} ${resp.statusText || ''}`.trim();
-                try {
-                    const t = await resp.text();
-                    if (t) reason = `${reason}：${t}`;
-                } catch { /* 忽略 */ }
-                finishTask(task, false, `下载失败：${reason}`);
-                return;
-            }
-            const total = Number(resp.headers.get('Content-Length') || 0);
-            task.total = total;
-            const reader = resp.body!.getReader();
-            const chunks: BlobPart[] = [];
-            let done = 0;
-            let lastT = performance.now();
-            let lastD = 0;
-            let speed = 0;
-            for (; ;) {
-                const { done: d, value } = await reader.read();
-                if (d) break;
-                chunks.push(value);
-                done += value.byteLength;
-                const now = performance.now();
-                if (now - lastT > 400) {
-                    speed = ((done - lastD) / (now - lastT)) * 1000;
-                    lastT = now;
-                    lastD = done;
-                }
-                updateTask(task, done, total, speed);
-            }
-            /* 触发浏览器保存 */
-            const blob = new Blob(chunks);
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = name;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(a.href);
-            finishTask(task, true, '');
-        })
-        .catch((e) => finishTask(task, false, `下载失败：${e}`));
-}
-
-/* ---------------- 上传（仅由本地剪贴板检测自动触发，无显式入口） ---------------- */
-
-/* 旧协议上传请求（Nautilus 右键扩展已移除）——无来源，保留空实现防误调 */
-export function handleUploadRequest(_dir: string): void {
-    /* 忽略 */
-}
-
-/* 右下角错误提醒 toast（如路径权限不足被服务端拒绝） */
+/* 右下角错误提醒 toast */
 export function showTransferError(msg: string): void {
     let t = document.getElementById('transfer-toast') as HTMLElement | null;
     if (!t) {
@@ -201,76 +94,61 @@ export function showTransferError(msg: string): void {
         document.body.appendChild(t);
     }
     t.textContent = '⚠ ' + msg;
-    t.classList.remove('transfer-toast-out');
     t.hidden = false;
-    /* 重新触发出现动画：先移除再强制重排 */
-    void t.offsetWidth;
-    window.clearTimeout((t as HTMLElement & { __toast?: number }).__toast);
-    (t as HTMLElement & { __toast?: number }).__toast = window.setTimeout(() => {
-        t!.classList.add('transfer-toast-out');
-        window.setTimeout(() => { if (t) t.hidden = true; }, 300);
+    window.clearTimeout((t as unknown as { __t?: number }).__t);
+    (t as unknown as { __t?: number }).__t = window.setTimeout(() => {
+        t!.hidden = true;
     }, 4500);
 }
 
-/* 浏览器兜底上传不再需要：上传仅由本地剪贴板检测自动触发（Tauri）。 */
-
-/* ---------------- 剪贴板自动传输（无按钮/拖拽/对话框） ---------------- */
-
-/* ---------------- 剪贴板自动传输（无按钮/拖拽/对话框） ---------------- */
-
-/* 服务端推来远程复制文件列表（MSG_CLIPBOARD_FILES）→ 自动下载到本地下载目录 */
-export function handleClipboardFilesMsg(pathsText: string): void {
-    const paths = pathsText.split('\n').filter((s) => s.length > 0);
-    if (paths.length === 0) return;
-    if (isTauri()) {
-        void downloadRemoteAuto(paths);
-    } else {
-        for (const p of paths) startDownload(p, p.split('/').pop() || 'file');
-    }
-}
-
-/* Tauri：自动下载到系统下载目录（不弹任何选择框） */
-async function downloadRemoteAuto(paths: string[]): Promise<void> {
-    const label = paths.length === 1
-        ? (paths[0].split('/').pop() || 'file')
-        : `下载 ${paths.length} 个文件`;
-    const task = addTask('download', label);
-    curTask = task;
+/* 浏览器回退下载：fetch 流式读完后触发浏览器保存（仅无桌面壳时由 Session 调用） */
+export async function startBrowserDownload(
+    api: string, token: string, path: string,
+): Promise<void> {
+    const name = path.split('/').pop() || 'file';
+    const task = transferTask('download', name);
+    const url = `${api}/api/transfer/download?token=${encodeURIComponent(token)}&path=${encodeURIComponent(path)}`;
     try {
-        const res = await platformDownload({ api: getServer().apiBase, token, paths });
-        finishTask(task, res.ok, res.msg);
+        const resp = await fetch(url);
+        if (!resp.ok) {
+            let reason = `HTTP ${resp.status} ${resp.statusText || ''}`.trim();
+            try {
+                const t = await resp.text();
+                if (t) reason += `：${t}`;
+            } catch { /* 忽略 */ }
+            task.finish(false, reason);
+            return;
+        }
+        const total = Number(resp.headers.get('Content-Length') || 0);
+        const reader = resp.body!.getReader();
+        const chunks: BlobPart[] = [];
+        let done = 0;
+        let lastT = performance.now();
+        let lastD = 0;
+        for (;;) {
+            const { done: d, value } = await reader.read();
+            if (d) break;
+            chunks.push(value);
+            done += value.byteLength;
+            const now = performance.now();
+            let speed = 0;
+            if (now - lastT > 400) {
+                speed = ((done - lastD) / (now - lastT)) * 1000;
+                lastT = now;
+                lastD = done;
+            }
+            task.set(done, total, speed);
+        }
+        const blob = new Blob(chunks);
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+        task.finish(true);
     } catch (e) {
-        finishTask(task, false, `下载失败：${String(e)}`);
-    } finally {
-        if (curTask === task) curTask = null;
+        task.finish(false, `下载失败：${String(e)}`);
     }
-}
-
-/* 本地复制文件（Tauri 检测到系统剪贴板 uri-list）→ 自动上传远程桌面 */
-let lastUploadSig = '';
-export function uploadLocalFiles(paths: string[]): void {
-    if (!paths || paths.length === 0) return;
-    const sig = [...paths].sort().join('\u0000');
-    if (sig === lastUploadSig) return; /* 同一批不重复触发 */
-    lastUploadSig = sig;
-    const label = paths.length === 1
-        ? (paths[0].split('/').pop() || 'file')
-        : `上传 ${paths.length} 个文件`;
-    const task = addTask('upload', label);
-    curTask = task;
-    platformUpload({ api: getServer().apiBase, token, dir: remoteDesktop, files: paths })
-        .then((res) => finishTask(task, res.ok, res.msg))
-        .catch((e) => finishTask(task, false, `上传失败：${String(e)}`))
-        .finally(() => { if (curTask === task) curTask = null; });
-}
-
-/* 桌面壳：订阅主进程传输进度事件（登录成功后调用一次即可） */
-let progressUnlisten: (() => void) | null = null;
-let transferBound = false;
-export function initTransferUi(): void {
-    if (!isDesktop() || transferBound) return;
-    transferBound = true;
-    progressUnlisten = onTransferProgress(
-        (p) => { if (curTask) updateTask(curTask, p.done, p.total, 0); },
-    );
 }

@@ -3,6 +3,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('xwd', {
+    /* 平台：darwin / win32 / linux */
+    platform: process.platform,
     /* 剪贴板 */
     clipWriteText: (text) => ipcRenderer.invoke('xwd:clipWriteText', text),
     clipPoll: () => ipcRenderer.invoke('xwd:clipPoll'),
@@ -14,5 +16,17 @@ contextBridge.exposeInMainWorld('xwd', {
         const listener = (_e, p) => cb(p);
         ipcRenderer.on('xwd:progress', listener);
         return () => ipcRenderer.removeListener('xwd:progress', listener);
+    },
+    /* 窗口控制（自制标题栏） */
+    windowControl: {
+        minimize: () => ipcRenderer.send('xwd:winMin'),
+        toggleMaximize: () => ipcRenderer.send('xwd:winMaxToggle'),
+        close: () => ipcRenderer.send('xwd:winClose'),
+        isMaximized: () => ipcRenderer.invoke('xwd:winIsMax'),
+        onMaximizeChange: (cb) => {
+            const listener = (_e, maxed) => cb(maxed);
+            ipcRenderer.on('xwd:win-max', listener);
+            return () => ipcRenderer.removeListener('xwd:win-max', listener);
+        },
     },
 });

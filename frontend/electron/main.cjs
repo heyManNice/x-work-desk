@@ -15,6 +15,9 @@ const { app, BrowserWindow, ipcMain, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+/* 远程音频会话登录后即播放，需免除“用户手势才能出声”的自动播放限制 */
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 /* 单例窗口（进度事件回推用） */
 let win = null;
 
@@ -167,13 +170,24 @@ function registerIpc() {
             text: typeof r.text === 'string' && r.text.length ? r.text : null,
             files: Array.isArray(r.files) ? r.files.filter((f) => typeof f === 'string') : [],
         };
-        try {
-            console.log('[clipPoll] ->', JSON.stringify({ textLen: safe.text ? safe.text.length : 0, files: safe.files }));
-        } catch { /* 忽略 */ }
         return safe;
     });
     ipcMain.handle('xwd:download', (_e, opt) => downloadRemoteFiles(opt || {}));
     ipcMain.handle('xwd:upload', (_e, opt) => uploadLocalFiles(opt || {}));
+
+    /* ---- 窗口控制（自制标题栏：无系统边框） ---- */
+    ipcMain.on('xwd:winMin', () => win && win.minimize());
+    ipcMain.on('xwd:winMaxToggle', () => {
+        if (!win) return;
+        if (win.isMaximized()) win.unmaximize();
+        else win.maximize();
+    });
+    ipcMain.on('xwd:winClose', () => win && win.close());
+    ipcMain.handle('xwd:winIsMax', () => !!(win && win.isMaximized()));
+}
+
+function sendWinMax(maxed) {
+    if (win && !win.isDestroyed()) win.webContents.send('xwd:win-max', maxed);
 }
 
 /* ---------------- 窗口 ---------------- */
@@ -184,9 +198,11 @@ function createWindow() {
         height: 820,
         minWidth: 900,
         minHeight: 600,
-        title: 'XWorkDesk 远程桌面',
+        title: 'XWorkDesk',
         backgroundColor: '#1e1f22',
         autoHideMenuBar: true,
+        /* 无系统边框：UI 自绘标题栏（自制最小化/最大化/关闭） */
+        frame: false,
         webPreferences: {
             preload: path.join(__dirname, 'preload.cjs'),
             contextIsolation: true,
@@ -200,6 +216,8 @@ function createWindow() {
     });
 
     win.setMenuBarVisibility(false);
+    win.on('maximize', () => sendWinMax(true));
+    win.on('unmaximize', () => sendWinMax(false));
 
     const devUrl = process.env.XWD_DEV_URL;
     if (devUrl) {
