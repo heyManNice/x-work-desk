@@ -201,9 +201,98 @@ function registerIpc() {
         }
     });
     ipcMain.on('xwd:ssh:close', (_e, opt) => closeSshSession(opt && opt.id));
+
+    /* ---- SSH 服务探测 / 一键安装 ---- */
+    ipcMain.handle('xwd:ssh:probe', (_e, opt) => sshProbeServer(opt || {}));
+    ipcMain.handle('xwd:ssh:installServer', (_e, opt) => sshInstallServer(opt || {}));
 }
 
-/* ---- SSH 会话管理 ---- */
+/* ---- 一次性 SSH exec / sftp（服务探测与安装） ---- */
+function sshExecOnce(opt, cmd, stdinData) {
+    return new Promise((resolve) => {
+        const client = new Client();
+        const chunks = [];
+        let errBuf = '';
+        client.on('ready', () => {
+            client.exec(cmd, (err, stream) => {
+                if (err) {
+                    client.end();
+                    resolve({ code: -1, out: '', err: err.message });
+                    return;
+                }
+                stream.on('data', (d) => chunks.push(d));
+                stream.stderr.on('data', (d) => { errBuf += d.toString(); });
+                stream.on('close', (code) => {
+                    client.end();
+                    resolve({ code: code == null ? -1 : code, out: Buffer.concat(chunks).toString(), err: errBuf });
+                });
+                if (stdinData) {
+                    stream.stdin.write(stdinData);
+                    stream.stdin.end();
+                }
+            });
+        });
+        client.on('error', (e) => resolve({ code: -2, out: '', err: (e && e.message) || String(e) }));
+        const p = Number(opt.port) || 22;
+        client.connect({
+            host: String(opt.host || 'localhost'),
+            port: p,
+            username: String(opt.user || ''),
+            password: opt.pass ? String(opt.pass) : undefined,
+            readyTimeout: 12000,
+        });
+    });
+}
+
+function sftpPutOnce(opt, localFile, remoteFile) {
+    return new Promise((resolve) => {
+        const client = new Client();
+        const finish = (r) => { try { client.end(); } catch { /* 忽略 */ } resolve(r); };
+        client.on('ready', () => {
+            client.sftp((err, sftp) => {
+                if (err) return finish({ ok: false, msg: 'sftp 打开失败: ' + err.message });
+                sftp.fastPut(localFile, remoteFile, (e) => {
+                    finish(e ? { ok: false, msg: '上传失败: ' + e.message } : { ok: true });
+                });
+            });
+        });
+        client.on('error', (e) => finish({ ok: false, msg: (e && e.message) || String(e) }));
+        const p = Number(opt.port) || 22;
+        client.connect({
+            host: String(opt.host || 'localhost'),
+            port: p,
+            username: String(opt.user || ''),
+            password: opt.pass ? String(opt.pass) : undefined,
+            readyTimeout: 12000,
+        });
+    });
+}
+
+/* 探测远端 xworkd 服务状态：running / stopped / not_installed / unreachable */
+async function sshProbeServer(opt) {
+    const cmd = 'o=""; command -v xworkd >/dev/null 2>&1 && o="$o BIN"; if systemctl is-active --quiet xworkd 2>/dev/null; then o="$o ACTIVE"; fi; if (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | grep -q "[:.]5268 "; then o="$o PORT"; fi; echo "${o:-NONE}";';
+    const r = await sshExecOnce(opt, cmd);
+    if (r.code === -2) return { ok: false, status: 'unreachable', msg: r.err };
+    const o = r.out.trim();
+    let status = 'not_installed';
+    if (o.includes('PORT')) status = 'running';
+    else if (o.includes('ACTIVE')) status = 'stopped';
+    else if (o.includes('BIN')) status = 'stopped';
+    return { ok: true, status, msg: o || r.err };
+}
+
+/* 推送内置服务端安装包并远端一键安装（sudo 复用账号密码） */
+async function sshInstallServer(opt) {
+    const local = path.join(__dirname, '..', 'server-bundle', 'xworkd-server.tar.gz');
+    if (!fs.existsSync(local)) return { ok: false, msg: '缺少内置服务端安装包(server-bundle)' };
+    const remote = '/tmp/xworkd-server.tar.gz';
+    const up = await sftpPutOnce(opt, local, remote);
+    if (!up.ok) return up;
+    const run = 'sudo -S -p \'\' bash -c "rm -rf /tmp/xworkd-server && mkdir -p /tmp/xworkd-server && tar -C /tmp/xworkd-server -xzf /tmp/xworkd-server.tar.gz && cd /tmp/xworkd-server/xworkd-server && bash install.sh"';
+    const r = await sshExecOnce(opt, run, opt.pass ? String(opt.pass) + '\n' : '');
+    const ok = r.out.includes('XWORKD_INSTALL_OK') || r.code === 0;
+    return { ok, msg: ((r.out || '') + (r.err || '')).trim().slice(-1000), code: r.code };
+}
 const sshSessions = new Map();
 
 function closeSshSession(id) {
@@ -253,6 +342,13 @@ function startSshSession({ id, host, port, user, pass }) {
         });
     });
 }
+
+/* 远端重启（已安装但停止）xworkd 服务 */
+async function sshStartServer(opt) {
+    const r = await sshExecOnce(opt, 'sudo -S -p \'\' systemctl restart xworkd', opt.pass ? String(opt.pass) + '\n' : '');
+    return { ok: r.code === 0, msg: ((r.out || '') + (r.err || '')).trim().slice(-600), code: r.code };
+}
+ipcMain.handle('xwd:ssh:startServer', (_e, opt) => sshStartServer(opt || {}));
 
 function sendWinMax(maxed) {
     if (win && !win.isDestroyed()) win.webContents.send('xwd:win-max', maxed);

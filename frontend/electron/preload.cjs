@@ -45,5 +45,8 @@ contextBridge.exposeInMainWorld('xwd', {
             ipcRenderer.on('xwd:ssh:close', listener);
             return () => ipcRenderer.removeListener('xwd:ssh:close', listener);
         },
+        probe: (opt) => ipcRenderer.invoke('xwd:ssh:probe', opt),
+        startServer: (opt) => ipcRenderer.invoke('xwd:ssh:startServer', opt),
+        installServer: (opt) => ipcRenderer.invoke('xwd:ssh:installServer', opt),
     },
 });

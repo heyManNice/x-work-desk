@@ -35,6 +35,9 @@ interface DesktopBridge {
         close(id: string): void;
         onData(id: string, cb: (data: Uint8Array) => void): () => void;
         onClose(id: string, cb: (code: number) => void): () => void;
+        probe(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; status: string; msg?: string }>;
+        startServer(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; msg?: string }>;
+        installServer(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; msg?: string }>;
     };
 }
 
@@ -161,4 +164,27 @@ export function sshOnData(id: string, cb: (data: Uint8Array) => void): () => voi
 export function sshOnClose(id: string, cb: (code: number) => void): () => void {
     const b = bridge()?.ssh;
     return b ? b.onClose(id, cb) : () => { /* 忽略 */ };
+}
+
+/* 服务探测 / 启动 / 一键安装（桌面连接前引导） */
+export interface SshServerOpt {
+    host: string; port: number; user: string; pass?: string;
+}
+
+export async function sshProbeServer(opt: SshServerOpt): Promise<{ ok: boolean; status: string; msg?: string }> {
+    const b = bridge()?.ssh;
+    if (!b) return { ok: false, status: 'unsupported', msg: '桌面壳环境不支持 SSH' };
+    return b.probe(opt);
+}
+
+export async function sshStartServer(opt: SshServerOpt): Promise<{ ok: boolean; msg?: string }> {
+    const b = bridge()?.ssh;
+    if (!b) return { ok: false, msg: '桌面壳环境不支持 SSH' };
+    return b.startServer(opt);
+}
+
+export async function sshInstallServer(opt: SshServerOpt): Promise<{ ok: boolean; msg?: string }> {
+    const b = bridge()?.ssh;
+    if (!b) return { ok: false, msg: '桌面壳环境不支持 SSH' };
+    return b.installServer(opt);
 }

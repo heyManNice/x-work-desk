@@ -18,6 +18,7 @@ import {
 import {
     isMac, winMinimize, winToggleMaximize, winClose,
     winIsMaximized, onWinMaximizeChange, platform, clipWriteText,
+    sshProbeServer, sshStartServer, sshInstallServer,
 } from './platform';
 import { resolveServer, type ServerTarget } from './server';
 import { showConfirm } from './modal';
@@ -275,6 +276,46 @@ function sshHostOf(h: HostConfig): string {
     return hp || 'localhost';
 }
 
+/* 桌面连接前：经 SSH 探测远端服务端，未装/停止则引导一键安装/启动。
+ * 返回 false 表示用户取消/失败（终止连接）。 */
+async function ensureServerReady(h: HostConfig, pass: string): Promise<boolean> {
+    const opt = { host: sshHostOf(h), port: 22, user: h.user, pass };
+    const probe = await sshProbeServer(opt);
+    if (!probe.ok || probe.status === 'unreachable') {
+        /* SSH 不通：可能服务端已直接开放端口，交给 ws 直连尝试 */
+        return true;
+    }
+    if (probe.status === 'running') return true;
+
+    if (probe.status === 'stopped') {
+        const go = await showConfirm(
+            '服务端已停止',
+            `远端已安装 XWorkDesk 服务端，但当前未运行。\n\n是否通过 SSH 启动它？`,
+        );
+        if (!go) return false;
+        const st = await sshStartServer(opt);
+        if (st.ok) return true;
+        await showConfirm('启动失败', `${st.msg || '未知错误'}\n\n可到远端查看：journalctl -u xworkd -n 50`);
+        return false;
+    }
+
+    /* not_installed */
+    const go = await showConfirm(
+        '未安装服务端',
+        `远端未安装 XWorkDesk 服务端。\n\n是否通过 SSH 一键安装？\n（需要远端账号可 sudo、可联网安装依赖；目标应为可运行 GNOME 的桌面主机）`,
+    );
+    if (!go) return false;
+    const inst = await sshInstallServer(opt);
+    if (!inst.ok) {
+        await showConfirm('安装失败', `${inst.msg || '未知错误'}\n\n请检查 sudo 密码 / 网络 / 依赖`);
+        return false;
+    }
+    const after = await sshProbeServer(opt);
+    if (after.ok && after.status === 'running') return true;
+    await showConfirm('安装后未就绪', '服务未能启动，请到远端查看：journalctl -u xworkd -n 50');
+    return false;
+}
+
 /* 点击主机：建立/激活连接（kind=desktop 桌面远程 / terminal SSH 终端） */
 async function connectHost(h: HostConfig, kind: ConnKind = 'desktop'): Promise<void> {
     /* 已打开的标签里有同类型连接在跑 → 直接激活 */
@@ -306,6 +347,13 @@ async function connectHost(h: HostConfig, kind: ConnKind = 'desktop'): Promise<v
         if (p === null) return; /* 用户取消 */
         pass = p;
     }
+
+    /* 桌面远程：先经 SSH 探测服务端，未装/停止则引导安装/启动 */
+    if (kind === 'desktop') {
+        const ready = await ensureServerReady(h, pass);
+        if (!ready) return;
+    }
+
     /* 再次检查（等待期间可能已打开） */
     const ex2 = tabs().find((t) => t.hostId === h.id && t.type === kind);
     if (ex2) { setActiveId(ex2.id); return; }

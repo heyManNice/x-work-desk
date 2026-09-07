@@ -31,7 +31,8 @@
         "files": [
             "dist/**",
             "electron/**",
-            "package.json"
+            "package.json",
+            "server-bundle/**"
         ],
         "win": {
             "target": [
