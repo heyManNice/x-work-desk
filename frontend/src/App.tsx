@@ -734,7 +734,6 @@ function FullscreenBar() {
 
     return (
         <div class="fs-wrap" classList={{ open: open() }}>
-            <div class="fs-peek" onMouseEnter={expand} onMouseLeave={retractSoon} />
             <div class="fs-inner" onMouseEnter={expand} onMouseLeave={retractSoon}>
                 <Show when={activeTab()}>
                     {(a) => (

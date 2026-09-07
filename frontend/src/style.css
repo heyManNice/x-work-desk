@@ -1241,48 +1241,26 @@ canvas {
     background: var(--hover);
 }
 
-/* ============ 全屏悬浮工具栏（顶部居中细线，hover 下滑出 fit 内容工具栏） ============ */
-/* 桌面壳用窗口级全屏：DOM 全保留、弹层/面板仍可用；沉浸时原顶栏/侧栏隐藏，
- * 只在屏幕顶部居中露一条细线手柄，hover 后 fit 内容的工具栏（文字按钮组）下滑展开。 */
+/* ============ 全屏悬浮工具栏（顶栏同色；收起时只露底部几像素，hover 下滑出） ============ */
+/* 桌面壳用窗口级全屏：DOM 全保留、弹层/面板仍可用；沉浸时原顶栏/侧栏隐藏。
+ * 工具栏沿用顶栏配色（var(--bg-elev)）、小圆角、无阴影；常态整体上移仅露出卡片
+ * 底部几像素作手柄（无独立白条），hover 该条整条下滑展开（复用文字按钮组）。 */
 .fs-wrap {
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    pointer-events: none;
-    /* 只让细线与展开的卡片可交互，其余区域透传给远程画面 */
+    justify-content: center;
+    pointer-events: none; /* 只让工具栏本体可交互，其余区域透传给远程画面 */
     z-index: 1300;
-    /* 覆盖主题变量：浮层固定用深色半透明配色，明暗画面/深浅主题下都清晰 */
-    --text: #f2f4f7;
-    --text-dim: #c6ccd4;
-    --hover: rgba(255, 255, 255, 0.12);
-    --active: rgba(255, 255, 255, 0.2);
-    --danger: #ff6b63;
 }
 
-/* 顶部细线手柄（收起态可见，hover 展开） */
-.fs-peek {
-    pointer-events: auto;
-    width: 96px;
-    height: 5px;
-    border-radius: 0 0 6px 6px;
-    cursor: pointer;
-    background: linear-gradient(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.15));
-    transition: background 0.15s ease;
-}
-
-.fs-peek:hover {
-    background: linear-gradient(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.32));
-}
-
-/* 工具栏容器：默认藏在屏幕上沿之外（仅细线可见），hover 细线滑出 */
+/* 工具栏：默认移到屏幕上沿之外、只露底部 8px（收起态手柄），hover 滑出 */
 .fs-inner {
     pointer-events: auto;
-    transform: translateY(calc(-100% - 10px));
-    transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.3, 1);
+    transform: translateY(calc(-100% + 8px));
+    transition: transform 0.18s ease;
     will-change: transform;
 }
 
@@ -1290,15 +1268,14 @@ canvas {
     transform: none;
 }
 
-/* fit 内容的工具栏卡片（顶部贴细线，底部圆角） */
+/* fit 内容的工具栏卡片：与顶栏同色、小圆角、无阴影 */
 .fs-card {
     display: flex;
     align-items: center;
     gap: 2px;
-    padding: 6px 10px;
-    background: rgba(16, 18, 24, 0.88);
-    border-radius: 0 0 12px 12px;
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+    padding: 5px 8px;
+    background: var(--bg-elev);
+    border-radius: 0 0 6px 6px;
 }
 
 .fs-card .tab-btn.active {
