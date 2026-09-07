@@ -12,7 +12,8 @@ import {
 } from 'solid-js';
 import {
     Monitor, Plus, Play, Pencil, Trash2, Minus, Copy, Square, X,
-    Sun, Moon, LogOut, Unplug, Link,
+    Sun, Moon, LogOut, Unplug, Link, PanelLeftOpen, PanelLeftClose,
+    Maximize2, Minimize2,
 } from 'lucide-solid';
 import {
     isMac, winMinimize, winToggleMaximize, winClose,
@@ -71,10 +72,42 @@ const [hosts, setHostsSig] = createSignal<HostConfig[]>(loadHosts());
 const [tabs, setTabsSig] = createSignal<TabRec[]>([]);
 const [activeId, setActiveId] = createSignal<number | null>(null);
 
+/* 左侧主机面板展开/收起（记忆） */
+const SB_KEY = 'xwd-sidebar-collapsed';
+function initSbCollapsed(): boolean {
+    try { return localStorage.getItem(SB_KEY) === '1'; } catch { return false; }
+}
+const [sbCollapsed, setSbCollapsed] = createSignal<boolean>(initSbCollapsed());
+createEffect(() => {
+    try { localStorage.setItem(SB_KEY, sbCollapsed() ? '1' : '0'); } catch { /* 忽略 */ }
+});
+
+/* 全屏状态 */
+const [fsActive, setFsActive] = createSignal(false);
+document.addEventListener('fullscreenchange', () => {
+    setFsActive(document.fullscreenElement != null);
+});
+
 const sessionMap = new Map<number, Session>();
 const pendingMap = new Map<number, {
     host: HostConfig; target: ServerTarget; user: string; pass: string;
 }>();
+const tabEls = new Map<number, HTMLElement>();
+
+function activeViewRoot(): HTMLElement | null {
+    const id = activeId();
+    return id == null ? null : (tabEls.get(id) ?? null);
+}
+
+/* 全屏切换（目标=当前激活会话视图，全屏内含顶部悬浮工具条） */
+function toggleFullscreen(): void {
+    if (document.fullscreenElement) {
+        void document.exitFullscreen();
+        return;
+    }
+    const el = activeViewRoot();
+    if (el) void el.requestFullscreen();
+}
 
 let tabSeq = 0;
 
@@ -270,6 +303,17 @@ createEffect(() => {
     sessionMap.forEach((s, tid) => s.setActive(tid === id));
 });
 
+/* 侧栏展开/收起、进入/退出全屏都会改变会话可视区 → auto 分辨率需向远程更新 */
+createEffect(() => {
+    void sbCollapsed();
+    void fsActive();
+    const t = window.setTimeout(() => {
+        const id = activeId();
+        if (id != null) sessionMap.get(id)?.handleResize();
+    }, 340);
+    return () => window.clearTimeout(t);
+});
+
 /* 断开：断开连接并清除当前标签 */
 function disconnectActive(): void {
     const id = activeId();
@@ -333,10 +377,19 @@ function Sidebar() {
         return id == null ? null : tabs().find((t) => t.id === id)?.hostId ?? null;
     };
     return (
-        <aside class="sidebar">
+        <aside class="sidebar" classList={{ collapsed: sbCollapsed() }}>
             <div class="sidebar-head">
                 <div class="sb-logo" title="XWorkDesk"><Monitor size={16} /><span class="sb-appname">XWorkDesk</span></div>
-                <button class="icon-btn" onClick={openEditorForNew} title="新建主机"><Plus size={16} /></button>
+                <div class="sb-head-right">
+                    <button class="icon-btn" onClick={openEditorForNew} title="新建主机"><Plus size={16} /></button>
+                    <button
+                        class="icon-btn"
+                        onClick={() => setSbCollapsed(true)}
+                        title="收起主机面板"
+                    >
+                        <PanelLeftClose size={15} />
+                    </button>
+                </div>
             </div>
             <ul class="host-list">
                 <For each={hosts()}>
@@ -348,7 +401,10 @@ function Sidebar() {
                             onContextMenu={(e) => openHostMenu(e, h)}
                         >
                             <span class="host-dot" />
-                            <div class="host-name" title={hostDisplay(h)}>{h.name || hostDisplay(h)}</div>
+                            <div class="host-line" title={hostDisplay(h)}>
+                                <span class="host-name">{h.name || hostDisplay(h)}</span>
+                                <span class="host-addr-inline">{hostDisplay(h)}</span>
+                            </div>
                             <div class="host-ops">
                                 <button class="host-op" title="连接" onClick={(e) => { e.stopPropagation(); void connectHost(h); }}><Play size={13} /></button>
                                 <button class="host-op" title="编辑" onClick={(e) => { e.stopPropagation(); openEditorEdit(h); }}><Pencil size={13} /></button>
@@ -375,6 +431,12 @@ function Sidebar() {
 function TabBar() {
     return (
         <div class="tabbar">
+            {/* 收起时：标签栏最左的展开按钮 */}
+            <Show when={sbCollapsed()}>
+                <button class="tab-toggle" onClick={() => setSbCollapsed(false)} title="展开主机面板">
+                    <PanelLeftOpen size={15} />
+                </button>
+            </Show>
             <div class="tab-list">
                 <For each={tabs()}>
                     {(t) => (
@@ -400,6 +462,9 @@ function TabBar() {
             <div class="topbar-right">
                 <Show when={activeId() != null}>
                     <div class="tabbar-actions">
+                        <button class="tab-btn" onClick={toggleFullscreen} title={fsActive() ? '退出全屏' : '全屏显示'}>
+                            {fsActive() ? <Minimize2 size={13} /> : <Maximize2 size={13} />} 全屏
+                        </button>
                         <button class="tab-btn" onClick={disconnectActive} title="断开连接并关闭此标签">
                             <Unplug size={13} /> 断开
                         </button>
@@ -429,8 +494,30 @@ function SessionPane(props: { id: number }) {
             onStatus: (s: SessionStatus) => rec.setStatus(s.state),
         });
         sessionMap.set(props.id, sess);
+        tabEls.set(props.id, rootEl);
         sess.setActive(activeId() === props.id);
         sess.connect();
+
+        /* 全屏悬浮工具条：全屏时鼠标移到屏幕顶部中央出现（“退出全屏”） */
+        const fsBar = document.createElement('div');
+        fsBar.className = 'fs-toolbar';
+        fsBar.hidden = true;
+        const btnFs = document.createElement('button');
+        btnFs.className = 'btn primary';
+        btnFs.textContent = '退出全屏';
+        btnFs.addEventListener('click', () => {
+            if (document.fullscreenElement) void document.exitFullscreen();
+        });
+        fsBar.appendChild(btnFs);
+        rootEl.appendChild(fsBar);
+
+        rootEl.addEventListener('mousemove', (e) => {
+            if (document.fullscreenElement === rootEl) fsBar.hidden = !(e.clientY < 70);
+        });
+        rootEl.addEventListener('mouseleave', () => { fsBar.hidden = true; });
+        document.addEventListener('fullscreenchange', function onFs() {
+            if (document.fullscreenElement !== rootEl) fsBar.hidden = true;
+        });
     });
     onCleanup(() => {
         const sess = sessionMap.get(props.id);
@@ -438,6 +525,7 @@ function SessionPane(props: { id: number }) {
             sess.destroy();
             sessionMap.delete(props.id);
         }
+        tabEls.delete(props.id);
     });
     return (
         <div

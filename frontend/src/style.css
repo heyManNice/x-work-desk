@@ -298,6 +298,14 @@ html[data-platform='darwin'] .tb-winbtns {
     display: flex;
     flex-direction: column;
     min-height: 0;
+    overflow: hidden;
+    transition: width 0.24s cubic-bezier(0.3, 0.8, 0.3, 1), flex-basis 0.24s cubic-bezier(0.3, 0.8, 0.3, 1);
+}
+
+/* 收起：整块左移完全消失（右侧自动变宽）；展开按钮位于标签栏最左 */
+.sidebar.collapsed {
+    width: 0;
+    flex-basis: 0;
 }
 
 .sidebar-head {
@@ -331,6 +339,27 @@ html[data-platform='darwin'] .tb-winbtns {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* 头部右侧组：＋ 与 展开/收起 */
+.sb-head-right {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    -webkit-app-region: no-drag;
+    flex: 0 0 auto;
+}
+
+.sidebar.collapsed .sidebar-head {
+    padding: 0 4px 0 7px;
+}
+
+.sb-logo-only {
+    min-width: 0;
+}
+
+.sb-logo-only svg {
+    color: var(--accent);
 }
 
 .sidebar-head .icon-btn {
@@ -374,7 +403,8 @@ html[data-platform='darwin'] .tb-winbtns {
 }
 
 .host-item:hover {
-    background: var(--bg-elev-2);
+    background: var(--hover);
+    /* 更轻微的颜色变化 */
 }
 
 .host-item.active {
@@ -397,14 +427,26 @@ html[data-theme='light'] .host-item.active {
     background: var(--accent);
 }
 
-.host-name {
+/* 单行：名字 + user@地址，空间不足整体省略 */
+.host-line {
     flex: 1;
     min-width: 0;
-    font-size: 13px;
-    font-weight: 500;
+    display: block;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    font-size: 13px;
+}
+
+.host-line .host-name {
+    font-weight: 500;
+    color: var(--text);
+}
+
+.host-line .host-addr-inline {
+    color: var(--text-faint);
+    font-size: 11.5px;
+    margin-left: 6px;
 }
 
 .host-ops {
@@ -485,8 +527,26 @@ html[data-theme='light'] .host-item.active {
 }
 
 .tab,
-.tab-btn {
+.tab-btn,
+.tab-toggle {
     -webkit-app-region: no-drag;
+}
+
+/* 标签栏最左：展开主机面板按钮（收起态显示） */
+.tab-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    flex: 0 0 auto;
+    align-self: stretch;
+    color: var(--text-dim);
+    cursor: pointer;
+}
+
+.tab-toggle:hover {
+    background: var(--hover);
+    color: var(--text);
 }
 
 .tab {
@@ -1140,4 +1200,29 @@ canvas {
     height: 1px;
     margin: 4px 8px;
     background: var(--hover);
+}
+
+/* ============ 全屏悬浮工具条（鼠标移到顶部中央出现） ============ */
+.fs-toolbar {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px;
+    border-radius: 12px;
+    background: var(--bg-elev-3);
+    z-index: 60;
+}
+
+.fs-toolbar[hidden] {
+    display: none;
+}
+
+/* 元素全屏时背景纯黑（视频容器） */
+.session-view:fullscreen {
+    background: #000;
+    display: block;
 }
