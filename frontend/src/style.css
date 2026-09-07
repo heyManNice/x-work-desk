@@ -1306,12 +1306,6 @@ canvas {
     color: var(--text);
 }
 
-/* 元素全屏时背景纯黑（视频容器；浏览器同源部署回退 HTML5 fullscreen 用） */
-.session-view:fullscreen {
-    background: #000;
-    display: block;
-}
-
 /* ============ SSH 终端 ============ */
 .term-wrap {
     position: absolute;

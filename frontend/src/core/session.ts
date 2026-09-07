@@ -22,10 +22,10 @@ import { AudioPlayer } from '../audio';
 import type { ServerTarget } from '../server';
 import type { HostConfig } from './host';
 import {
-    isDesktop, clipWriteText, clipPoll,
+    clipWriteText, clipPoll,
     downloadRemoteFiles, uploadLocalFiles,
 } from '../platform';
-import { transferTask, showTransferError, startBrowserDownload } from '../transfer';
+import { transferTask, showTransferError } from '../transfer';
 import { showConfirm } from '../modal';
 
 export type SessionState = 'connecting' | 'running' | 'error' | 'closed';
@@ -542,15 +542,11 @@ export class Session {
         const { apiBase } = this.opt.target;
         const t = this.token;
         if (!this.haveToken) return;
-        if (isDesktop()) {
-            const name = path.split('/').pop() || 'file';
-            const task = transferTask('download', name);
-            void downloadRemoteFiles({ api: apiBase, token: t, paths: [path] })
-                .then((r) => task.finish(r.ok, r.msg || undefined))
-                .catch((e) => task.finish(false, `下载失败：${String(e)}`));
-        } else {
-            void startBrowserDownload(apiBase, t, path);
-        }
+        const name = path.split('/').pop() || 'file';
+        const task = transferTask('download', name);
+        void downloadRemoteFiles({ api: apiBase, token: t, paths: [path] })
+            .then((r) => task.finish(r.ok, r.msg || undefined))
+            .catch((e) => task.finish(false, `下载失败：${String(e)}`));
     }
 
     /* 本地复制文件自动上传（桌面壳 clip_poll 检测到） */

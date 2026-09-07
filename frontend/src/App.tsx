@@ -16,7 +16,7 @@ import {
     Maximize2, Minimize2, Terminal as TerminalIcon,
 } from 'lucide-solid';
 import {
-    isMac, isDesktop, winMinimize, winToggleMaximize, winClose,
+    isMac, winMinimize, winToggleMaximize, winClose,
     winIsMaximized, onWinMaximizeChange,
     winSetFullScreen, winIsFullScreen, onWinFullScreenChange,
     platform, clipWriteText,
@@ -103,17 +103,10 @@ createEffect(() => {
     try { localStorage.setItem(SB_KEY, sbCollapsed() ? '1' : '0'); } catch { /* 忽略 */ }
 });
 
-/* 全屏状态：桌面壳=Electron 窗口级全屏（DOM 全保留，文件面板/通知/确认框仍可用）；
- * 浏览器同源部署回退 HTML5 fullscreen（兜底）。 */
+/* 全屏状态：Electron 窗口级全屏（DOM 全保留，文件面板/通知/确认框在全屏内仍可用） */
 const [fsActive, setFsActive] = createSignal(false);
-if (typeof document !== 'undefined') {
-    document.addEventListener('fullscreenchange', () => {
-        setFsActive(document.fullscreenElement != null);
-    });
-    /* 桌面壳：窗口级全屏状态（含外部变化） */
-    onWinFullScreenChange((fs) => setFsActive(fs));
-    void winIsFullScreen().then((fs) => { if (fs) setFsActive(true); });
-}
+onWinFullScreenChange((fs) => setFsActive(fs));
+void winIsFullScreen().then((fs) => { if (fs) setFsActive(true); });
 
 const sessionMap = new Map<number, ConnSession>();
 const pendingMap = new Map<number, {
@@ -125,34 +118,15 @@ const pendingMap = new Map<number, {
     user: string;
     pass: string;
 }>();
-const tabEls = new Map<number, HTMLElement>();
 
-function activeViewRoot(): HTMLElement | null {
-    const id = activeId();
-    return id == null ? null : (tabEls.get(id) ?? null);
-}
-
-/* 全屏切换：桌面壳=窗口级全屏（沉浸模式，DOM 全保留）；浏览器回退激活会话视图 HTML5 fullscreen */
+/* 全屏切换：窗口级全屏（沉浸模式，DOM 全保留） */
 function toggleFullscreen(): void {
-    if (isDesktop()) {
-        void winSetFullScreen(!fsActive());
-        return;
-    }
-    if (document.fullscreenElement) {
-        void document.exitFullscreen();
-        return;
-    }
-    const el = activeViewRoot();
-    if (el) void el.requestFullscreen();
+    void winSetFullScreen(!fsActive());
 }
 
 /* 退出全屏（断开/注销前调用，避免沉浸全屏下已无活动会话） */
 function quitFullscreen(): void {
-    if (isDesktop()) {
-        if (fsActive()) void winSetFullScreen(false);
-    } else if (document.fullscreenElement) {
-        void document.exitFullscreen();
-    }
+    if (fsActive()) void winSetFullScreen(false);
 }
 
 let tabSeq = 0;
@@ -742,7 +716,7 @@ function FullscreenBar() {
             setOpen(false);
             const t = tabs().find((x) => x.id === activeId());
             if (!t || t.type !== 'desktop') {
-                if (isDesktop()) void winSetFullScreen(false);
+                void winSetFullScreen(false);
             }
         }
     });
@@ -780,7 +754,6 @@ function SessionPane(props: { id: number }) {
         const pend = pendingMap.get(props.id);
         const rec = tabs().find((t) => t.id === props.id);
         if (!pend || !rec || !rootEl) return;
-        tabEls.set(props.id, rootEl);
 
         let sess: ConnSession;
         if (pend.type === 'terminal') {
@@ -817,7 +790,6 @@ function SessionPane(props: { id: number }) {
             sess.destroy();
             sessionMap.delete(props.id);
         }
-        tabEls.delete(props.id);
     });
     return (
         <div
@@ -1080,7 +1052,7 @@ export default function App() {
                 <Sidebar />
                 <Workspace />
             </div>
-            <Show when={isDesktop() && fsActive()}><FullscreenBar /></Show>
+            <Show when={fsActive()}><FullscreenBar /></Show>
             <HostEditor />
             <PasswordDialog />
             <HostContextMenu />
