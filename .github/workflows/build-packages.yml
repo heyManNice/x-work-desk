@@ -15,10 +15,10 @@ jobs:
             os: windows-latest
             builder: --win msi --x64
             glob: '*.msi'
-          - name: windows-msi-arm64
+          - name: windows-nsis-arm64
             os: windows-latest
-            builder: --win msi --arm64
-            glob: '*.msi'
+            builder: --win nsis --arm64
+            glob: '*.exe'
           - name: linux-deb-x64
             os: ubuntu-latest
             builder: --linux deb --x64
