@@ -516,7 +516,18 @@ function ThemeToggle() {
     );
 }
 
-/* 窗口控制（纯图标，固定最右；Win/Linux 右上三键，macOS 左上红黄绿） */
+/* macOS 红黄绿灯：展开时在边栏左上角，边栏收起时移到标签栏最左 */
+function MacDots() {
+    return (
+        <div class="tb-macdots">
+            <button class="macdot macdot-close" onClick={() => winClose()} title="关闭" />
+            <button class="macdot macdot-min" onClick={() => winMinimize()} title="最小化" />
+            <button class="macdot macdot-max" onClick={() => winToggleMaximize()} title="最大化" />
+        </div>
+    );
+}
+
+/* 窗口控制：Win/Linux 右上最小化/最大化/关闭（保持现状） */
 function TopTools() {
     const [maxed, setMaxed] = createSignal(false);
     onMount(() => {
@@ -529,21 +540,14 @@ function TopTools() {
         else if (act === 'close') winClose();
     };
     return (
-        <>
-            <div class="tb-winbtns">
-                <button class="tb-ctl" onClick={() => onCtl('min')} title="最小化"><Minus size={12} /></button>
-                <button class="tb-ctl tb-max-btn" classList={{ 'is-maxed': maxed() }} onClick={() => onCtl('max')} title={maxed() ? '还原' : '最大化'}>
-                    <Copy class="ico-restore" size={12} />
-                    <Square class="ico-max" size={11} />
-                </button>
-                <button class="tb-ctl tb-close" onClick={() => onCtl('close')} title="关闭"><X size={12} /></button>
-            </div>
-            <div class="tb-macdots">
-                <button class="macdot macdot-close" onClick={() => winClose()} title="关闭" />
-                <button class="macdot macdot-min" onClick={() => winMinimize()} title="最小化" />
-                <button class="macdot macdot-max" onClick={() => winToggleMaximize()} title="最大化" />
-            </div>
-        </>
+        <div class="tb-winbtns">
+            <button class="tb-ctl" onClick={() => onCtl('min')} title="最小化"><Minus size={12} /></button>
+            <button class="tb-ctl tb-max-btn" classList={{ 'is-maxed': maxed() }} onClick={() => onCtl('max')} title={maxed() ? '还原' : '最大化'}>
+                <Copy class="ico-restore" size={12} />
+                <Square class="ico-max" size={11} />
+            </button>
+            <button class="tb-ctl tb-close" onClick={() => onCtl('close')} title="关闭"><X size={12} /></button>
+        </div>
     );
 }
 
@@ -557,7 +561,11 @@ function Sidebar() {
     return (
         <aside class="sidebar" classList={{ collapsed: sbCollapsed() }}>
             <div class="sidebar-head">
-                <div class="sb-logo" title="XWorkDesk"><Monitor size={16} /><span class="sb-appname">XWorkDesk</span></div>
+                {isMac() ? (
+                    <MacDots />
+                ) : (
+                    <div class="sb-logo" title="XWorkDesk"><Monitor size={16} /><span class="sb-appname">XWorkDesk</span></div>
+                )}
                 <div class="sb-head-right">
                     <button class="icon-btn" onClick={openEditorForNew} title="新建主机"><Plus size={16} /></button>
                     <button
@@ -624,6 +632,10 @@ function TabBar() {
     };
     return (
         <div class="tabbar">
+            {/* macOS：边栏收起时红绿灯显示在标签栏最左 */}
+            <Show when={isMac() && sbCollapsed()}>
+                <MacDots />
+            </Show>
             {/* 收起时：标签栏最左的展开按钮 */}
             <Show when={sbCollapsed()}>
                 <button class="tab-toggle" onClick={() => setSbCollapsed(false)} title="展开主机面板">
@@ -666,6 +678,10 @@ function TabBar() {
                     <ThemeToggle />
                 </div>
                 <TopTools />
+                {/* macOS：应用名文字移到标签栏最右（无图标） */}
+                <Show when={isMac()}>
+                    <div class="tb-applogo">XWorkDesk</div>
+                </Show>
             </div>
         </div>
     );

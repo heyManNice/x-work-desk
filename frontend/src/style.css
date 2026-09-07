@@ -246,13 +246,13 @@ html[data-theme='light'] .ico-moon {
     display: none;
 }
 
-/* macOS 红黄绿点（仅 darwin 显示在左） */
+/* macOS 红黄绿点（展开时在边栏左上、收起时在标签栏最左） */
 .tb-macdots {
-    display: none;
-    gap: 7px;
+    display: flex;
+    gap: 8px;
     align-items: center;
-    padding-right: 4px;
     -webkit-app-region: no-drag;
+    flex: 0 0 auto;
 }
 
 .macdot {
@@ -275,12 +275,32 @@ html[data-theme='light'] .ico-moon {
     background: #28c840;
 }
 
-html[data-platform='darwin'] .tb-macdots {
-    display: flex;
-}
-
 html[data-platform='darwin'] .tb-winbtns {
     display: none;
+}
+
+/* 红绿灯在边栏头部（展开态）：左对齐，右侧留一点间距 */
+.sidebar-head .tb-macdots {
+    padding-right: 10px;
+}
+
+/* 红绿灯在标签栏最左（边栏收起态） */
+.tabbar>.tb-macdots {
+    height: 100%;
+    padding: 0 10px 0 12px;
+}
+
+/* macOS：应用名文字（无图标）贴标签栏最右 */
+.tb-applogo {
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    margin-left: 6px;
+    padding-right: 6px;
+    -webkit-app-region: no-drag;
+    user-select: none;
 }
 
 /* ============ 主体布局 ============ */
