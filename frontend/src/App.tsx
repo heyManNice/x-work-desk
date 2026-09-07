@@ -90,9 +90,9 @@ window.addEventListener('resize', () => {
 
 /* ---------------- 弹窗状态 ---------------- */
 
-const [editor, setEditor] = createSignal<{ open: boolean; editing: HostConfig | null }>({
-    open: false, editing: null,
-});
+/* 主机编辑弹窗：open 驱动常驻层开关动画；data 为当前编辑快照（关闭时保留以播收起动画） */
+const [editorOpen, setEditorOpen] = createSignal(false);
+const [editorData, setEditorData] = createSignal<HostConfig | null>(null);
 
 const [pw, setPw] = createSignal<{ open: boolean; title: string; label: string }>({
     open: false, title: '', label: '',
@@ -108,26 +108,29 @@ function askPassword(title: string, label: string): Promise<string | null> {
 function resolvePassword(v: string | null): void {
     passResolver?.(v);
     passResolver = null;
-    setPw({ open: false, title: '', label: '' });
+    /* 保留 title/label：收起动画期间面板内容不空白 */
+    setPw((p) => ({ ...p, open: false }));
 }
 
 /* ---------------- 动作 ---------------- */
 
 function openEditorForNew(): void {
-    setEditor({ open: true, editing: defaultHost() });
+    setEditorData(defaultHost());
+    setEditorOpen(true);
 }
 
 function openEditorEdit(h: HostConfig): void {
-    setEditor({ open: true, editing: { ...h } });
+    setEditorData({ ...h });
+    setEditorOpen(true);
 }
 
 function saveEditor(d: HostConfig): void {
-    const editing = editor().editing;
+    const editing = editorData();
     if (!editing) return;
     if (!d.name.trim()) d.name = d.host || '未命名主机';
     d.id = editing.id || newId();
     setHosts(upsertHost(hosts(), d));
-    setEditor({ open: false, editing: null });
+    setEditorOpen(false); /* 保留 data：让收起动画期间面板仍存在 */
 }
 
 function deleteHostById(id: string): void {
@@ -135,7 +138,7 @@ function deleteHostById(id: string): void {
     const victims = tabs().filter((t) => t.hostId === id).map((t) => t.id);
     for (const vid of victims) closeTab(vid);
     setHosts(removeHost(hosts(), id));
-    if (editor().open && editor().editing?.id === id) setEditor({ open: false, editing: null });
+    if (editorOpen() && editorData()?.id === id) setEditorOpen(false);
 }
 
 /* 点击主机：建立/激活连接 */
@@ -148,7 +151,8 @@ async function connectHost(h: HostConfig): Promise<void> {
     }
     const target = resolveServer(h.host);
     if (!target) {
-        setEditor({ open: true, editing: { ...h } }); /* 地址无效：打开编辑 */
+        setEditorData({ ...h }); /* 地址无效：打开编辑 */
+        setEditorOpen(true);
         return;
     }
     let pass = h.pass || '';
@@ -430,7 +434,8 @@ const QUALITY_OPTIONS: Array<[number, string]> = [
 ];
 
 function HostEditor() {
-    const editing = () => editor().editing;
+    const editing = () => editorData();
+    const closeEditor = () => setEditorOpen(false);
     const isNew = () => !editing()?.id;
     let rName!: HTMLInputElement;
     let rHost!: HTMLInputElement;
@@ -485,13 +490,13 @@ function HostEditor() {
     };
 
     return (
-        <Show when={editor().open && editing()}>
-            {(h) => (
-                <div class="modal-layer" onClick={(e) => { if (e.target === e.currentTarget) setEditor({ open: false, editing: null }); }}>
+        <div class="modal-layer" classList={{ show: editorOpen() }} onClick={(e) => { if (e.target === e.currentTarget) closeEditor(); }}>
+            <Show when={editing()}>
+                {(h) => (
                     <div class="modal-panel" onClick={(e) => e.stopPropagation()}>
                         <div class="mp-head">
                             <span class="mp-title">{isNew() ? '新建主机' : '编辑主机'}</span>
-                            <button class="mp-x" onClick={() => setEditor({ open: false, editing: null })}><X size={13} /></button>
+                            <button class="mp-x" onClick={closeEditor}><X size={13} /></button>
                         </div>
                         <div class="mp-body">
                             <div class="he-grid he-grid-basic">
@@ -558,13 +563,13 @@ function HostEditor() {
                                 <button class="btn danger" onClick={() => { const id = h().id; deleteHostById(id); }}>删除</button>
                             </Show>
                             <span class="mp-spacer" />
-                            <button class="btn" onClick={() => setEditor({ open: false, editing: null })}>取消</button>
+                            <button class="btn" onClick={closeEditor}>取消</button>
                             <button class="btn primary" onClick={submit}>保存</button>
                         </div>
                     </div>
-                </div>
-            )}
-        </Show>
+                )}
+            </Show>
+        </div>
     );
 }
 
@@ -572,34 +577,42 @@ function HostEditor() {
 
 function PasswordDialog() {
     let input!: HTMLInputElement;
+    createEffect(() => {
+        if (pw().open) {
+            requestAnimationFrame(() => {
+                if (input) {
+                    input.value = '';
+                    input.focus();
+                }
+            });
+        }
+    });
     const submit = () => {
         const v = input.value;
         resolvePassword(v.length ? v : null);
     };
     return (
-        <Show when={pw().open}>
-            <div class="modal-layer">
-                <div class="modal-panel modal-small">
-                    <div class="mp-head"><span class="mp-title">{pw().title}</span></div>
-                    <div class="mp-body">
-                        <div class="modal-text">{pw().label}</div>
-                        <input
-                            ref={input}
-                            type="password"
-                            placeholder="输入密码"
-                            autocomplete="off"
-                            onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') resolvePassword(null); }}
-                            style={{ height: '32px', padding: '0 10px', 'border-radius': '7px', border: '1px solid var(--border)', background: 'var(--bg-elev-2)', color: 'var(--text)', outline: 'none', 'font-size': '13px' }}
-                        />
-                    </div>
-                    <div class="mp-foot">
-                        <button class="btn" onClick={() => resolvePassword(null)}>取消</button>
-                        <span class="mp-spacer" />
-                        <button class="btn primary" onClick={submit}>连接</button>
-                    </div>
+        <div class="modal-layer" classList={{ show: pw().open }}>
+            <div class="modal-panel modal-small">
+                <div class="mp-head"><span class="mp-title">{pw().title}</span></div>
+                <div class="mp-body">
+                    <div class="modal-text">{pw().label}</div>
+                    <input
+                        ref={input}
+                        type="password"
+                        placeholder="输入密码"
+                        autocomplete="off"
+                        onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') resolvePassword(null); }}
+                        style={{ height: '32px', padding: '0 10px', 'border-radius': '7px', border: '1px solid var(--border)', background: 'var(--bg-elev-2)', color: 'var(--text)', outline: 'none', 'font-size': '13px' }}
+                    />
+                </div>
+                <div class="mp-foot">
+                    <button class="btn" onClick={() => resolvePassword(null)}>取消</button>
+                    <span class="mp-spacer" />
+                    <button class="btn primary" onClick={submit}>连接</button>
                 </div>
             </div>
-        </Show>
+        </div>
     );
 }
 

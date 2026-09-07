@@ -247,6 +247,12 @@ export class Session {
                 w = Math.round(Number(m[1]));
                 h = Math.round(Number(m[2]));
             }
+        } else {
+            /* 自适应：登录即按会话容器当前 CSS 尺寸 × devicePixelRatio
+             * 计算物理分辨率，避免首次连接用了画布默认 1280x720 */
+            const [vw, vh] = this.viewportSize();
+            w = vw;
+            h = vh;
         }
         this.cfgW = w;
         this.cfgH = h;
@@ -474,6 +480,14 @@ export class Session {
         this.setStatus('running');
         this.overlay.classList.remove('show');
         if (this.audioEnabled) this.audio.start();
+
+        /* auto 分辨率：登录后延时校准一次（首帧容器布局可能尚未稳定），
+         * 尺寸不符会补发 msgResize，避免首次连接分辨率不正确 */
+        if (this.opt.host.res === 'auto') {
+            window.setTimeout(() => {
+                if (!this.destroyed && this.status === 'running') this.handleResize();
+            }, 400);
+        }
 
         /* 接管/重连后若渲染器仍未配置（错过 CONFIG），请求补发 */
         window.setTimeout(() => {

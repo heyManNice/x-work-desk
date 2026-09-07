@@ -720,19 +720,41 @@ html[data-platform='darwin'] .tb-winbtns {
     color: var(--text-faint);
 }
 
-/* ============ 弹窗层 ============ */
+/* ============ 弹窗层（背景淡入淡出 + 面板 Y 轴缩放动画） ============
+ * 打开：.show 加入 → 遮罩透明度渐入、面板 scaleY(0→1)
+ * 关闭：移除 .show → 反向过渡，结束后经 visibility 延迟自动隐藏（不挡点击）
+ */
 .modal-layer {
     position: fixed;
     inset: 0;
-    background: var(--overlay);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 100;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+        visibility 0s linear 0.24s;
 }
 
-.modal-layer[hidden] {
-    display: none;
+/* 遮罩背景：透明度动画（不随面板一起淡出内容） */
+.modal-layer::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--overlay);
+    opacity: 0;
+    transition: opacity 0.22s ease;
+}
+
+.modal-layer.show {
+    visibility: visible;
+    pointer-events: auto;
+    transition: visibility 0s;
+}
+
+.modal-layer.show::before {
+    opacity: 1;
 }
 
 .modal-panel {
@@ -745,6 +767,18 @@ html[data-platform='darwin'] .tb-winbtns {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    transform-origin: center;
+    transform: scaleY(0);
+    opacity: 0;
+    transition:
+        transform 0.24s cubic-bezier(0.2, 0.9, 0.3, 1.12),
+        opacity 0.2s ease;
+    will-change: transform;
+}
+
+.modal-layer.show .modal-panel {
+    transform: scaleY(1);
+    opacity: 1;
 }
 
 .modal-panel.modal-small {

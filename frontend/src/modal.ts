@@ -13,9 +13,9 @@ export function showConfirm(title: string, text: string): Promise<boolean> {
         const cancelBtn = $('#modal-cancel');
         titleEl.textContent = title;
         textEl.textContent = text;
-        mask.hidden = false;
+        mask.classList.add('show'); /* 背景淡入 + 面板 Y 轴缩放 */
         const finish = (v: boolean) => {
-            mask.hidden = true;
+            mask.classList.remove('show'); /* 播放关闭动画后由 CSS visibility 延迟隐藏 */
             okBtn.removeEventListener('click', onOk);
             cancelBtn.removeEventListener('click', onCancel);
             mask.removeEventListener('click', onMaskClick);
