@@ -509,7 +509,17 @@ async function logoutActive(): Promise<void> {
 
 /* ---------------- 组件：标题栏 ---------------- */
 
-/* 顶部工具：主题 + 窗口控制（并入右侧顶栏，与标签/操作同一行） */
+/* 主题切换（纯图标，归入纯图标组） */
+function ThemeToggle() {
+    return (
+        <button class="tb-btn" onClick={() => setTheme(theme() === 'dark' ? 'light' : 'dark')} title="切换深色/浅色">
+            <Sun class="ico-sun" size={15} />
+            <Moon class="ico-moon" size={15} />
+        </button>
+    );
+}
+
+/* 窗口控制（纯图标，固定最右；Win/Linux 右上三键，macOS 左上红黄绿） */
 function TopTools() {
     const [maxed, setMaxed] = createSignal(false);
     onMount(() => {
@@ -523,10 +533,6 @@ function TopTools() {
     };
     return (
         <>
-            <button class="tb-btn" onClick={() => setTheme(theme() === 'dark' ? 'light' : 'dark')} title="切换深色/浅色">
-                <Sun class="ico-sun" size={15} />
-                <Moon class="ico-moon" size={15} />
-            </button>
             <div class="tb-winbtns">
                 <button class="tb-ctl" onClick={() => onCtl('min')} title="最小化"><Minus size={12} /></button>
                 <button class="tb-ctl tb-max-btn" classList={{ 'is-maxed': maxed() }} onClick={() => onCtl('max')} title={maxed() ? '还原' : '最大化'}>
@@ -649,9 +655,8 @@ function TabBar() {
                     )}
                 </For>
             </div>
-            {/* 右侧同排：全屏/断开/注销(按会话类型) + 主题 + 窗口控制 */}
+            {/* 右侧同排：有文字操作组 + 纯图标组 + 窗口控制（窗口控制固定最右） */}
             <div class="topbar-right">
-                <Show when={fmCtx()}>{(c) => <FileButton ctx={c()} />}</Show>
                 <Show when={activeTab()}>
                     {(a) => (
                         <div class="tabbar-actions">
@@ -671,7 +676,12 @@ function TabBar() {
                         </div>
                     )}
                 </Show>
-                <NBell />
+                <Show when={activeTab()}><span class="tb-divider" /></Show>
+                <div class="tb-icons">
+                    <Show when={fmCtx()}>{(c) => <FileButton ctx={c()} />}</Show>
+                    <NBell />
+                    <ThemeToggle />
+                </div>
                 <TopTools />
             </div>
         </div>

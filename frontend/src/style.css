@@ -1294,6 +1294,10 @@ canvas {
     cursor: pointer;
 }
 
+.nbell-btn.active {
+    color: var(--accent);
+}
+
 .nbell-dot {
     position: absolute;
     top: 3px;
@@ -1525,11 +1529,12 @@ canvas {
 /* 气泡（右上角堆叠） */
 .toast-host {
     position: fixed;
-    top: calc(var(--tab-h) + 12px);
-    right: 14px;
+    bottom: 16px;
+    right: 16px;
     z-index: 1500;
     display: flex;
     flex-direction: column;
+    align-items: flex-end;
     gap: 8px;
     pointer-events: none;
     max-width: min(340px, calc(100vw - 28px));
@@ -1544,6 +1549,11 @@ canvas {
     border-radius: 10px;
     padding: 9px 10px;
     animation: toast-in 0.22s ease;
+    cursor: pointer;
+}
+
+.toast:hover {
+    filter: brightness(1.06);
 }
 
 @keyframes toast-in {
@@ -1895,4 +1905,48 @@ canvas {
 
 .fm-ctx .ctx-arrow {
     display: none;
+}
+
+/* 顶栏分组：有文字按钮组 与 纯图标组 分开 */
+.tb-icons {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    -webkit-app-region: no-drag;
+}
+
+.tb-divider {
+    width: 1px;
+    height: 15px;
+    background: var(--border);
+    margin: 0 6px;
+    align-self: center;
+    flex: 0 0 auto;
+    -webkit-app-region: no-drag;
+}
+
+/* 通知面板头部右侧（清空 + 关闭） */
+.npanel-head-right {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.npanel-x {
+    border: none;
+    background: none;
+    color: var(--text-faint);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    margin-left: 4px;
+}
+
+.npanel-x:hover {
+    background: var(--hover);
+    color: var(--text);
 }

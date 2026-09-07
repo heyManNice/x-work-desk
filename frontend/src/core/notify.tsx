@@ -11,6 +11,7 @@
 
 import { createSignal, Show, For } from 'solid-js';
 import { Bell, CheckCircle2, Info, Loader2, X, XCircle } from 'lucide-solid';
+import { activePopup, togglePopup, openPopup } from './popups';
 
 export type NotifKind = 'info' | 'success' | 'error' | 'progress';
 
@@ -40,10 +41,14 @@ const MAX_NOTIF = 80;
 const [notifs, setNotifs] = createSignal<XwNotif[]>([]);
 const [toasts, setToasts] = createSignal<Toast[]>([]);
 
-/* 面板开关 + 定位（fixed 由 NotifyPanelHost 渲染） */
-const [panelOpen, setPanelOpen] = createSignal(false);
+/* 面板定位（fixed 由 NotifyPanelHost 渲染）；开关由 popups 协调器统一管理 */
 const [panelPos, setPanelPos] = createSignal({ x: 0, y: 0 });
-let closeTimer: number | undefined;
+
+function setPanelPosAt(btn: HTMLElement | null | undefined): void {
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    setPanelPos({ x: r.left + r.width / 2, y: r.bottom + 8 });
+}
 
 function addNotif(n: { title: string; body?: string; kind?: NotifKind; pct?: number | null; label?: string }) {
     const rec: XwNotif = {
@@ -117,23 +122,12 @@ export function markAllRead(): void {
 
 export const unreadCount = () => notifs().filter((n) => n.unread).length;
 
-/* ---------------- 铃铛（顶栏按钮） ---------------- */
+/* ---------------- 铃铛（顶栏按钮，点击展开/收起） ---------------- */
 
-function scheduleClose(): void {
-    if (closeTimer) window.clearTimeout(closeTimer);
-    closeTimer = window.setTimeout(() => setPanelOpen(false), 220);
-}
-
-function cancelClose(): void {
-    if (closeTimer) { window.clearTimeout(closeTimer); closeTimer = undefined; }
-}
-
-export function openPanelAt(btn: HTMLElement | null | undefined): void {
-    if (btn) {
-        const r = btn.getBoundingClientRect();
-        setPanelPos({ x: r.left + r.width / 2, y: r.bottom + 8 });
-    }
-    setPanelOpen(true);
+/** 点击气泡 → 展开通知面板（定位到铃铛处） */
+export function openNotifyFromToast(): void {
+    openPopup('notify');
+    setPanelPosAt(document.querySelector<HTMLElement>('[data-popup-trigger="notify"]'));
     markAllRead();
 }
 
@@ -143,11 +137,14 @@ export function NBell() {
     return (
         <button
             ref={btn}
+            data-popup-trigger="notify"
             class="tb-btn nbell-btn"
+            classList={{ active: activePopup() === 'notify' }}
             title={count() > 0 ? `通知中心（${count()} 条未读）` : '通知中心'}
-            onClick={() => openPanelAt(btn)}
-            onMouseEnter={() => openPanelAt(btn)}
-            onMouseLeave={scheduleClose}
+            onClick={() => {
+                const opened = togglePopup('notify');
+                if (opened) { setPanelPosAt(btn); markAllRead(); }
+            }}
         >
             <Bell size={15} />
             <Show when={count() > 0}><span class="nbell-dot" /></Show>
@@ -197,16 +194,17 @@ export function NotifyPanelHost() {
     const pos = () => panelPos();
     return (
         <>
-            <Show when={panelOpen()}>
+            <Show when={activePopup() === 'notify'}>
                 <div
-                    class="npanel"
+                    class="npanel popup-panel"
                     style={{ left: `${pos().x}px`, top: `${pos().y}px` }}
-                    onMouseEnter={cancelClose}
-                    onMouseLeave={scheduleClose}
                 >
                     <div class="npanel-head">
                         <span class="npanel-title">通知</span>
-                        <button class="npanel-clear" onClick={clearNotifs}>清空</button>
+                        <span class="npanel-head-right">
+                            <button class="npanel-clear" onClick={clearNotifs}>清空</button>
+                            <button class="npanel-x" onClick={() => togglePopup('notify')} title="关闭"><X size={13} /></button>
+                        </span>
                     </div>
                     <div class="npanel-body">
                         <Show when={notifs().length === 0} fallback={<For each={notifs()}>{(n) => <NotifRow n={n} />}</For>}>
@@ -218,13 +216,13 @@ export function NotifyPanelHost() {
             <div class="toast-host">
                 <For each={toasts()}>
                     {(t) => (
-                        <div class="toast" classList={{ [`k-${t.kind}`]: true }}>
+                        <div class="toast" classList={{ [`k-${t.kind}`]: true }} onClick={openNotifyFromToast} title="查看通知">
                             <span class="toast-ico">{t.kind === 'success' ? <CheckCircle2 size={15} /> : t.kind === 'error' ? <XCircle size={15} /> : <Info size={15} />}</span>
                             <div class="toast-main">
                                 <div class="toast-title">{t.title}</div>
                                 <Show when={t.body}><div class="toast-body">{t.body}</div></Show>
                             </div>
-                            <button class="toast-x" onClick={() => setToasts((l) => l.filter((x) => x.id !== t.id))}><X size={11} /></button>
+                            <button class="toast-x" onClick={(e) => { e.stopPropagation(); setToasts((l) => l.filter((x) => x.id !== t.id)); }} title="移除"><X size={11} /></button>
                         </div>
                     )}
                 </For>

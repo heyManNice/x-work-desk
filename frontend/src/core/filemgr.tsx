@@ -18,6 +18,7 @@ import {
 } from '../platform';
 import { notifyInfo, notifySuccess, notifyError } from './notify';
 import { showConfirm } from '../modal';
+import { isPopup, openPopup, closePopup } from './popups';
 
 export interface FmCtx {
     tabId: number;
@@ -28,8 +29,9 @@ export interface FmCtx {
 }
 
 /* ---------------- 会话 / 打开状态 ---------------- */
-const [open, setOpen] = createSignal(false);
-const [pinned, setPinned] = createSignal(false);
+/* 面板开合由 popups 协调器决定（点击式、互斥、点外部收起）。
+ * 关闭面板仅隐藏 UI；SFTP 连接与当前目录/列表保留到标签结束，
+ * 因此同一连接内再次打开会回到上次所在目录。 */
 const [pos, setPos] = createSignal({ x: 0, y: 0 });
 const [ctx, setCtx] = createSignal<FmCtx | null>(null);
 const [cwd, setCwd] = createSignal('/');
@@ -39,16 +41,6 @@ const [q, setQ] = createSignal('');
 const [sel, setSel] = createSignal<string | null>(null);
 const [fmMenu, setFmMenu] = createSignal<{ x: number; y: number; e: FmEntry } | null>(null);
 const [inp, setInp] = createSignal<{ mode: 'newdir' | 'rename'; value: string; entry?: FmEntry } | null>(null);
-
-let closeTimer: number | undefined;
-function scheduleCloseFm(): void {
-    if (pinned()) return;
-    if (closeTimer) window.clearTimeout(closeTimer);
-    closeTimer = window.setTimeout(() => setOpen(false), 260);
-}
-function cancelCloseFm(): void {
-    if (closeTimer) { window.clearTimeout(closeTimer); closeTimer = undefined; }
-}
 
 /* 路径工具（posix，服务器端会再做归一化） */
 function pjoin(dir: string, name: string): string {
@@ -84,7 +76,7 @@ async function connectAndList(c: FmCtx): Promise<void> {
         setInp(null);
     } else {
         notifyError('SFTP 连接失败', (r.msg || '无法连接到远程文件服务') + `\n（${c.user}@${c.host}）`);
-        setOpen(false);
+        closePopup('file');
         setCtx(null);
     }
 }
@@ -105,13 +97,13 @@ async function loadPath(p: string): Promise<void> {
 }
 
 function openFmAt(btn: HTMLElement | null | undefined, c: FmCtx): void {
-    cancelCloseFm();
     if (btn) {
         const rect = btn.getBoundingClientRect();
         setPos({ x: rect.left + rect.width / 2, y: rect.bottom + 8 });
     }
-    setOpen(true);
+    openPopup('file');
     if (!ctx() || ctx()!.tabId !== c.tabId) {
+        /* 首次使用该会话：建立 SFTP 连接并列出主目录 */
         setCtx(c);
         setCwd('/');
         setEntries([]);
@@ -119,21 +111,21 @@ function openFmAt(btn: HTMLElement | null | undefined, c: FmCtx): void {
     }
 }
 
+/** 关闭面板：仅收起 UI，保留连接与路径（再次打开回到上次目录） */
 function doCloseFm(): void {
-    cancelCloseFm();
-    const id = ctx()?.tabId;
-    if (id != null) void fmClose(id);
-    setOpen(false);
-    setPinned(false);
-    setCtx(null);
-    setEntries([]);
+    closePopup('file');
     setFmMenu(null);
     setInp(null);
 }
 
-/** 外部（关闭标签/断开）通知会话结束 */
+/** 外部（关闭标签/断开）通知会话真正结束：回收 SFTP 连接并清空面板 */
 export function fmSessionEnded(tabId: number): void {
-    if (ctx()?.tabId === tabId) doCloseFm();
+    if (ctx()?.tabId === tabId) {
+        closePopup('file');
+        setCtx(null);
+        setCwd('/');
+        setEntries([]);
+    }
     void fmClose(tabId);
 }
 
@@ -239,21 +231,19 @@ function fmtTime(m: number): string {
 export function FileButton(props: { ctx: FmCtx }) {
     let btn: HTMLButtonElement | undefined;
     const c = () => props.ctx;
-    const isThisOpen = () => open() && ctx()?.tabId === c().tabId;
+    const isThisOpen = () => isPopup('file') && ctx()?.tabId === c().tabId;
     const toggle = () => {
         if (isThisOpen()) { doCloseFm(); return; }
-        setPinned(true);
         openFmAt(btn, c());
     };
     return (
         <button
             ref={btn}
+            data-popup-trigger="file"
             class="tb-btn fm-btn"
             classList={{ active: isThisOpen() }}
             title="远程文件（SFTP）"
             onClick={toggle}
-            onMouseEnter={() => { if (!isThisOpen()) openFmAt(btn, c()); }}
-            onMouseLeave={scheduleCloseFm}
         >
             {isThisOpen() ? <FolderOpen size={15} /> : <Folder size={15} />}
         </button>
@@ -266,12 +256,10 @@ export function FilePanelHost() {
     const p = () => pos();
     return (
         <>
-            <Show when={open()}>
+            <Show when={isPopup('file')}>
                 <div
-                    class="fmpanel"
+                    class="fmpanel popup-panel"
                     style={{ left: `${p().x}px`, top: `${p().y}px` }}
-                    onMouseEnter={cancelCloseFm}
-                    onMouseLeave={scheduleCloseFm}
                     onClick={() => setFmMenu(null)}
                 >
                     {/* 顶部：路径 + 操作 */}
@@ -282,9 +270,6 @@ export function FilePanelHost() {
                             </Show>
                             <span class="fmp-cwd">{cwd()}</span>
                         </div>
-                        <button class="fmp-pin" classList={{ on: pinned() }} title={pinned() ? '已固定（点击取消）' : '固定面板'} onClick={() => setPinned((v) => !v)}>
-                            {pinned() ? <Folder size={12} /> : <FolderOpen size={12} />}
-                        </button>
                         <button class="fmp-x" onClick={doCloseFm} title="关闭"><X size={13} /></button>
                     </div>
                     <div class="fmp-actions">
