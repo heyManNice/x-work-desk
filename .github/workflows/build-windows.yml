@@ -1,13 +1,8 @@
 name: Build Windows MSI
 
-# 手动触发，或在改动 frontend 客户端时自动触发
+# 仅手动触发（开发过程中的提交不自动构建；需要出包时在 Actions 手动 Run workflow）
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/build-windows.yml'
 
 jobs:
   build-msi:
