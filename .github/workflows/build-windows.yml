@@ -18,6 +18,12 @@ jobs:
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
 
+      # 缓存 Rust 依赖与编译产物：第一次全量编译，之后命中可跳过下载/重编译
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+
       - name: Setup Node 20
         uses: actions/setup-node@v4
         with:
