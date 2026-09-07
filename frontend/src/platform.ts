@@ -28,6 +28,14 @@ interface DesktopBridge {
         isMaximized(): Promise<boolean>;
         onMaximizeChange(cb: (maxed: boolean) => void): () => void;
     };
+    ssh?: {
+        connect(opt: { id: string; host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; msg?: string }>;
+        write(id: string, data: string | Uint8Array): void;
+        resize(id: string, cols: number, rows: number): void;
+        close(id: string): void;
+        onData(id: string, cb: (data: Uint8Array) => void): () => void;
+        onClose(id: string, cb: (code: number) => void): () => void;
+    };
 }
 
 function bridge(): DesktopBridge | null {
@@ -121,4 +129,36 @@ export async function uploadLocalFiles(opt: {
     const b = bridge();
     if (!b) return { ok: false, msg: '浏览器环境不支持自动上传' };
     return b.uploadLocalFiles(opt);
+}
+
+/* ---- SSH 终端（桌面壳主进程 ssh2；浏览器不可用） ---- */
+
+export function sshConnect(opt: {
+    id: string; host: string; port: number; user: string; pass?: string;
+}): Promise<{ ok: boolean; msg?: string }> {
+    const b = bridge();
+    if (!b) return Promise.resolve({ ok: false, msg: '桌面壳环境不支持 SSH' });
+    return b.ssh ? b.ssh.connect(opt) : Promise.resolve({ ok: false, msg: 'SSH 不可用' });
+}
+
+export function sshWrite(id: string, data: string | Uint8Array): void {
+    bridge()?.ssh?.write(id, data);
+}
+
+export function sshResize(id: string, cols: number, rows: number): void {
+    bridge()?.ssh?.resize(id, cols, rows);
+}
+
+export function sshClose(id: string): void {
+    bridge()?.ssh?.close(id);
+}
+
+export function sshOnData(id: string, cb: (data: Uint8Array) => void): () => void {
+    const b = bridge()?.ssh;
+    return b ? b.onData(id, cb) : () => { /* 忽略 */ };
+}
+
+export function sshOnClose(id: string, cb: (code: number) => void): () => void {
+    const b = bridge()?.ssh;
+    return b ? b.onClose(id, cb) : () => { /* 忽略 */ };
 }

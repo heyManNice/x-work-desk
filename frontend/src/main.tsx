@@ -3,6 +3,7 @@
 import { render } from 'solid-js/web';
 import App from './App';
 import './style.css';
+import '@xterm/xterm/css/xterm.css';
 
 const root = document.getElementById('app-root');
 if (root) render(() => <App />, root);

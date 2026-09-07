@@ -12,6 +12,7 @@
  */
 
 const { app, BrowserWindow, ipcMain, clipboard } = require('electron');
+const { Client } = require('ssh2');
 const path = require('path');
 const fs = require('fs');
 
@@ -184,6 +185,73 @@ function registerIpc() {
     });
     ipcMain.on('xwd:winClose', () => win && win.close());
     ipcMain.handle('xwd:winIsMax', () => !!(win && win.isMaximized()));
+
+    /* ---- SSH 终端会话（ssh2） ---- */
+    ipcMain.handle('xwd:ssh:connect', (_e, opt) => startSshSession(opt || {}));
+    ipcMain.on('xwd:ssh:input', (_e, opt) => {
+        const r = sshSessions.get(opt && opt.id);
+        if (r && r.stream) {
+            try { r.stream.write(opt.data); } catch { /* 忽略 */ }
+        }
+    });
+    ipcMain.on('xwd:ssh:resize', (_e, opt) => {
+        const r = sshSessions.get(opt && opt.id);
+        if (r && r.stream) {
+            try { r.stream.setWindow(opt.rows, opt.cols); } catch { /* 忽略 */ }
+        }
+    });
+    ipcMain.on('xwd:ssh:close', (_e, opt) => closeSshSession(opt && opt.id));
+}
+
+/* ---- SSH 会话管理 ---- */
+const sshSessions = new Map();
+
+function closeSshSession(id) {
+    const r = sshSessions.get(id);
+    if (!r) return;
+    try { r.client.end(); } catch { /* 忽略 */ }
+    sshSessions.delete(id);
+}
+
+function sendSshClose(id, code) {
+    if (win && !win.isDestroyed()) win.webContents.send('xwd:ssh:close', { id, code });
+    closeSshSession(id);
+}
+
+/* 建立 SSH 连接并打开伪终端通道；返回 {ok} 或 {ok:false,msg} */
+function startSshSession({ id, host, port, user, pass }) {
+    return new Promise((resolve) => {
+        let settled = false;
+        const finish = (r) => { if (!settled) { settled = true; resolve(r); } };
+        const fail = (msg) => { closeSshSession(id); finish({ ok: false, msg }); };
+
+        const client = new Client();
+        const rec = { id, client, stream: null };
+        sshSessions.set(id, rec);
+
+        client.on('ready', () => {
+            client.shell({ term: 'xterm-256color', cols: 80, rows: 24 }, (err, stream) => {
+                if (err) return fail('打开远程 shell 失败: ' + err.message);
+                rec.stream = stream;
+                finish({ ok: true });
+                stream.on('data', (d) => {
+                    if (win && !win.isDestroyed()) win.webContents.send('xwd:ssh:data', { id, data: d });
+                });
+                stream.on('close', () => sendSshClose(id, 0));
+                stream.on('error', () => { /* close 统一处理 */ });
+            });
+        });
+        client.on('error', (err) => fail('SSH 连接失败: ' + (err && err.message ? err.message : String(err))));
+
+        const p = Number(port) || 22;
+        client.connect({
+            host: String(host || 'localhost'),
+            port: p,
+            username: String(user || ''),
+            password: pass ? String(pass) : undefined,
+            readyTimeout: 12000,
+        });
+    });
 }
 
 function sendWinMax(maxed) {

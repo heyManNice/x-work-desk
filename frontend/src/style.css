@@ -1226,3 +1226,26 @@ canvas {
     background: #000;
     display: block;
 }
+
+/* ============ SSH 终端 ============ */
+.term-wrap {
+    position: absolute;
+    inset: 0;
+    display: none;
+    background: #101014;
+}
+
+.term-wrap.show {
+    display: block;
+}
+
+.term-host {
+    position: absolute;
+    inset: 0;
+    padding: 6px 2px 0;
+}
+
+.tab-type-icon {
+    color: var(--text-faint);
+    flex: 0 0 auto;
+}

@@ -13,7 +13,7 @@ import {
 import {
     Monitor, Plus, Play, Pencil, Trash2, Minus, Copy, Square, X,
     Sun, Moon, LogOut, Unplug, Link, PanelLeftOpen, PanelLeftClose,
-    Maximize2, Minimize2,
+    Maximize2, Minimize2, Terminal as TerminalIcon,
 } from 'lucide-solid';
 import {
     isMac, winMinimize, winToggleMaximize, winClose,
@@ -27,6 +27,7 @@ import {
     defaultHost, newId, hostDisplay,
 } from './core/host';
 import { Session, type SessionState, type SessionStatus } from './core/session';
+import { TerminalSession } from './core/termSession';
 
 /* ---------------- 主题 ---------------- */
 
@@ -59,13 +60,24 @@ if (isMac()) document.documentElement.dataset.platform = 'darwin';
 
 /* ---------------- 主机 / 标签 / 会话 ---------------- */
 
+export type ConnKind = 'desktop' | 'terminal';
+
 interface TabRec {
     id: number;
+    type: ConnKind;
     hostId: string;
     title: string;
     sub: string;
     status: Accessor<SessionState>;
     setStatus: (s: SessionState) => void;
+}
+
+/* 标签会话通用句柄（桌面 Session / SSH 终端共有操作） */
+interface ConnSession {
+    setActive(on: boolean): void;
+    destroy(): void;
+    disconnect(): void;
+    handleResize(): void;
 }
 
 const [hosts, setHostsSig] = createSignal<HostConfig[]>(loadHosts());
@@ -88,9 +100,15 @@ document.addEventListener('fullscreenchange', () => {
     setFsActive(document.fullscreenElement != null);
 });
 
-const sessionMap = new Map<number, Session>();
+const sessionMap = new Map<number, ConnSession>();
 const pendingMap = new Map<number, {
-    host: HostConfig; target: ServerTarget; user: string; pass: string;
+    type: ConnKind;
+    host: HostConfig;
+    target: ServerTarget | null;
+    sshHost: string;
+    sshPort: number;
+    user: string;
+    pass: string;
 }>();
 const tabEls = new Map<number, HTMLElement>();
 
@@ -188,7 +206,13 @@ async function ctxLogout(): Promise<void> {
     setCtxMenu(null);
     const t = tabs().find((x) => x.hostId === m.host.id);
     if (!t) return;
-    const s = sessionMap.get(t.id);
+    if (t.type !== 'desktop') {
+        /* SSH 终端：无“注销远程会话”，断开并关标签 */
+        sessionMap.get(t.id)?.disconnect();
+        closeTab(t.id);
+        return;
+    }
+    const s = sessionMap.get(t.id) as Session | undefined;
     if (s) {
         const did = await s.logout();
         if (did) closeTab(t.id);
@@ -240,44 +264,73 @@ function deleteHostById(id: string): void {
     if (editorOpen() && editorData()?.id === id) setEditorOpen(false);
 }
 
-/* 点击主机：建立/激活连接 */
-async function connectHost(h: HostConfig): Promise<void> {
-    /* 已打开的标签里有同主机正在跑 → 直接激活 */
-    const ex = tabs().find((t) => t.hostId === h.id);
+/* 从保存的主机地址解析出纯主机名（剥 scheme/端口），SSH 走 22 端口 */
+function sshHostOf(h: HostConfig): string {
+    let hp = (h.host || '').trim();
+    const s = /^[a-z][a-z0-9+.-]*:\/\//i.exec(hp);
+    if (s) hp = hp.slice(s[0].length);
+    hp = hp.replace(/\/+$/, '');
+    const c = hp.lastIndexOf(':');
+    if (c > 0 && /^\d+$/.test(hp.slice(c + 1))) hp = hp.slice(0, c);
+    return hp || 'localhost';
+}
+
+/* 点击主机：建立/激活连接（kind=desktop 桌面远程 / terminal SSH 终端） */
+async function connectHost(h: HostConfig, kind: ConnKind = 'desktop'): Promise<void> {
+    /* 已打开的标签里有同类型连接在跑 → 直接激活 */
+    const ex = tabs().find((t) => t.hostId === h.id && t.type === kind);
     if (ex) {
         setActiveId(ex.id);
         return;
     }
-    const target = resolveServer(h.host);
-    if (!target) {
-        setEditorData({ ...h }); /* 地址无效：打开编辑 */
-        setEditorOpen(true);
-        return;
+
+    let target: ServerTarget | null = null;
+    if (kind === 'desktop') {
+        target = resolveServer(h.host);
+        if (!target) {
+            setEditorData({ ...h }); /* 地址无效：打开编辑 */
+            setEditorOpen(true);
+            return;
+        }
     }
+
     let pass = h.pass || '';
     if (!pass) {
+        const label = kind === 'terminal'
+            ? `SSH 连接 ${hostDisplay(h)}`
+            : `连接 ${hostDisplay(h)}`;
         const p = await askPassword(
-            `连接 ${hostDisplay(h)}`,
+            label,
             `请输入 ${h.user || ''} 的密码（此主机未保存密码）：`,
         );
         if (p === null) return; /* 用户取消 */
         pass = p;
     }
     /* 再次检查（等待期间可能已打开） */
-    const ex2 = tabs().find((t) => t.hostId === h.id);
+    const ex2 = tabs().find((t) => t.hostId === h.id && t.type === kind);
     if (ex2) { setActiveId(ex2.id); return; }
 
     const id = ++tabSeq;
     const [st, setSt] = createSignal<SessionState>('connecting');
+    const sshPort = 22;
     const rec: TabRec = {
         id,
+        type: kind,
         hostId: h.id,
         title: h.name || hostDisplay(h),
         sub: hostDisplay(h),
         status: st,
         setStatus: (s: SessionState) => setSt(s),
     };
-    pendingMap.set(id, { host: { ...h }, target, user: h.user, pass });
+    pendingMap.set(id, {
+        type: kind,
+        host: { ...h },
+        target,
+        sshHost: kind === 'terminal' ? sshHostOf(h) : '',
+        sshPort,
+        user: h.user,
+        pass,
+    });
     setTabsSig([...tabs(), rec]);
     setActiveId(id);
 }
@@ -322,11 +375,17 @@ function disconnectActive(): void {
     closeTab(id);
 }
 
-/* 注销：销毁远程会话后清除当前标签 */
+/* 注销：仅桌面远程会话支持（销毁远程桌面）；SSH 终端直接断开并关标签 */
 async function logoutActive(): Promise<void> {
     const id = activeId();
     if (id == null) return;
-    const s = sessionMap.get(id);
+    const tab = tabs().find((t) => t.id === id);
+    if (!tab) return;
+    if (tab.type !== 'desktop') {
+        disconnectActive();
+        return;
+    }
+    const s = sessionMap.get(id) as Session | undefined;
     if (!s) { closeTab(id); return; }
     const did = await s.logout();
     if (did) closeTab(id);
@@ -406,9 +465,8 @@ function Sidebar() {
                                 <span class="host-addr-inline">{hostDisplay(h)}</span>
                             </div>
                             <div class="host-ops">
-                                <button class="host-op" title="连接" onClick={(e) => { e.stopPropagation(); void connectHost(h); }}><Play size={13} /></button>
-                                <button class="host-op" title="编辑" onClick={(e) => { e.stopPropagation(); openEditorEdit(h); }}><Pencil size={13} /></button>
-                                <button class="host-op del" title="删除" onClick={(e) => { e.stopPropagation(); deleteHostById(h.id); }}><Trash2 size={13} /></button>
+                                <button class="host-op" title="SSH 终端连接" onClick={(e) => { e.stopPropagation(); void connectHost(h, 'terminal'); }}><TerminalIcon size={14} /></button>
+                                <button class="host-op" title="桌面远程连接" onClick={(e) => { e.stopPropagation(); void connectHost(h, 'desktop'); }}><Monitor size={14} /></button>
                             </div>
                         </li>
                     )}
@@ -429,6 +487,7 @@ function Sidebar() {
 /* ---------------- 组件：标签 + 会话视图 ---------------- */
 
 function TabBar() {
+    const activeTab = () => tabs().find((x) => x.id === activeId());
     return (
         <div class="tabbar">
             {/* 收起时：标签栏最左的展开按钮 */}
@@ -446,6 +505,7 @@ function TabBar() {
                             onClick={() => activateTab(t.id)}
                         >
                             <span class="tab-state" classList={{ [t.status()]: true }} />
+                            {t.type === 'terminal' ? <TerminalIcon size={12} class="tab-type-icon" /> : <Monitor size={12} class="tab-type-icon" />}
                             <span class="tab-label" title={t.sub}>{t.title}</span>
                             <button
                                 class="tab-close"
@@ -458,20 +518,26 @@ function TabBar() {
                     )}
                 </For>
             </div>
-            {/* 右侧同排：断开/注销(激活时) + 主题 + 窗口控制 */}
+            {/* 右侧同排：全屏/断开/注销(按会话类型) + 主题 + 窗口控制 */}
             <div class="topbar-right">
-                <Show when={activeId() != null}>
-                    <div class="tabbar-actions">
-                        <button class="tab-btn" onClick={toggleFullscreen} title={fsActive() ? '退出全屏' : '全屏显示'}>
-                            {fsActive() ? <Minimize2 size={13} /> : <Maximize2 size={13} />} 全屏
-                        </button>
-                        <button class="tab-btn" onClick={disconnectActive} title="断开连接并关闭此标签">
-                            <Unplug size={13} /> 断开
-                        </button>
-                        <button class="tab-btn danger" onClick={() => void logoutActive()} title="注销远程会话并关闭此标签">
-                            <LogOut size={13} /> 注销
-                        </button>
-                    </div>
+                <Show when={activeTab()}>
+                    {(a) => (
+                        <div class="tabbar-actions">
+                            <Show when={a().type === 'desktop'}>
+                                <button class="tab-btn" onClick={toggleFullscreen} title={fsActive() ? '退出全屏' : '全屏显示'}>
+                                    {fsActive() ? <Minimize2 size={13} /> : <Maximize2 size={13} />} 全屏
+                                </button>
+                            </Show>
+                            <button class="tab-btn" onClick={disconnectActive} title="断开并关闭此标签">
+                                <Unplug size={13} /> 断开
+                            </button>
+                            <Show when={a().type === 'desktop'}>
+                                <button class="tab-btn danger" onClick={() => void logoutActive()} title="注销远程会话并关闭此标签">
+                                    <LogOut size={13} /> 注销
+                                </button>
+                            </Show>
+                        </div>
+                    )}
                 </Show>
                 <TopTools />
             </div>
@@ -485,39 +551,58 @@ function SessionPane(props: { id: number }) {
         const pend = pendingMap.get(props.id);
         const rec = tabs().find((t) => t.id === props.id);
         if (!pend || !rec || !rootEl) return;
-        const sess = new Session(String(props.id), {
-            root: rootEl,
-            host: pend.host,
-            target: pend.target,
-            user: pend.user,
-            pass: pend.pass,
-            onStatus: (s: SessionStatus) => rec.setStatus(s.state),
-        });
-        sessionMap.set(props.id, sess);
         tabEls.set(props.id, rootEl);
+
+        let sess: ConnSession;
+        if (pend.type === 'terminal') {
+            /* SSH 终端 */
+            const ts = new TerminalSession(String(props.id), {
+                root: rootEl,
+                host: pend.sshHost,
+                port: pend.sshPort,
+                user: pend.user,
+                pass: pend.pass,
+                onStatus: (s: SessionStatus) => rec.setStatus(s.state),
+            });
+            sess = ts;
+            void ts.connect();
+        } else {
+            /* 桌面远程 */
+            const s = new Session(String(props.id), {
+                root: rootEl,
+                host: pend.host,
+                target: pend.target!,
+                user: pend.user,
+                pass: pend.pass,
+                onStatus: (s: SessionStatus) => rec.setStatus(s.state),
+            });
+            sess = s;
+            s.connect();
+        }
+        sessionMap.set(props.id, sess);
         sess.setActive(activeId() === props.id);
-        sess.connect();
 
-        /* 全屏悬浮工具条：全屏时鼠标移到屏幕顶部中央出现（“退出全屏”） */
-        const fsBar = document.createElement('div');
-        fsBar.className = 'fs-toolbar';
-        fsBar.hidden = true;
-        const btnFs = document.createElement('button');
-        btnFs.className = 'btn primary';
-        btnFs.textContent = '退出全屏';
-        btnFs.addEventListener('click', () => {
-            if (document.fullscreenElement) void document.exitFullscreen();
-        });
-        fsBar.appendChild(btnFs);
-        rootEl.appendChild(fsBar);
-
-        rootEl.addEventListener('mousemove', (e) => {
-            if (document.fullscreenElement === rootEl) fsBar.hidden = !(e.clientY < 70);
-        });
-        rootEl.addEventListener('mouseleave', () => { fsBar.hidden = true; });
-        document.addEventListener('fullscreenchange', function onFs() {
-            if (document.fullscreenElement !== rootEl) fsBar.hidden = true;
-        });
+        /* 全屏悬浮工具条：仅桌面远程（全屏时鼠标移到顶部中央出现“退出全屏”） */
+        if (pend.type !== 'terminal') {
+            const fsBar = document.createElement('div');
+            fsBar.className = 'fs-toolbar';
+            fsBar.hidden = true;
+            const btnFs = document.createElement('button');
+            btnFs.className = 'btn primary';
+            btnFs.textContent = '退出全屏';
+            btnFs.addEventListener('click', () => {
+                if (document.fullscreenElement) void document.exitFullscreen();
+            });
+            fsBar.appendChild(btnFs);
+            rootEl.appendChild(fsBar);
+            rootEl.addEventListener('mousemove', (e) => {
+                if (document.fullscreenElement === rootEl) fsBar.hidden = !(e.clientY < 70);
+            });
+            rootEl.addEventListener('mouseleave', () => { fsBar.hidden = true; });
+            document.addEventListener('fullscreenchange', function onFs() {
+                if (document.fullscreenElement !== rootEl) fsBar.hidden = true;
+            });
+        }
     });
     onCleanup(() => {
         const sess = sessionMap.get(props.id);

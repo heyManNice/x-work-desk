@@ -29,4 +29,21 @@ contextBridge.exposeInMainWorld('xwd', {
             return () => ipcRenderer.removeListener('xwd:win-max', listener);
         },
     },
+    /* SSH 终端会话（ssh2） */
+    ssh: {
+        connect: (opt) => ipcRenderer.invoke('xwd:ssh:connect', opt),
+        write: (id, data) => ipcRenderer.send('xwd:ssh:input', { id, data }),
+        resize: (id, cols, rows) => ipcRenderer.send('xwd:ssh:resize', { id, cols, rows }),
+        close: (id) => ipcRenderer.send('xwd:ssh:close', { id }),
+        onData: (id, cb) => {
+            const listener = (_e, p) => { if (p && p.id === id) cb(p.data); };
+            ipcRenderer.on('xwd:ssh:data', listener);
+            return () => ipcRenderer.removeListener('xwd:ssh:data', listener);
+        },
+        onClose: (id, cb) => {
+            const listener = (_e, p) => { if (p && p.id === id) cb(p.code || 0); };
+            ipcRenderer.on('xwd:ssh:close', listener);
+            return () => ipcRenderer.removeListener('xwd:ssh:close', listener);
+        },
+    },
 });
