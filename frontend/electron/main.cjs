@@ -290,8 +290,9 @@ async function sshInstallServer(opt) {
     if (!up.ok) return up;
     const run = 'sudo -S -p \'\' bash -c "rm -rf /tmp/xworkd-server && mkdir -p /tmp/xworkd-server && tar -C /tmp/xworkd-server -xzf /tmp/xworkd-server.tar.gz && cd /tmp/xworkd-server/xworkd-server && bash install.sh"';
     const r = await sshExecOnce(opt, run, opt.pass ? String(opt.pass) + '\n' : '');
+    const needSudo = /not in the sudoers file|a password is required|no password was provided|incorrect password|authentication failure/i.test(r.err || '');
     const ok = r.out.includes('XWORKD_INSTALL_OK') || r.code === 0;
-    return { ok, msg: ((r.out || '') + (r.err || '')).trim().slice(-1000), code: r.code };
+    return { ok, needSudo, msg: ((r.out || '') + (r.err || '')).trim().slice(-1000), code: r.code };
 }
 const sshSessions = new Map();
 
@@ -346,7 +347,8 @@ function startSshSession({ id, host, port, user, pass }) {
 /* 远端重启（已安装但停止）xworkd 服务 */
 async function sshStartServer(opt) {
     const r = await sshExecOnce(opt, 'sudo -S -p \'\' systemctl restart xworkd', opt.pass ? String(opt.pass) + '\n' : '');
-    return { ok: r.code === 0, msg: ((r.out || '') + (r.err || '')).trim().slice(-600), code: r.code };
+    const needSudo = /not in the sudoers file|a password is required|no password was provided|incorrect password|authentication failure/i.test(r.err || '');
+    return { ok: r.code === 0, needSudo, msg: ((r.out || '') + (r.err || '')).trim().slice(-600), code: r.code };
 }
 ipcMain.handle('xwd:ssh:startServer', (_e, opt) => sshStartServer(opt || {}));
 

@@ -295,7 +295,10 @@ async function ensureServerReady(h: HostConfig, pass: string): Promise<boolean> 
         if (!go) return false;
         const st = await sshStartServer(opt);
         if (st.ok) return true;
-        await showConfirm('启动失败', `${st.msg || '未知错误'}\n\n可到远端查看：journalctl -u xworkd -n 50`);
+        const hint = st.needSudo
+            ? `\n\n远端账号缺少 sudo 权限，无法自动启动：\n请让管理员执行 sudo visudo 添加：\n  ${opt.user} ALL=(ALL:ALL) ALL\n或执行： sudo usermod -aG sudo ${opt.user}\n授权后重试。`
+            : '';
+        await showConfirm('启动失败', `${st.msg || '未知错误'}${hint}\n\n可到远端查看：journalctl -u xworkd -n 50`);
         return false;
     }
 
@@ -307,7 +310,10 @@ async function ensureServerReady(h: HostConfig, pass: string): Promise<boolean> 
     if (!go) return false;
     const inst = await sshInstallServer(opt);
     if (!inst.ok) {
-        await showConfirm('安装失败', `${inst.msg || '未知错误'}\n\n请检查 sudo 密码 / 网络 / 依赖`);
+        const hint = inst.needSudo
+            ? `远端账号缺少 sudo 权限，无法自动安装。\n\n请让该主机管理员执行下面任一种：\n  1) sudo visudo 添加一行：\n     ${opt.user} ALL=(ALL:ALL) ALL\n  2) 或执行： sudo usermod -aG sudo ${opt.user}\n\n授权后重新连接即可一键安装。`
+            : '请检查 sudo 密码 / 网络 / 依赖。';
+        await showConfirm('安装失败', `${inst.msg || '未知错误'}\n\n${hint}`);
         return false;
     }
     const after = await sshProbeServer(opt);

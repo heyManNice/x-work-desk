@@ -36,8 +36,8 @@ interface DesktopBridge {
         onData(id: string, cb: (data: Uint8Array) => void): () => void;
         onClose(id: string, cb: (code: number) => void): () => void;
         probe(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; status: string; msg?: string }>;
-        startServer(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; msg?: string }>;
-        installServer(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; msg?: string }>;
+        startServer(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; needSudo?: boolean; msg?: string }>;
+        installServer(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; needSudo?: boolean; msg?: string }>;
     };
 }
 
@@ -177,13 +177,13 @@ export async function sshProbeServer(opt: SshServerOpt): Promise<{ ok: boolean; 
     return b.probe(opt);
 }
 
-export async function sshStartServer(opt: SshServerOpt): Promise<{ ok: boolean; msg?: string }> {
+export async function sshStartServer(opt: SshServerOpt): Promise<{ ok: boolean; needSudo?: boolean; msg?: string }> {
     const b = bridge()?.ssh;
     if (!b) return { ok: false, msg: '桌面壳环境不支持 SSH' };
     return b.startServer(opt);
 }
 
-export async function sshInstallServer(opt: SshServerOpt): Promise<{ ok: boolean; msg?: string }> {
+export async function sshInstallServer(opt: SshServerOpt): Promise<{ ok: boolean; needSudo?: boolean; msg?: string }> {
     const b = bridge()?.ssh;
     if (!b) return { ok: false, msg: '桌面壳环境不支持 SSH' };
     return b.installServer(opt);
