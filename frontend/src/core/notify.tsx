@@ -11,6 +11,7 @@
 
 import { createSignal, Show, For } from 'solid-js';
 import { Bell, CheckCircle2, Info, Loader2, X, XCircle } from 'lucide-solid';
+import { isMac } from '../platform';
 import { activePopup, togglePopup, openPopup } from './popups';
 
 export type NotifKind = 'info' | 'success' | 'error' | 'progress';
@@ -44,10 +45,17 @@ const [toasts, setToasts] = createSignal<Toast[]>([]);
 /* 面板定位（fixed 由 NotifyPanelHost 渲染）；开关由 popups 协调器统一管理 */
 const [panelPos, setPanelPos] = createSignal({ x: 0, y: 0 });
 
+const NPANEL_W = 320; /* 与 .npanel 宽度保持一致 */
+
 function setPanelPosAt(btn: HTMLElement | null | undefined): void {
     if (!btn) return;
     const r = btn.getBoundingClientRect();
-    setPanelPos({ x: r.left + r.width / 2, y: r.bottom + 8 });
+    if (isMac()) {
+        /* macOS：面板不与铃铛居中对齐，改贴窗口右缘留 12px（配合面板 -50% 锚点换算） */
+        setPanelPos({ x: Math.max(NPANEL_W / 2 + 8, window.innerWidth - NPANEL_W / 2 - 12), y: r.bottom + 8 });
+    } else {
+        setPanelPos({ x: r.left + r.width / 2, y: r.bottom + 8 });
+    }
 }
 
 function addNotif(n: { title: string; body?: string; kind?: NotifKind; pct?: number | null; label?: string }) {

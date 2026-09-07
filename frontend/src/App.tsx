@@ -105,6 +105,19 @@ createEffect(() => {
     try { localStorage.setItem(SB_KEY, sbCollapsed() ? '1' : '0'); } catch { /* 忽略 */ }
 });
 
+/* macOS：红绿灯在标签栏最左的显现时机 —— 边栏收起动画(0.24s)到 50% 后再出现，
+ * 避免与边栏头部红绿灯在收缩过程中叠影 */
+const [macBarDots, setMacBarDots] = createSignal(false);
+let macBarT: ReturnType<typeof setTimeout> | undefined;
+createEffect(() => {
+    if (macBarT) { clearTimeout(macBarT); macBarT = undefined; }
+    if (isMac() && sbCollapsed()) {
+        macBarT = setTimeout(() => { macBarT = undefined; setMacBarDots(true); }, 120);
+    } else {
+        setMacBarDots(false);
+    }
+});
+
 /* 全屏状态：Electron 窗口级全屏（DOM 全保留，文件面板/通知/确认框在全屏内仍可用） */
 const [fsActive, setFsActive] = createSignal(false);
 onWinFullScreenChange((fs) => setFsActive(fs));
@@ -632,8 +645,8 @@ function TabBar() {
     };
     return (
         <div class="tabbar">
-            {/* macOS：边栏收起时红绿灯显示在标签栏最左 */}
-            <Show when={isMac() && sbCollapsed()}>
+            {/* macOS：边栏收起时红绿灯显示在标签栏最左（收起动画约 70% 后再现，避免叠影） */}
+            <Show when={isMac() && sbCollapsed() && macBarDots()}>
                 <MacDots />
             </Show>
             {/* 收起时：标签栏最左的展开按钮 */}
@@ -678,9 +691,9 @@ function TabBar() {
                     <ThemeToggle />
                 </div>
                 <TopTools />
-                {/* macOS：应用名文字移到标签栏最右（无图标） */}
+                {/* macOS：应用名贴标签栏最右（无图标） */}
                 <Show when={isMac()}>
-                    <div class="tb-applogo">XWorkDesk</div>
+                    <div class="tb-applogo" title="XWorkDesk">XWorkDesk</div>
                 </Show>
             </div>
         </div>

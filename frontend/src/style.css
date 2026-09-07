@@ -291,7 +291,11 @@ html[data-platform='darwin'] .tb-winbtns {
 }
 
 /* macOS：应用名文字（无图标）贴标签栏最右 */
+/* macOS：应用名 + 显示器图标（无文字时也贴标签栏最右） */
 .tb-applogo {
+    display: flex;
+    align-items: center;
+    gap: 5px;
     font-size: 12.5px;
     font-weight: 600;
     letter-spacing: 0.2px;
@@ -301,6 +305,10 @@ html[data-platform='darwin'] .tb-winbtns {
     padding-right: 6px;
     -webkit-app-region: no-drag;
     user-select: none;
+}
+
+.tb-applogo svg {
+    color: var(--accent);
 }
 
 /* ============ 主体布局 ============ */
