@@ -36,7 +36,7 @@ import {
     uploadLocalFiles, isTauri,
 } from './transfer';
 import { showConfirm } from './modal';
-import { setServer, getServer, splitUserHost, resolveServer } from './server';
+import { setServer, getServer, splitUserHost, prepareServer } from './server';
 import {
     initStats, setResolution, onVideoFrame, onDecodeTime,
     requestKeyframeTime, onKeyframeReceived, resetStats
@@ -363,7 +363,7 @@ function onDisconnect(): void {
     loginError.hidden = true;
 }
 
-loginForm.addEventListener('submit', (e) => {
+loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     loginError.hidden = true;
     const pass = passInput.value;
@@ -372,7 +372,8 @@ loginForm.addEventListener('submit', (e) => {
     if (!user || !pass) {
         return;
     }
-    const srv = resolveServer(hostPort);
+    /* Tauri：明文 ws 到非 localhost 会被混合内容拦，必要时经本地隧道连 127 */
+    const srv = await prepareServer(hostPort);
     if (!srv) {
         loginError.textContent = '无法确定服务器：请以 user@host 形式输入主机地址';
         loginError.hidden = false;
