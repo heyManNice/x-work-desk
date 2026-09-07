@@ -38,6 +38,7 @@ interface DesktopBridge {
         probe(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; status: string; msg?: string }>;
         startServer(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; needSudo?: boolean; msg?: string }>;
         installServer(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; needSudo?: boolean; msg?: string }>;
+        onInstallProgress?(cb: (p: { stage?: string; pct: number | null; label?: string }) => void): () => void;
     };
 }
 
@@ -187,4 +188,15 @@ export async function sshInstallServer(opt: SshServerOpt): Promise<{ ok: boolean
     const b = bridge()?.ssh;
     if (!b) return { ok: false, msg: '桌面壳环境不支持 SSH' };
     return b.installServer(opt);
+}
+
+export interface SshInstallProgress {
+    stage?: string;
+    pct: number | null;
+    label?: string;
+}
+
+export function sshOnInstallProgress(cb: (p: SshInstallProgress) => void): () => void {
+    const b = bridge()?.ssh;
+    return b && b.onInstallProgress ? b.onInstallProgress(cb) : () => { /* 忽略 */ };
 }

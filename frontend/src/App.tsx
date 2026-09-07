@@ -18,7 +18,7 @@ import {
 import {
     isMac, winMinimize, winToggleMaximize, winClose,
     winIsMaximized, onWinMaximizeChange, platform, clipWriteText,
-    sshProbeServer, sshStartServer, sshInstallServer,
+    sshProbeServer, sshStartServer, sshInstallServer, sshOnInstallProgress,
 } from './platform';
 import { resolveServer, type ServerTarget } from './server';
 import { showConfirm } from './modal';
@@ -29,6 +29,11 @@ import {
 } from './core/host';
 import { Session, type SessionState, type SessionStatus } from './core/session';
 import { TerminalSession } from './core/termSession';
+import {
+    NBell, NotifyPanelHost,
+    startTask, patchTask, finishTask,
+    notifySuccess, notifyError,
+} from './core/notify';
 
 /* ---------------- 主题 ---------------- */
 
@@ -277,6 +282,30 @@ function sshHostOf(h: HostConfig): string {
 }
 
 /* 桌面连接前：经 SSH 探测远端服务端，未装/停止则引导一键安装/启动。
+/* 一键安装（经通知中心反馈进度）：主进程 xwd:ssh:install-progress → 进度条/阶段文案 */
+async function installServerWithProgress(opt: { host: string; port: number; user: string; pass?: string }) {
+    const id = startTask('正在安装服务端', '准备连接…');
+    const off = sshOnInstallProgress((p) => {
+        patchTask(id, { pct: p.pct, label: p.label });
+    });
+    try {
+        const r = await sshInstallServer(opt);
+        if (r.ok) {
+            finishTask(id, true, { title: '服务端安装完成', body: 'XWorkDesk 服务端已就绪。' });
+        } else {
+            finishTask(id, false, { title: '服务端安装失败', body: r.msg || '未知错误' });
+        }
+        return r;
+    } catch (e) {
+        const em = e instanceof Error ? e.message : String(e);
+        finishTask(id, false, { title: '服务端安装失败', body: em });
+        return { ok: false, msg: em };
+    } finally {
+        off();
+    }
+}
+
+/* 桌面连接前：经 SSH 探测远端服务端，未装/停止则引导一键安装/启动。
  * 返回 false 表示用户取消/失败（终止连接）。 */
 async function ensureServerReady(h: HostConfig, pass: string): Promise<boolean> {
     const opt = { host: sshHostOf(h), port: 22, user: h.user, pass };
@@ -294,11 +323,14 @@ async function ensureServerReady(h: HostConfig, pass: string): Promise<boolean> 
         );
         if (!go) return false;
         const st = await sshStartServer(opt);
-        if (st.ok) return true;
+        if (st.ok) {
+            notifySuccess('服务端已启动', `${hostDisplay(h)} 的 XWorkDesk 服务端已恢复运行。`);
+            return true;
+        }
         const hint = st.needSudo
-            ? `\n\n远端账号缺少 sudo 权限，无法自动启动：\n请让管理员执行 sudo visudo 添加：\n  ${opt.user} ALL=(ALL:ALL) ALL\n或执行： sudo usermod -aG sudo ${opt.user}\n授权后重试。`
-            : '';
-        await showConfirm('启动失败', `${st.msg || '未知错误'}${hint}\n\n可到远端查看：journalctl -u xworkd -n 50`);
+            ? `远端账号缺少 sudo 权限，无法自动启动。\n\n请让管理员执行：\nsudo visudo 添加  ${opt.user} ALL=(ALL:ALL) ALL\n或运行  sudo usermod -aG sudo ${opt.user}\n授权后重试。`
+            : '请检查 sudo 密码 / 远端状态。';
+        notifyError('启动失败', `${st.msg || '未知错误'}\n\n${hint}`);
         return false;
     }
 
@@ -308,17 +340,19 @@ async function ensureServerReady(h: HostConfig, pass: string): Promise<boolean> 
         `远端未安装 XWorkDesk 服务端。\n\n是否通过 SSH 一键安装？\n（需要远端账号可 sudo、可联网安装依赖；目标应为可运行 GNOME 的桌面主机）`,
     );
     if (!go) return false;
-    const inst = await sshInstallServer(opt);
+    const inst = await installServerWithProgress(opt);
     if (!inst.ok) {
-        const hint = inst.needSudo
-            ? `远端账号缺少 sudo 权限，无法自动安装。\n\n请让该主机管理员执行下面任一种：\n  1) sudo visudo 添加一行：\n     ${opt.user} ALL=(ALL:ALL) ALL\n  2) 或执行： sudo usermod -aG sudo ${opt.user}\n\n授权后重新连接即可一键安装。`
-            : '请检查 sudo 密码 / 网络 / 依赖。';
-        await showConfirm('安装失败', `${inst.msg || '未知错误'}\n\n${hint}`);
+        if (inst.needSudo) {
+            notifyError('服务端安装失败', `远端账号缺少 sudo 权限，无法自动安装。\n\n请让该主机管理员执行：\n1) sudo visudo 添加  ${opt.user} ALL=(ALL:ALL) ALL\n2) 或运行  sudo usermod -aG sudo ${opt.user}\n\n授权后重新连接即可一键安装。`);
+        }
         return false;
     }
     const after = await sshProbeServer(opt);
-    if (after.ok && after.status === 'running') return true;
-    await showConfirm('安装后未就绪', '服务未能启动，请到远端查看：journalctl -u xworkd -n 50');
+    if (after.ok && after.status === 'running') {
+        notifySuccess('服务端已就绪', `${hostDisplay(h)} 的 XWorkDesk 服务端已安装并运行，正在连接…`);
+        return true;
+    }
+    notifyError('安装后未就绪', '服务未能启动，请到远端查看：journalctl -u xworkd -n 50');
     return false;
 }
 
@@ -593,6 +627,7 @@ function TabBar() {
                         </div>
                     )}
                 </Show>
+                <NBell />
                 <TopTools />
             </div>
         </div>
@@ -925,6 +960,7 @@ export default function App() {
             <HostEditor />
             <PasswordDialog />
             <HostContextMenu />
+            <NotifyPanelHost />
         </div>
     );
 }

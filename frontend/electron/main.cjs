@@ -22,6 +22,11 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 /* 单例窗口（进度事件回推用） */
 let win = null;
 
+/* 向渲染层推事件（进度等） */
+function sendToUi(channel, payload) {
+    if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+}
+
 /* ---------------- 剪贴板 ---------------- */
 
 function parseUriList(buf) {
@@ -281,13 +286,16 @@ async function sshProbeServer(opt) {
     return { ok: true, status, msg: o || r.err };
 }
 
-/* 推送内置服务端安装包并远端一键安装（sudo 复用账号密码） */
+/* 推送内置服务端安装包并远端一键安装（sudo 复用账号密码）
+ * 过程事件经 xwd:ssh:install-progress 回推：{stage:'upload'|'install', pct, label} */
 async function sshInstallServer(opt) {
     const local = path.join(__dirname, '..', 'server-bundle', 'xworkd-server.tar.gz');
     if (!fs.existsSync(local)) return { ok: false, msg: '缺少内置服务端安装包(server-bundle)' };
     const remote = '/tmp/xworkd-server.tar.gz';
+    sendToUi('xwd:ssh:install-progress', { stage: 'upload', pct: 0.1, label: '通过 SSH 上传安装包…' });
     const up = await sftpPutOnce(opt, local, remote);
     if (!up.ok) return up;
+    sendToUi('xwd:ssh:install-progress', { stage: 'install', pct: null, label: '远端安装中：下载依赖、写入系统服务（约 1 分钟）…' });
     const run = 'sudo -S -p \'\' bash -c "rm -rf /tmp/xworkd-server && mkdir -p /tmp/xworkd-server && tar -C /tmp/xworkd-server -xzf /tmp/xworkd-server.tar.gz && cd /tmp/xworkd-server/xworkd-server && bash install.sh"';
     const r = await sshExecOnce(opt, run, opt.pass ? String(opt.pass) + '\n' : '');
     const needSudo = /not in the sudoers file|a password is required|no password was provided|incorrect password|authentication failure/i.test(r.err || '');

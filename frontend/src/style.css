@@ -1249,3 +1249,307 @@ canvas {
     color: var(--text-faint);
     flex: 0 0 auto;
 }
+
+/* ============================================================
+ * 通知中心：铃铛(红点) / 悬浮面板 / 气泡 / 进度条
+ * ============================================================ */
+
+/* 铃铛按钮（顶栏右侧，.tb-btn 基础上定位红点） */
+.nbell-btn {
+    position: relative;
+    -webkit-app-region: no-drag;
+    cursor: pointer;
+}
+
+.nbell-dot {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--danger);
+    box-shadow: 0 0 0 2px var(--bg);
+    animation: ndot-pop 0.25s ease;
+}
+
+@keyframes ndot-pop {
+    from { transform: scale(0); }
+    to { transform: scale(1); }
+}
+
+/* 悬浮面板：fixed 渲染在 App 根部（避开顶栏 overflow:hidden 裁切） */
+.npanel {
+    position: fixed;
+    z-index: 1400;
+    width: 320px;
+    max-width: calc(100vw - 24px);
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transform: translate(-50%, 0);
+    transform-origin: top center;
+    animation: npanel-in 0.16s ease;
+}
+
+@keyframes npanel-in {
+    from { opacity: 0; transform: translate(-50%, -6px) scale(0.96); }
+    to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+.npanel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-elev-2);
+}
+
+.npanel-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: 0.2px;
+}
+
+.npanel-clear {
+    border: none;
+    background: none;
+    color: var(--text-faint);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 5px;
+}
+
+.npanel-clear:hover {
+    background: var(--hover);
+    color: var(--text-dim);
+}
+
+.npanel-body {
+    max-height: 320px;
+    overflow-y: auto;
+    padding: 4px;
+}
+
+.npanel-empty {
+    padding: 22px 8px;
+    text-align: center;
+    color: var(--text-faint);
+    font-size: 12px;
+}
+
+/* 单条通知 */
+.nitem {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 8px 6px 8px 8px;
+    border-radius: 8px;
+}
+
+.nitem:hover {
+    background: var(--hover);
+}
+
+.nitem-ico {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 1px;
+}
+
+.nitem.k-info .nitem-ico { color: var(--accent); }
+.nitem.k-success .nitem-ico { color: var(--ok); }
+.nitem.k-error .nitem-ico { color: var(--danger); }
+.nitem.k-progress .nitem-ico { color: var(--accent); }
+
+.nitem-main {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.nitem-title {
+    font-size: 12.5px;
+    color: var(--text);
+    line-height: 1.35;
+    word-break: break-word;
+}
+
+.nitem.k-error .nitem-title { color: var(--danger); }
+.nitem.k-success .nitem-title { color: var(--ok); }
+
+.nitem-body {
+    font-size: 11.5px;
+    color: var(--text-dim);
+    line-height: 1.45;
+    margin-top: 2px;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+.nitem-label {
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-top: 5px;
+}
+
+.nitem-meta {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.nitem-time {
+    font-size: 10px;
+    color: var(--text-faint);
+}
+
+.nitem-x {
+    border: none;
+    background: none;
+    color: var(--text-faint);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+}
+
+.nitem-x:hover {
+    background: var(--hover);
+    color: var(--text);
+}
+
+/* 进度条 */
+.nbar {
+    margin-top: 6px;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--field-bg);
+    overflow: hidden;
+    position: relative;
+}
+
+.nbar-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--accent);
+    transition: width 0.3s ease;
+}
+
+.nbar-fill.indet {
+    width: 40%;
+    animation: nindet 1.1s ease-in-out infinite;
+}
+
+@keyframes nindet {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(280%); }
+}
+
+/* 气泡（右上角堆叠） */
+.toast-host {
+    position: fixed;
+    top: calc(var(--tab-h) + 12px);
+    right: 14px;
+    z-index: 1500;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+    max-width: min(340px, calc(100vw - 28px));
+}
+
+.toast {
+    pointer-events: auto;
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-left-width: 3px;
+    border-radius: 9px;
+    padding: 8px 9px;
+    animation: toast-in 0.22s ease;
+}
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translateX(14px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+.toast.k-info { border-left-color: var(--accent); }
+.toast.k-success { border-left-color: var(--ok); }
+.toast.k-error { border-left-color: var(--danger); }
+.toast.k-info .toast-ico { color: var(--accent); }
+.toast.k-success .toast-ico { color: var(--ok); }
+.toast.k-error .toast-ico { color: var(--danger); }
+
+.toast-ico {
+    flex: 0 0 auto;
+    display: flex;
+    margin-top: 1px;
+}
+
+.toast-main {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.toast-title {
+    font-size: 12.5px;
+    color: var(--text);
+    font-weight: 600;
+}
+
+.toast.k-error .toast-title { color: var(--danger); }
+.toast.k-success .toast-title { color: var(--ok); }
+
+.toast-body {
+    font-size: 11.5px;
+    color: var(--text-dim);
+    line-height: 1.4;
+    margin-top: 1px;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+.toast-x {
+    border: none;
+    background: none;
+    color: var(--text-faint);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    flex: 0 0 auto;
+}
+
+.toast-x:hover {
+    background: var(--hover);
+    color: var(--text);
+}
+
+/* 图标旋转（进度加载态） */
+.spin {
+    animation: nspin 1s linear infinite;
+}
+
+@keyframes nspin {
+    to { transform: rotate(360deg); }
+}

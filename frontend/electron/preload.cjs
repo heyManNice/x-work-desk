@@ -48,5 +48,10 @@ contextBridge.exposeInMainWorld('xwd', {
         probe: (opt) => ipcRenderer.invoke('xwd:ssh:probe', opt),
         startServer: (opt) => ipcRenderer.invoke('xwd:ssh:startServer', opt),
         installServer: (opt) => ipcRenderer.invoke('xwd:ssh:installServer', opt),
+        onInstallProgress: (cb) => {
+            const listener = (_e, p) => cb(p);
+            ipcRenderer.on('xwd:ssh:install-progress', listener);
+            return () => ipcRenderer.removeListener('xwd:ssh:install-progress', listener);
+        },
     },
 });
