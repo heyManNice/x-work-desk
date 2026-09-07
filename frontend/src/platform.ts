@@ -41,6 +41,11 @@ interface DesktopBridge {
         installServer(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; needSudo?: boolean; msg?: string }>;
         onInstallProgress?(cb: (p: { stage?: string; pct: number | null; label?: string }) => void): () => void;
     };
+    sys?: {
+        open(opt: { id: string; host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; msg?: string }>;
+        sample(id: string): Promise<SysSample>;
+        close(id: string): void;
+    };
     file?: {
         open(c: FmCred): Promise<FmOpenRes>;
         list(id: number, path: string): Promise<FmListRes>;
@@ -212,6 +217,33 @@ export interface SshInstallProgress {
 export function sshOnInstallProgress(cb: (p: SshInstallProgress) => void): () => void {
     const b = bridge()?.ssh;
     return b && b.onInstallProgress ? b.onInstallProgress(cb) : () => { /* 忽略 */ };
+}
+
+/* ---- 系统监控（SSH 采集远端资源，浏览器无桥为空实现） ---- */
+
+export interface SysSample {
+    ok: boolean;
+    msg?: string;
+    cpu: number;                    /* 使用率 % */
+    mem: { total: number; avail: number };   /* kB */
+    procs: Array<{ name: string; rss: number }>;  /* rss: kB */
+    disks: Array<{ mount: string; totalKB: number; usedKB: number; availKB: number; pct: number }>;
+}
+
+export async function sysOpen(opt: { id: string; host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; msg?: string }> {
+    const b = bridge()?.sys;
+    if (!b) return { ok: false, msg: '桌面桥不可用' };
+    return b.open(opt);
+}
+
+export async function sysSample(id: string): Promise<SysSample> {
+    const b = bridge()?.sys;
+    if (!b) return { ok: false, cpu: 0, mem: { total: 0, avail: 0 }, procs: [], disks: [] };
+    return b.sample(id);
+}
+
+export function sysClose(id: string): void {
+    bridge()?.sys?.close(id);
 }
 
 /* ---------------- 远程文件面板（SFTP） ---------------- */

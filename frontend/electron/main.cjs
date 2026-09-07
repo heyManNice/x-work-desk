@@ -379,6 +379,107 @@ async function sshStartServer(opt) {
 }
 ipcMain.handle('xwd:ssh:startServer', (_e, opt) => sshStartServer(opt || {}));
 
+/* ---------------- 系统监控（SSH 采集远端 CPU/内存/进程/磁盘） ---------------- */
+const sysClients = new Map(); /* id -> ssh2 Client（长连接，周期快照） */
+
+const SYS_SCRIPT = [
+    "c1=$(awk '/^cpu /{print $2+$3+$4, $5}' /proc/stat)",
+    'sleep 1',
+    "c2=$(awk '/^cpu /{print $2+$3+$4, $5}' /proc/stat)",
+    "awk -v a=\"$c1\" -v b=\"$c2\" 'BEGIN{split(a,A,\" \");split(b,B,\" \");u=B[1]-A[1];i=B[2]-A[2];t=u+i;if(t<1)t=1;printf \"CPU %d\\n\",u*100/t}'",
+    "awk -F: '/MemTotal|MemAvailable/{gsub(/[^0-9]/,\"\",$2);printf \"MEM %s %s\\n\",$1,$2}' /proc/meminfo",
+    'echo PSLIST',
+    "ps -eo comm,rss --no-headers --sort=-rss | awk '!seen[$1]++' | head -8",
+    'echo DFLIST',
+    "df -P -x tmpfs -x devtmpfs -x overlay -x squashfs -x proc -x sysfs -x cgroup -x cgroup2 -x securityfs -x debugfs -x tracefs -x fusectl -x configfs -x pstore -x efivarfs -x selinuxfs -x mqueue -x hugetlbfs -x binfmt_misc 2>/dev/null | awk 'NR>1{print $6\"|\"$2\"|\"$3\"|\"$4\"|\"$5}'",
+].join('\n');
+
+/* 建立监控长连接（同一 id 幂等） */
+function sysOpen(opt) {
+    return new Promise((resolve) => {
+        const id = String((opt && opt.id) || '');
+        if (!id) return resolve({ ok: false, msg: '缺少 id' });
+        if (sysClients.has(id)) return resolve({ ok: true });
+        const client = new Client();
+        client.on('ready', () => { sysClients.set(id, client); resolve({ ok: true }); });
+        client.on('error', (e) => { sysClients.delete(id); resolve({ ok: false, msg: (e && e.message) || String(e) }); });
+        client.on('close', () => { if (sysClients.get(id) === client) sysClients.delete(id); });
+        const p = Number(opt.port) || 22;
+        client.connect({
+            host: String(opt.host || 'localhost'),
+            port: p,
+            username: String(opt.user || ''),
+            password: opt.pass ? String(opt.pass) : undefined,
+            readyTimeout: 12000,
+        });
+    });
+}
+
+function sysClose(id) {
+    const c = sysClients.get(id);
+    if (c) { try { c.end(); } catch { /* 忽略 */ } sysClients.delete(id); }
+}
+
+/* 解析快照输出 → 结构化样本 */
+function parseSysOut(out) {
+    const s = { cpu: 0, mem: { total: 0, avail: 0 }, procs: [], disks: [] };
+    let sec = '';
+    for (const raw of String(out || '').split('\n')) {
+        const t = raw.trim();
+        if (!t) continue;
+        const cpuM = /^CPU\s+(\d+)$/.exec(t);
+        if (cpuM) { s.cpu = Number(cpuM[1]); continue; }
+        const memM = /^MEM\s+(\w+)\s+(\d+)$/.exec(t);
+        if (memM) {
+            const kb = Number(memM[2]);
+            if (memM[1] === 'MemTotal') s.mem.total = kb;
+            else if (memM[1] === 'MemAvailable') s.mem.avail = kb;
+            continue;
+        }
+        if (t === 'PSLIST') { sec = 'ps'; continue; }
+        if (t === 'DFLIST') { sec = 'df'; continue; }
+        if (sec === 'ps') {
+            const sp = t.split(/\s+/);
+            const rss = Number(sp[sp.length - 1]) || 0;
+            const name = sp.slice(0, sp.length - 1).join(' ');
+            if (name) s.procs.push({ name, rss });
+            continue;
+        }
+        if (sec === 'df') {
+            const p = t.split('|');
+            if (p.length >= 5 && p[0].startsWith('/')) {
+                s.disks.push({
+                    mount: p[0],
+                    totalKB: Number(p[1]) || 0,
+                    usedKB: Number(p[2]) || 0,
+                    availKB: Number(p[3]) || 0,
+                    pct: Number(String(p[4] || '0').replace('%', '')) || 0,
+                });
+            }
+        }
+    }
+    return s;
+}
+
+/* 快照一次：脚本内含 sleep 1 采 CPU 近 1s 平均，单连接串行 */
+function sysSample(id) {
+    return new Promise((resolve) => {
+        const client = sysClients.get(id);
+        if (!client) return resolve({ ok: false, msg: '未连接' });
+        client.exec(SYS_SCRIPT, (err, stream) => {
+            if (err) return resolve({ ok: false, msg: err.message });
+            let out = '';
+            stream.on('data', (d) => { out += d.toString(); });
+            stream.on('close', () => { resolve({ ok: true, ...parseSysOut(out) }); });
+            stream.on('error', (e) => resolve({ ok: false, msg: (e && e.message) || '执行失败' }));
+        });
+    });
+}
+
+ipcMain.handle('xwd:sys:open', (_e, opt) => sysOpen(opt || {}));
+ipcMain.handle('xwd:sys:sample', (_e, id) => sysSample(String(id || '')));
+ipcMain.on('xwd:sys:close', (_e, id) => sysClose(String(id || '')));
+
 /* ---------------- 远程文件面板（基于 SFTP） ---------------- */
 const fileSessions = new Map(); /* id -> { client, sftp } */
 

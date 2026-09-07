@@ -1965,3 +1965,202 @@ canvas {
     background: var(--hover);
     color: var(--text);
 }
+
+/* ============================================================
+ * 系统监控面板（SSH 采集远端资源）
+ * ============================================================ */
+
+.sys-panel {
+    position: fixed;
+    z-index: 1400;
+    width: 344px;
+    max-width: calc(100vw - 24px);
+    background: var(--bg-elev-3);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transform: translate(-50%, 0);
+    transform-origin: top center;
+    animation: npanel-in 0.16s ease;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+}
+
+.sys-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 8px 6px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-elev-2);
+}
+
+.sys-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.sys-title svg {
+    color: var(--accent);
+}
+
+.sys-upd {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-faint);
+}
+
+.sys-x {
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 5px;
+    color: var(--text-dim);
+}
+
+.sys-x:hover {
+    background: var(--hover);
+    color: var(--text);
+}
+
+.sys-body {
+    padding: 10px 12px 12px;
+    max-height: min(540px, calc(100vh - 40px));
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 13px;
+}
+
+.sys-empty {
+    color: var(--text-faint);
+    font-size: 12px;
+    padding: 14px 0;
+    text-align: center;
+}
+
+.sys-sec {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.sys-label {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+.sys-label b {
+    font-size: 12.5px;
+    color: var(--text);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.sys-label span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+/* CPU 折线 */
+.sys-plot {
+    width: 100%;
+    height: 68px;
+    background: var(--bg-elev-2);
+    border-radius: 8px;
+}
+
+.sys-grid {
+    stroke: var(--border);
+    stroke-width: 1;
+    stroke-dasharray: 3 3;
+    opacity: 0.6;
+}
+
+.sys-line {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+/* 占用条 */
+.sys-bar {
+    height: 6px;
+    border-radius: 4px;
+    background: var(--bg-elev-2);
+    overflow: hidden;
+}
+
+.sys-bar.thin {
+    height: 4px;
+}
+
+.sys-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: var(--accent);
+    transition: width 0.5s ease;
+}
+
+.sys-bar-fill.mem {
+    background: linear-gradient(90deg, var(--accent), #7aa7ff);
+}
+
+.sys-bar-fill.disk {
+    background: var(--ok);
+}
+
+.sys-sub {
+    font-size: 11px;
+    color: var(--text-faint);
+}
+
+/* 进程行 / 磁盘行 */
+.sys-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+    min-height: 20px;
+}
+
+.sys-row-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+}
+
+.sys-row-val {
+    flex: 0 0 auto;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+
+.sys-row-val em {
+    font-style: normal;
+    color: var(--text-faint);
+    margin-left: 6px;
+    font-size: 11px;
+}
+
+.sys-disk {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}

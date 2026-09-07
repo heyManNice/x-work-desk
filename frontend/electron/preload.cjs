@@ -62,6 +62,12 @@ contextBridge.exposeInMainWorld('xwd', {
             return () => ipcRenderer.removeListener('xwd:ssh:install-progress', listener);
         },
     },
+    /* 系统监控（SSH 采集远端 CPU/内存/进程/磁盘） */
+    sys: {
+        open: (opt) => ipcRenderer.invoke('xwd:sys:open', opt),
+        sample: (id) => ipcRenderer.invoke('xwd:sys:sample', id),
+        close: (id) => ipcRenderer.send('xwd:sys:close', id),
+    },
     /* 远程文件面板（SFTP） */
     file: {
         open: (opt) => ipcRenderer.invoke('xwd:file:open', opt),
