@@ -478,6 +478,24 @@ html[data-theme='light'] .host-item.active {
     color: var(--danger);
 }
 
+/* 正在安装服务端：常显操作区，桌面按钮置灰不可点 */
+.host-item.installing .host-ops {
+    display: flex;
+}
+
+.host-op:disabled,
+.host-op.disabled {
+    color: var(--text-faint);
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.host-op:disabled:hover,
+.host-op.disabled:hover {
+    background: transparent;
+    color: var(--text-faint);
+}
+
 .sidebar-foot {
     padding: 8px 12px;
     color: var(--text-faint);
@@ -1194,6 +1212,21 @@ canvas {
 
 .ctx-item.danger svg {
     color: var(--danger);
+}
+
+.ctx-item:disabled {
+    color: var(--text-faint);
+    opacity: 0.55;
+    cursor: default;
+}
+
+.ctx-item:disabled:hover {
+    background: none;
+    color: var(--text-faint);
+}
+
+.ctx-item:disabled svg {
+    color: var(--text-faint);
 }
 
 .ctx-sep {

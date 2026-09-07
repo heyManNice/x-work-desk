@@ -11,7 +11,7 @@ import {
     onMount, onCleanup, type Accessor,
 } from 'solid-js';
 import {
-    Monitor, Plus, Play, Pencil, Trash2, Minus, Copy, Square, X,
+    Monitor, Plus, Pencil, Trash2, Minus, Copy, Square, X,
     Sun, Moon, LogOut, Unplug, Link, PanelLeftOpen, PanelLeftClose,
     Maximize2, Minimize2, Terminal as TerminalIcon,
 } from 'lucide-solid';
@@ -32,7 +32,7 @@ import { TerminalSession } from './core/termSession';
 import {
     NBell, NotifyPanelHost,
     startTask, patchTask, finishTask,
-    notifySuccess, notifyError,
+    notifyInfo, notifySuccess, notifyError,
 } from './core/notify';
 
 /* ---------------- 主题 ---------------- */
@@ -174,6 +174,19 @@ function resolvePassword(v: string | null): void {
 
 const [ctxMenu, setCtxMenu] = createSignal<{ x: number; y: number; host: HostConfig } | null>(null);
 
+/* 正在“一键安装远程桌面服务端”的主机 id 集合（安装期间桌面连接置灰防重复） */
+const [installingIds, setInstallingIds] = createSignal<Set<string>>(new Set());
+function setInstalling(id: string, on: boolean): void {
+    setInstallingIds((s) => {
+        const n = new Set(s);
+        if (on) n.add(id); else n.delete(id);
+        return n;
+    });
+}
+function isInstalling(id: string): boolean {
+    return installingIds().has(id);
+}
+
 /* 菜单打开时：点击任意处 / Esc / 失焦 关闭 */
 window.addEventListener('click', () => setCtxMenu(null));
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape') setCtxMenu(null); });
@@ -183,7 +196,7 @@ function openHostMenu(e: MouseEvent, h: HostConfig): void {
     e.preventDefault();
     e.stopPropagation();
     const MW = 176;
-    const MH = 232;
+    const MH = 262;
     const x = Math.min(Math.max(8, e.clientX), window.innerWidth - MW - 8);
     const y = Math.min(Math.max(8, e.clientY), window.innerHeight - MH - 8);
     setCtxMenu({ x, y, host: h });
@@ -200,8 +213,11 @@ async function copyClip(t: string): Promise<void> {
     try { await clipWriteText(t); } catch { /* 忽略 */ }
 }
 
-function ctxConnect(): void {
-    ctxDo((m) => { void connectHost(m.host); });
+function ctxConnectDesktop(): void {
+    ctxDo((m) => { void connectHost(m.host, 'desktop'); });
+}
+function ctxConnectTerminal(): void {
+    ctxDo((m) => { void connectHost(m.host, 'terminal'); });
 }
 function ctxEdit(): void {
     ctxDo((m) => openEditorEdit(m.host));
@@ -336,28 +352,38 @@ async function ensureServerReady(h: HostConfig, pass: string): Promise<boolean> 
 
     /* not_installed */
     const go = await showConfirm(
-        '未安装服务端',
-        `远端未安装 XWorkDesk 服务端。\n\n是否通过 SSH 一键安装？\n（需要远端账号可 sudo、可联网安装依赖；目标应为可运行 GNOME 的桌面主机）`,
+        '远程桌面',
+        `未检测到该主机的远程桌面服务端（XWorkDesk Server）。\n\n是否通过 SSH 一键安装？\n（需要远端账号可 sudo、可联网安装依赖；目标应为可运行 GNOME 的桌面主机）`,
     );
     if (!go) return false;
-    const inst = await installServerWithProgress(opt);
-    if (!inst.ok) {
-        if (inst.needSudo) {
-            notifyError('服务端安装失败', `远端账号缺少 sudo 权限，无法自动安装。\n\n请让该主机管理员执行：\n1) sudo visudo 添加  ${opt.user} ALL=(ALL:ALL) ALL\n2) 或运行  sudo usermod -aG sudo ${opt.user}\n\n授权后重新连接即可一键安装。`);
+    setInstalling(h.id, true); /* 安装期间该主机桌面入口置灰防重复 */
+    try {
+        const inst = await installServerWithProgress(opt);
+        if (!inst.ok) {
+            if (inst.needSudo) {
+                notifyError('远程桌面服务端安装失败', `远端账号缺少 sudo 权限，无法自动安装。\n\n请让该主机管理员执行：\n1) sudo visudo 添加  ${opt.user} ALL=(ALL:ALL) ALL\n2) 或运行  sudo usermod -aG sudo ${opt.user}\n\n授权后重新连接即可一键安装。`);
+            }
+            return false;
         }
+        const after = await sshProbeServer(opt);
+        if (after.ok && after.status === 'running') {
+            notifySuccess('远程桌面服务端已就绪', `${hostDisplay(h)} 的远程桌面服务端已安装并运行，正在连接…`);
+            return true;
+        }
+        notifyError('安装后未就绪', '服务未能启动，请到远端查看：journalctl -u xworkd -n 50');
         return false;
+    } finally {
+        setInstalling(h.id, false);
     }
-    const after = await sshProbeServer(opt);
-    if (after.ok && after.status === 'running') {
-        notifySuccess('服务端已就绪', `${hostDisplay(h)} 的 XWorkDesk 服务端已安装并运行，正在连接…`);
-        return true;
-    }
-    notifyError('安装后未就绪', '服务未能启动，请到远端查看：journalctl -u xworkd -n 50');
-    return false;
 }
 
 /* 点击主机：建立/激活连接（kind=desktop 桌面远程 / terminal SSH 终端） */
 async function connectHost(h: HostConfig, kind: ConnKind = 'desktop'): Promise<void> {
+    /* 该主机正在一键安装服务端：桌面连接暂不可用，避免重复安装 */
+    if (kind === 'desktop' && isInstalling(h.id)) {
+        notifyInfo('正在安装远程桌面服务端', `${h.name || hostDisplay(h)} 的服务端正在安装，请稍候…`);
+        return;
+    }
     /* 已打开的标签里有同类型连接在跑 → 直接激活 */
     const ex = tabs().find((t) => t.hostId === h.id && t.type === kind);
     if (ex) {
@@ -543,7 +569,7 @@ function Sidebar() {
                     {(h) => (
                         <li
                             class="host-item"
-                            classList={{ active: activeHostId() === h.id }}
+                            classList={{ active: activeHostId() === h.id, installing: isInstalling(h.id) }}
                             onClick={() => void connectHost(h)}
                             onContextMenu={(e) => openHostMenu(e, h)}
                         >
@@ -554,7 +580,13 @@ function Sidebar() {
                             </div>
                             <div class="host-ops">
                                 <button class="host-op" title="SSH 终端连接" onClick={(e) => { e.stopPropagation(); void connectHost(h, 'terminal'); }}><TerminalIcon size={14} /></button>
-                                <button class="host-op" title="桌面远程连接" onClick={(e) => { e.stopPropagation(); void connectHost(h, 'desktop'); }}><Monitor size={14} /></button>
+                                <button
+                                    class="host-op"
+                                    classList={{ disabled: isInstalling(h.id) }}
+                                    title={isInstalling(h.id) ? '正在安装远程桌面服务端…' : '连接远程桌面'}
+                                    disabled={isInstalling(h.id)}
+                                    onClick={(e) => { e.stopPropagation(); if (!isInstalling(h.id)) void connectHost(h, 'desktop'); }}
+                                ><Monitor size={14} /></button>
                             </div>
                         </li>
                     )}
@@ -892,7 +924,12 @@ function HostContextMenu() {
         <Show when={m()}>
             <div class="ctx-menu" role="menu" style={{ left: `${m()!.x}px`, top: `${m()!.y}px` }}>
                 <div class="ctx-arrow" />
-                <button class="ctx-item" onClick={ctxConnect}><Play size={13} /> 连接</button>
+                <button
+                    class="ctx-item"
+                    disabled={m() ? isInstalling(m()!.host.id) : false}
+                    onClick={ctxConnectDesktop}
+                ><Monitor size={13} /> 连接远程桌面</button>
+                <button class="ctx-item" onClick={ctxConnectTerminal}><TerminalIcon size={13} /> 连接 SSH</button>
                 <button class="ctx-item" onClick={() => void ctxLogout()}><LogOut size={13} /> 注销</button>
                 <button class="ctx-item" onClick={ctxEdit}><Pencil size={13} /> 编辑</button>
                 <div class="ctx-sep" />
