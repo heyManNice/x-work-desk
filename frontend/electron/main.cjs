@@ -53,17 +53,25 @@ function parseUriList(buf) {
     return files;
 }
 
-/* 读取剪贴板：返回 { text, files }。files 仅在桌面复制文件场景出现。 */
-function clipPoll() {
+/* 读取剪贴板：返回 { text, files }。files 仅在桌面复制文件场景出现。
+ * 注：当前 Electron 的 clipboard 已改为 Promise/W3C API（readText/writeText 异步，
+ * availableFormats/readBuffer 已移除，改用 read() 的 ClipboardItem.types/getType）。 */
+async function clipPoll() {
     let text = '';
-    try { text = clipboard.readText() || ''; } catch { text = ''; }
+    try {
+        text = (await clipboard.readText()) || '';
+    } catch { /* 读取失败按空处理 */ }
     const files = [];
     try {
-        const formats = clipboard.availableFormats();
-        if (formats.includes('text/uri-list')) {
-            files.push(...parseUriList(clipboard.readBuffer('text/uri-list')));
+        const items = await clipboard.read();
+        for (const it of items || []) {
+            const types = (it && it.types) || [];
+            if (types.includes('text/uri-list') || types.includes('text/uri-list;charset=utf-8')) {
+                const blob = await it.getType('text/uri-list');
+                files.push(...parseUriList(Buffer.from(await blob.arrayBuffer())));
+            }
         }
-    } catch { /* 忽略 */ }
+    } catch { /* 非文件场景无 files */ }
     return { text: text || null, files };
 }
 
@@ -166,12 +174,12 @@ async function uploadLocalFiles({ api, token, dir, files }) {
 /* ---------------- IPC 注册 ---------------- */
 
 function registerIpc() {
-    ipcMain.handle('xwd:clipWriteText', (_e, text) => {
-        clipboard.writeText(String(text ?? ''));
+    ipcMain.handle('xwd:clipWriteText', async (_e, text) => {
+        try { await clipboard.writeText(String(text ?? '')); } catch { /* 忽略 */ }
     });
-    ipcMain.handle('xwd:clipPoll', () => {
-        const r = clipPoll();
-        /* 返回前确保全部字段可结构化克隆（IPC），并打印结构便于诊断 */
+    ipcMain.handle('xwd:clipPoll', async () => {
+        const r = await clipPoll();
+        /* 返回前确保全部字段可结构化克隆（IPC） */
         const safe = {
             text: typeof r.text === 'string' && r.text.length ? r.text : null,
             files: Array.isArray(r.files) ? r.files.filter((f) => typeof f === 'string') : [],
