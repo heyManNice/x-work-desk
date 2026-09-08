@@ -89,10 +89,10 @@ static void ws_send_pong(conn *c, const uint8_t *payload, size_t len)
 }
 
 /* 冲刷发送缓冲 + 出站消息队列；HTTP 响应（close_after_flush）冲刷完即关闭 */
-void ws_flush(conn *c)
+int ws_flush(conn *c)
 {
     if (atomic_load(&c->closing))
-        return;
+        return 0;
 
     if (c->snd)
     {
@@ -103,9 +103,9 @@ void ws_flush(conn *c)
             if (n < 0)
             {
                 if (errno == EAGAIN || errno == EWOULDBLOCK)
-                    return;
+                    return 1;
                 net_close_conn(c);
-                return;
+                return 0;
             }
             c->snd_off += (size_t)n;
         }
@@ -124,11 +124,11 @@ void ws_flush(conn *c)
             if (n < 0)
             {
                 if (errno == EAGAIN || errno == EWOULDBLOCK)
-                    return;
+                    return 1;
                 close(c->send_fd);
                 c->send_fd = -1;
                 net_close_conn(c);
-                return;
+                return 0;
             }
             if (n == 0)
                 break; /* EOF 提前（文件被截断） */
@@ -143,7 +143,7 @@ void ws_flush(conn *c)
     if (c->close_after_flush)
     {
         net_close_conn(c);
-        return;
+        return 0;
     }
 
     while (!atomic_load(&c->closing))
@@ -157,10 +157,10 @@ void ws_flush(conn *c)
         if (r < 0)
         {
             net_close_conn(c);
-            return;
+            return 0;
         }
         if (c->snd)
-            return; /* 半发送，等 POLLOUT */
+            return 1; /* 半发送，等 POLLOUT */
     }
 }
 

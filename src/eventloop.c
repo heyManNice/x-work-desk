@@ -46,6 +46,9 @@ conn *conn_alloc(int fd)
     return c;
 }
 
+/* 已关闭、等待事件循环在安全点统一回收的连接（net_close_conn 挂入） */
+static conn *net_dead = NULL;
+
 void net_close_conn(conn *c)
 {
     if (atomic_load(&c->closing))
@@ -68,7 +71,24 @@ void net_close_conn(conn *c)
     }
     if (c->is_ws && c->sess)
         session_on_close(c);
-    conn_unref(c);
+    /* 不能立即 conn_unref 释放：事件循环/其他连接的处理中可能仍持有指向
+     * 本连接的指针（如 nx=c->next 预存、PAM end 在处理 A 时关闭 B）。
+     * 挂入 net_dead，由 net_run 每轮在安全点统一回收基础引用，彻底避免 UAF。 */
+    c->dead_next = net_dead;
+    net_dead = c;
+}
+
+/* 回收 net_dead：释放已关闭连接的基础引用（须在事件循环安全点调用） */
+static void net_sweep_dead(void)
+{
+    conn *d = net_dead;
+    net_dead = NULL;
+    while (d)
+    {
+        conn *nx = d->dead_next;
+        conn_unref(d); /* 归零则 conn_free；worker 仍持引用则推迟到其最后 unref */
+        d = nx;
+    }
 }
 
 int net_run(void)
@@ -77,7 +97,8 @@ int net_run(void)
     size_t fds_cap = 0;
     while (1)
     {
-        size_t need = 2; /* listen + wake */
+        net_sweep_dead(); /* 回收上一轮已关闭的连接（安全点） */
+        size_t need = 2;  /* listen + wake */
         for (conn *c = net_conns; c; c = c->next)
             if (!atomic_load(&c->closing))
                 need++;
@@ -198,7 +219,13 @@ int net_run(void)
                 continue;
             }
             if (rev & POLLOUT)
-                ws_flush(c);
+            {
+                if (!ws_flush(c))
+                {
+                    c = nx;
+                    continue;
+                }
+            }
             if (atomic_load(&c->closing))
             {
                 c = nx;

@@ -53,8 +53,9 @@ typedef struct conn
     uint8_t *snd;
     size_t snd_len, snd_off;
 
-    struct runtime *sess; /* 会话（session.c / session_msg.c 管理） */
-    struct conn *next;
+    struct runtime *sess;   /* 会话（session.c / session_msg.c 管理） */
+    struct conn *next;      /* 活跃连接链（net_conns） */
+    struct conn *dead_next; /* 已关闭待回收链（net_close_conn 挂入，事件循环清扫） */
 } conn;
 
 /* net.c：监听 socket、唤醒管道、连接表（eventloop.c 使用） */
@@ -86,7 +87,7 @@ void conn_consume(conn *c, size_t consumed); /* 消费前 consumed 字节，剩�
 /* 协议处理（http.c / ws.c 实现，eventloop.c 调用） */
 void http_on_data(conn *c); /* 有新的读数据，尝试解析 HTTP 请求 */
 void ws_on_data(conn *c);   /* 有新的读数据，解析尽可能多的 WS 帧 */
-void ws_flush(conn *c);     /* 冲刷出站队列与半发送帧（POLLOUT/唤醒时调用） */
+int ws_flush(conn *c);      /* 冲刷出站队列与半发送帧（POLLOUT/唤醒时调用）；返回 1=连接仍有效，0=已关闭（不可再访问 c） */
 
 /* 由 session.c / session_msg.c 实现 */
 void session_on_open(conn *c);
