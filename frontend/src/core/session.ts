@@ -44,6 +44,7 @@ export interface SessionOptions {
     user: string;
     pass: string;
     onStatus: (s: SessionStatus) => void;
+    onRequestClose?: () => void; /* 请求关闭本标签（取消接管/取消实体机占用等） */
 }
 
 export class Session {
@@ -319,7 +320,7 @@ export class Session {
     disconnect(): void {
         if (this.ws) {
             this.ws.onclose = null;
-            this.ws.close();
+            try { this.ws.close(); } catch { /* 忽略 */ }
             this.ws = null;
         }
         if (this.status === 'running') {
@@ -334,9 +335,10 @@ export class Session {
     }
 
     /* overlay“重新连接”按钮：先清理当前连接（relay/音频/剪贴板），
-     * 再按原配置重新发起登录（与首次连接同一路径；解码器按需重建） */
+     * 再按原配置重新发起登录（与首次连接同一路径；解码器按需重建）。
+     * loginWaiting 防重入：正在重连时再次点击会被忽略，一次点击即生效。 */
     reconnect(): void {
-        if (this.destroyed) return;
+        if (this.destroyed || this.loginWaiting) return;
         this.disconnect();
         this.connect();
     }
@@ -523,6 +525,11 @@ export class Session {
         this.overlay.classList.remove('show');
         if (this.audioEnabled) this.audio.start();
 
+        /* 重连/接管后恢复交互：disconnect 与 MSG_CLOSE 会关闭输入 relay 与
+         * 剪贴板轮询，这里按标签激活状态恢复（否则重连后鼠标键盘无响应） */
+        this.relay?.setActive(this.active);
+        if (this.active) this.startClipTimer();
+
         /* auto 分辨率：登录后延时校准一次（首帧容器布局可能尚未稳定），
          * 尺寸不符会补发 msgResize，避免首次连接分辨率不正确 */
         if (this.opt.host.res === 'auto') {
@@ -555,10 +562,13 @@ export class Session {
             '该账号已有会话在使用。\n\n继续登录将接管并断开前一个连接（桌面会话不注销）。是否继续？',
         );
         if (this.destroyed) return;
-        this.send(take ? msgTakeover() : msgTakeoverCancel());
-        if (!take) {
-            /* 用户取消：断开本次连接 */
+        if (take) {
+            this.send(msgTakeover());
+        } else {
+            /* 用户取消：断开本次连接并关闭本标签页 */
+            this.send(msgTakeoverCancel());
             this.disconnect();
+            this.opt.onRequestClose?.();
         }
     }
 
@@ -573,8 +583,9 @@ export class Session {
         if (kick) {
             this.send(msgKickLocal());
         } else {
-            /* 用户取消：断开本次连接 */
+            /* 用户取消：断开本次连接并关闭本标签页 */
             this.disconnect();
+            this.opt.onRequestClose?.();
         }
     }
 

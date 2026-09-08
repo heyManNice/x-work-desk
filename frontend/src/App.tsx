@@ -803,6 +803,7 @@ function SessionPane(props: { id: number }) {
                 user: pend.user,
                 pass: pend.pass,
                 onStatus: (s: SessionStatus) => rec.setStatus(s.state),
+                onRequestClose: () => closeTab(props.id),
             });
             sess = s;
             s.connect();
