@@ -503,6 +503,22 @@ static void handle_logout_msg(conn *c, runtime *rt)
     (void)c;
 }
 
+/* 仅断开运行中会话的当前连接，保留后台桌面（不注销销毁）。
+ * 实体机优先抢占使用：注销销毁会连带杀掉 Xorg 及 systemd 用户实例相关进程
+ * （与实体机共用 /run/user/<uid> 与用户总线），会干扰实体机正在进行的首次
+ * 登录（实测会打断并回退 greeter，需二次登录才成功）；改为仅断开连接保留
+ * 桌面后，实体机可一次登录成功，远程桌面之后仍可被再次接管。 */
+static void detach_remote_connection(runtime *rt, const char *reason)
+{
+    conn *cur = atomic_exchange(&rt->conn, NULL);
+    if (cur)
+    {
+        if (reason)
+            push_text_msg(cur, MSG_CLOSE, NULL, 0, reason);
+        net_close_conn(cur); /* 连接关闭：桌面保留，可再次被接管 */
+    }
+}
+
 /* 实体机占用提示后的等待态（登录中）收到确认：唤醒 login worker 踢出实体机 */
 static void handle_kick_local_msg(runtime *rt)
 {
@@ -513,8 +529,9 @@ static void handle_kick_local_msg(runtime *rt)
 
 /* ---------------- 实体机优先抢占监视 ----------------
  * root+shadow 生产服务下，周期性扫描实体机(seat0)上正登录的用户；若发现
- * 某用户恰有活跃的远程会话（人在实体机前又登录了同一账号），实体机优先——
- * 自动结束远程会话并给前端推送原因，避免两端同时操作同一用户桌面。
+ * 某用户恰有活跃的远程连接（人在实体机前又登录了同一账号），实体机优先——
+ * 断开该远程连接（保留后台桌面，不注销销毁，避免干扰实体机登录）并推送
+ * 原因，避免两端同时操作同一用户桌面。
  * （反向场景——远程登录时实体机已占用——由 login worker 的检测提示处理。） */
 static void *local_guard_thread(void *arg)
 {
@@ -537,9 +554,10 @@ static void *local_guard_thread(void *arg)
             if (!session_gone(sess) && atomic_load(&sess->conn) != NULL &&
                 sess->state != S_CLOSED)
             {
-                log_info("[guard] 实体机已登录 %s，结束其远程会话", users[i]);
-                terminate_running_session(
-                    sess, "实体机已登录该账号，远程会话已被结束");
+                log_info("[guard] 实体机已登录 %s，断开其远程连接(保留桌面)",
+                         users[i]);
+                detach_remote_connection(
+                    sess, "实体机已登录该账号，本连接已结束（远程桌面已保留）");
             }
             runtime_unref(sess);
         }
