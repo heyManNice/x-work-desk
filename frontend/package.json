@@ -21,6 +21,7 @@
     "main": "electron/main.cjs",
     "description": "XWorkDesk 远程桌面客户端（连接 xworkd 服务器）",
     "author": "heyManNice <heyManNice@users.noreply.github.com>",
+    "homepage": "https://github.com/heyManNice/x-work-desk",
     "build": {
         "appId": "io.github.heymannice.xworkdesk",
         "productName": "XWorkDesk",
