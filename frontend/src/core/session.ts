@@ -73,6 +73,8 @@ export class Session {
     private overlay!: HTMLElement;
     private ovSpinner!: HTMLElement;
     private ovText!: HTMLElement;
+    private ovBtns!: HTMLElement;
+    private ovBtn!: HTMLButtonElement;
     private hudRes!: HTMLElement;
     private hudFps!: HTMLElement;
     private hudLat!: HTMLElement;
@@ -144,9 +146,18 @@ export class Session {
         const ovText = document.createElement('div');
         ovText.className = 'ov-text';
         ovText.textContent = '正在连接…';
-        overlay.append(spinner, ovText);
+        /* 断开/错误画面底部：重新连接按钮（仅中断/失败时显示） */
+        const ovBtns = document.createElement('div');
+        ovBtns.className = 'ov-btns';
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'btn ov-retry';
+        retry.textContent = '重新连接';
+        retry.addEventListener('click', () => this.reconnect());
+        ovBtns.append(retry);
+        ovBtns.hidden = true;
+        overlay.append(spinner, ovText, ovBtns);
 
-        /* 工具条已上移到标签栏（断开/注销），会话内不再放操作按钮 */
         stage.append(canvas, hud, overlay);
         root.appendChild(stage);
 
@@ -155,6 +166,8 @@ export class Session {
         this.overlay = overlay;
         this.ovSpinner = spinner;
         this.ovText = ovText;
+        this.ovBtns = ovBtns;
+        this.ovBtn = retry;
 
         this.renderer = new VideoRenderer(canvas);
         this.renderer.onKeyframeRequest = () => this.send(msgKeyframe());
@@ -318,6 +331,14 @@ export class Session {
         this.relay?.setActive(false);
         this.audio.stop();
         this.releaseClipTimer();
+    }
+
+    /* overlay“重新连接”按钮：先清理当前连接（relay/音频/剪贴板），
+     * 再按原配置重新发起登录（与首次连接同一路径；解码器按需重建） */
+    reconnect(): void {
+        if (this.destroyed) return;
+        this.disconnect();
+        this.connect();
     }
 
     /* 注销：销毁远程会话后断开。返回 true 表示已发起注销/断开，调用方应关闭标签 */
@@ -694,6 +715,8 @@ export class Session {
     private setStatus(state: SessionState, info?: string): void {
         this.status = state;
         this.opt.onStatus({ state, info });
+        /* 断开/失败画面显示“重新连接”，连接中隐藏 */
+        if (this.ovBtns) this.ovBtns.hidden = !(state === 'error' || state === 'closed');
         if (state === 'running' && this.opt.host.debug) this.startHudTimer();
     }
 
