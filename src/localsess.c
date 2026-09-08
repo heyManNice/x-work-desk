@@ -106,7 +106,7 @@ static int collect_session_ids(char ids[][32], int max)
         ids[n][l] = 0;
         n++;
     }
-    return 0;
+    return n; /* 返回解析到的会话数量（0=无） */
 }
 
 /* 解析 show-session 的 key=value 输出 */
@@ -216,13 +216,14 @@ int localsess_kick_user(const char *user)
     log_info("[guard] 踢出实体机会话: %s (%d 个)", user, n);
     for (int i = 0; i < n; i++)
     {
-        char cmd[64];
-        snprintf(cmd, sizeof cmd, "terminate-session %s", sids[i]);
-        /* 以字符串方式调用避免逐参数拼装；terminate 无输出 */
+        char cmd[80];
+        snprintf(cmd, sizeof cmd, "loginctl terminate-session %s 2>&1", sids[i]);
+        char err[1024];
         int rc = run_capture((const char *const[]){"sh", "-c", cmd, NULL},
-                             NULL, 0);
+                             err, sizeof err);
         if (rc != 0)
-            log_err("[guard] 结束实体机会话失败: session %s", sids[i]);
+            log_err("[guard] 结束实体机会话失败(rc=%d): session %s out=[%s]",
+                    rc, sids[i], err);
     }
     /* 轮询等待实体机会话真正退出（terminate 后 GNOME 会话回落 greeter） */
     int64_t deadline = monotonic_ms() + 20000;
