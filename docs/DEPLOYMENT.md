@@ -146,17 +146,22 @@ sudo setsid nohup ./build/xworkd --auth shadow \
   添加空闲断连策略。
 - systemd 单元已放宽 `LimitNOFILE=65536`，避免连接数撑满默认 fd 上限。
 
-**实体机与远程冲突（root + `--auth shadow` 部署自动启用，基于 `loginctl`）**
+**实体机与远程冲突（root + `--auth shadow` 部署自动启用）**
 
 - 远程登录前若检测到该账号正坐在实体机屏幕（`seat0`，如 GDM 图形登录）前
   使用，前端会提示“踢出实体机”，确认后服务端执行
   `loginctl terminate-session` 结束实体机会话（GNOME 回落 greeter），随后才
   建立远程会话；
-- 反向：实体机（GDM）登录同一账号时，服务端监视到后**自动结束对应远程
-  会话**并推送原因，保证坐在实体机前的用户不被远程抢占；
-- 开发态（`--auth none` / 非 root）或无 logind 的环境自动跳过冲突检测；
+- 反向：实体机 GDM 登录同一账号时，安装脚本（`deploy/install-pam.sh`，随
+  server-bundle 一并分发）把守卫 `xworkd-gdm-guard` 接入 `/etc/pam.d/gdm-password`
+  （`auth optional pam_exec`，密码验证通过后执行）。登录动作发生时守卫调用服务端
+  本地接口（`127.0.0.1:5268/api/local/session[/end]`，令牌在 `/run/xworkd/local.token`）
+  结束该账号的远程会话——此刻实体机桌面尚未创建，注销远程是安全的，实体机
+  **一次干净登录**，远程端收到明确原因；
 - 踢出实体机会话是**不可撤销**操作（等同注销该用户桌面并丢弃其中未保存
-  内容），登录前弹窗会再次向用户说明，取消可中止本次远程登录。
+  内容），登录前弹窗会再次向用户说明，取消可中止本次远程登录；
+- 开发态（`--auth none` / 非 root）自动跳过冲突检测；目标机无 GDM（纯 headless）
+  时 install-pam 自动跳过 PAM 接入，不影响纯远程使用。
 
 ## 7. 常见问题
 

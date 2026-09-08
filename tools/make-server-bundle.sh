@@ -25,6 +25,8 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/xworkd-server/www"
 cp "$BIN" "$STAGE/xworkd-server/xworkd"
 cp -r "$DIST"/. "$STAGE/xworkd-server/www/"
+cp "$REPO/deploy/xworkd-gdm-guard" "$STAGE/xworkd-server/xworkd-gdm-guard"
+cp "$REPO/deploy/install-pam.sh" "$STAGE/xworkd-server/install-pam.sh"
 
 cat > "$STAGE/xworkd-server/install.sh" <<EOF
 #!/usr/bin/env bash
@@ -66,6 +68,8 @@ WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
 systemctl enable $SERVICE_NAME >/dev/null 2>&1 || true
+# 接入实体机登录拦截 PAM（幂等；无 GDM 自动跳过）。cwd = 解包目录
+bash install-pam.sh
 systemctl restart $SERVICE_NAME
 sleep 1
 echo XWORKD_INSTALL_OK

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# xworkd-gdm-guard —— 由 /etc/pam.d/gdm-password 的 auth 段（密码验证通过后）调用。
+# 检测 PAM_USER 是否正被 xworkd 远程使用；是则结束其远程会话（服务端注销销毁，
+# 此刻实体机桌面尚未创建，安全），随后放行实体机登录。
+# 任何异常都返回 0（配合 auth optional，绝不阻断/锁死实体机登录）。
+#
+# 依赖服务端本地控制接口：/api/local/session 与 /api/local/session/end
+# （令牌在 /run/xworkd/local.token，服务启动时生成，仅 root 可读）。
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+P="${PAM_USER:-}"
+[ -z "$P" ] && exit 0
+
+TOK=""
+[ -r /run/xworkd/local.token ] && TOK="$(cat /run/xworkd/local.token 2>/dev/null)"
+[ -z "$TOK" ] && exit 0
+
+BASE="http://127.0.0.1:5268"
+out="$(curl -s --max-time 3 -G --data-urlencode "token=$TOK" \
+    --data-urlencode "user=$P" "$BASE/api/local/session" 2>/dev/null)"
+case "$out" in
+    *'"active":1'*)
+        curl -s --max-time 5 -G --data-urlencode "token=$TOK" \
+            --data-urlencode "user=$P" "$BASE/api/local/session/end" >/dev/null 2>&1
+        ;;
+esac
+exit 0

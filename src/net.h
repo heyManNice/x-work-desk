@@ -8,6 +8,10 @@
 #include "msgqueue.h"
 #include "ws_parser.h"
 
+/* 本地会话控制接口令牌（http /api/local/* 用；main 启动时生成并写入
+ * /run/xworkd/local.token 供 PAM 守卫等本机调用方读取） */
+extern char g_local_token[64];
+
 /* WS 单帧载荷上限 / 文件下载 sendfile 单块大小（1MB） */
 #define WS_MAX_FRAME_SIZE (1u << 20)
 #define TRANSFER_SEND_CHUNK (1u << 20)

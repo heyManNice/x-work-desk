@@ -63,8 +63,10 @@
 - 视频流：关键帧（含 SPS/PPS）→ 客户端按需请求关键帧后解码 delta 帧。
 - 同账号已在别处登录时会话提醒，可选择接管（桌面会话不销毁）。
 - 实体机与远程冲突（root 生产部署）：远程登录时若该账号正坐在实体机
-  （seat0/GDM）前登录，会提示“踢出实体机”并需确认后才进入远程；反向——
-  实体机登录同一账号时自动结束对应远程会话（实体机优先），见 `src/localsess.c`。
+  （seat0/GDM）前登录，会提示“踢出实体机”并需确认后才进入远程（`src/localsess.c`
+  经 logind 检测、`terminate-session` 踢出）；反向——实体机 GDM 登录同一账号时，
+  由 PAM 守卫（`deploy/xworkd-gdm-guard`，`install-pam.sh` 接入 gdm-password）调用
+  服务端本地接口 `/api/local/session/end` 结束该账号远程会话，实体机一次干净登录。
 
 ## 二进制协议
 

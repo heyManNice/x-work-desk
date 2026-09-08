@@ -478,7 +478,7 @@ static void handle_input_msg(runtime *rt, uint8_t t, const uint8_t *data, size_t
  * 从会话表移除并断开连接 → 引用归零后 destroy_worker 异步 teardown
  * （杀 Xorg/桌面进程），桌面被销毁，下次登录重建全新会话。 */
 /* 注销运行中会话：标记关闭 → 从会话表摘除 → 推 CLOSE → 断开连接。
- * 由客户端注销（handle_logout_msg）与实体机抢占 guard 线程共用。 */
+ * 由客户端注销（handle_logout_msg）与本地会话控制接口（PAM 守卫）共用。 */
 static void terminate_running_session(runtime *rt, const char *reason)
 {
     pthread_mutex_lock(&rt->lock);
@@ -503,20 +503,38 @@ static void handle_logout_msg(conn *c, runtime *rt)
     (void)c;
 }
 
-/* 仅断开运行中会话的当前连接，保留后台桌面（不注销销毁）。
- * 实体机优先抢占使用：注销销毁会连带杀掉 Xorg 及 systemd 用户实例相关进程
- * （与实体机共用 /run/user/<uid> 与用户总线），会干扰实体机正在进行的首次
- * 登录（实测会打断并回退 greeter，需二次登录才成功）；改为仅断开连接保留
- * 桌面后，实体机可一次登录成功，远程桌面之后仍可被再次接管。 */
-static void detach_remote_connection(runtime *rt, const char *reason)
+/* 本地会话控制接口（PAM 守卫/调试）：查询该用户是否正有活跃远程连接 */
+int session_user_remote_active(const char *user)
 {
-    conn *cur = atomic_exchange(&rt->conn, NULL);
-    if (cur)
+    if (!user || !user[0])
+        return 0;
+    runtime *sess = session_lookup(user);
+    if (!sess)
+        return 0;
+    int active = !session_gone(sess) && sess->state != S_CLOSED &&
+                 atomic_load(&sess->conn) != NULL;
+    runtime_unref(sess);
+    return active;
+}
+
+/* 本地会话控制接口：结束指定用户的远程会话（注销销毁桌面并断开连接）。
+ * 由 PAM 守卫在实体机登录验证通过、桌面创建前调用：此窗口结束远程是安全的
+ * （不会撞实体机初始化），且能把 guard 曾断开保留的残留桌面一并清干净，
+ * 避免双桌面共用 /run/user 与用户总线。 */
+void session_end_user_remote(const char *user, const char *reason)
+{
+    if (!user || !user[0])
+        return;
+    runtime *sess = session_lookup(user);
+    if (!sess)
+        return;
+    if (!session_gone(sess) && sess->state != S_CLOSED)
     {
-        if (reason)
-            push_text_msg(cur, MSG_CLOSE, NULL, 0, reason);
-        net_close_conn(cur); /* 连接关闭：桌面保留，可再次被接管 */
+        log_info("本地控制: 结束 %s 的远程会话", user);
+        terminate_running_session(
+            sess, reason ? reason : "该账号已在实体机登录，远程会话已结束");
     }
+    runtime_unref(sess);
 }
 
 /* 实体机占用提示后的等待态（登录中）收到确认：唤醒 login worker 踢出实体机 */
@@ -525,60 +543,6 @@ static void handle_kick_local_msg(runtime *rt)
     if (!rt_state_is(rt, S_AUTHING))
         return;
     atomic_store(&rt->kick_local, 1);
-}
-
-/* ---------------- 实体机优先抢占监视 ----------------
- * root+shadow 生产服务下，周期性扫描实体机(seat0)上正登录的用户；若发现
- * 某用户恰有活跃的远程连接（人在实体机前又登录了同一账号），实体机优先——
- * 断开该远程连接（保留后台桌面，不注销销毁，避免干扰实体机登录）并推送
- * 原因，避免两端同时操作同一用户桌面。
- * （反向场景——远程登录时实体机已占用——由 login worker 的检测提示处理。） */
-static void *local_guard_thread(void *arg)
-{
-    (void)arg;
-    for (;;)
-    {
-        sleep(1);
-        char users[64][64];
-        int n = localsess_seat_users(users, 64);
-        if (n < 0)
-        {
-            log_err("[guard] logind 不可用，实体机抢占监视退出");
-            break;
-        }
-        for (int i = 0; i < n; i++)
-        {
-            runtime *sess = session_lookup(users[i]);
-            if (!sess)
-                continue;
-            if (!session_gone(sess) && atomic_load(&sess->conn) != NULL &&
-                sess->state != S_CLOSED)
-            {
-                log_info("[guard] 实体机已登录 %s，断开其远程连接(保留桌面)",
-                         users[i]);
-                detach_remote_connection(
-                    sess, "实体机已登录该账号，本连接已结束（远程桌面已保留）");
-            }
-            runtime_unref(sess);
-        }
-    }
-    return NULL;
-}
-
-void session_start_local_guard(void)
-{
-    if (geteuid() != 0)
-        return; /* 仅 root 服务（生产）可读取/终止实体机会话 */
-    if (g_cfg.auth_mode != AUTH_SHADOW)
-        return; /* 开发 auth none 不启用，避免干扰本地调试 */
-    pthread_t th;
-    if (pthread_create(&th, NULL, local_guard_thread, NULL) != 0)
-    {
-        log_err("[guard] 无法启动实体机抢占监视线程");
-        return;
-    }
-    pthread_detach(th);
-    log_info("[guard] 实体机优先抢占监视已启动");
 }
 
 static void handle_takeover_msg(conn *c, runtime *rt)

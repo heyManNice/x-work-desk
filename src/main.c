@@ -2,6 +2,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <errno.h>
+#include <sys/stat.h>
 #include <X11/Xlib.h>
 
 #include "config.h"
@@ -12,7 +14,26 @@
 #include "protocol.h"
 
 config g_cfg;
+char g_local_token[64];
 volatile int g_server_shutdown = 0;
+
+/* 生成本地会话控制接口令牌并写入 /run/xworkd/local.token（0600 root），
+ * 供 PAM 守卫(xworkd-gdm-guard)等本机调用方经 127.0.0.1 调用 /api/local/* 鉴权 */
+static void init_local_api_token(void)
+{
+    util_gen_token(g_local_token, sizeof g_local_token);
+    if (mkdir("/run/xworkd", 0700) != 0 && errno != EEXIST)
+        return; /* /run 异常时忽略（接口校验会因 token 文件缺失而拒绝调用） */
+    FILE *f = fopen("/run/xworkd/local.token", "w");
+    if (!f)
+    {
+        log_err("无法写入本地接口令牌文件");
+        return;
+    }
+    fprintf(f, "%s", g_local_token);
+    fclose(f);
+    chmod("/run/xworkd/local.token", 0600);
+}
 
 static void on_signal(int sig)
 {
@@ -120,13 +141,13 @@ int main(int argc, char **argv)
 
     log_info("XWorkDesk 服务启动: 端口=%d www-root=%s auth=%s",
              g_cfg.port, g_cfg.www_root, g_cfg.auth_mode == AUTH_NONE ? "none(dev)" : "shadow");
+    init_local_api_token();
     if (net_init(g_cfg.port, g_cfg.www_root) != 0)
     {
         log_err("网络初始化失败");
         return 1;
     }
     log_info("开始服务...");
-    session_start_local_guard(); /* root+shadow：实体机登录优先抢占监视 */
     net_run();
     runtime_wait_destroyed(); /* 等待异步会话销毁收尾，避免孤儿 X/进程 */
     return 0;

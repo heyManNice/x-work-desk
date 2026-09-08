@@ -92,6 +92,8 @@ fi
 
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
+# 接入实体机登录拦截 PAM（幂等；无 GDM 自动跳过）
+bash "$REPO_DIR/deploy/install-pam.sh" "$REPO_DIR/deploy/xworkd-gdm-guard"
 systemctl restart "$SERVICE_NAME"
 systemctl --no-pager --lines=25 status "$SERVICE_NAME"
 

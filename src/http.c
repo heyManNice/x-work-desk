@@ -6,6 +6,7 @@
 #include "net.h"
 #include "util.h"
 #include "transfer.h"
+#include "session.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -269,11 +270,77 @@ static void http_parse_headers(char *hp, char *he, http_req_hdr *h)
     }
 }
 
-/* /api 路由（文件传输）。返回 1=已处理，0=非 /api 路径。 */
+/* 本地会话控制接口（/api/local/*）：PAM 守卫 xworkd-gdm-guard 在实体机登录
+ * 时经 127.0.0.1 调用。令牌 = g_local_token（写入 /run/xworkd/local.token）。
+ *   GET /api/local/session?user=<u>        → {"active":0|1}
+ *   GET /api/local/session/end?user=<u>    → 结束该用户远程会话 → {"ok":true}
+ * 返回 1=已处理。 */
+static void http_json_reply(conn *c, const char *body)
+{
+    char hdr[256];
+    int hn = snprintf(hdr, sizeof hdr,
+                      "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                      "Content-Length: %zu\r\nConnection: close\r\n\r\n",
+                      strlen(body));
+    if (conn_queue_raw(c, (const uint8_t *)hdr, (size_t)hn) &&
+        conn_queue_raw(c, (const uint8_t *)body, strlen(body)))
+        c->close_after_flush = 1;
+    else
+        net_close_conn(c);
+}
+
+static int http_route_local(conn *c, const char *path, const char *xw_token)
+{
+    if (strncmp(path, "/api/local/", 11) != 0)
+        return 0;
+    const char *q = strchr(path, '?');
+    if (!q)
+    {
+        http_error(c, 400, "Bad Request");
+        return 1;
+    }
+    char user[64], tok[160];
+    int has_tok = util_query_get(q + 1, "token", tok, sizeof tok);
+    if (!has_tok && xw_token[0])
+    {
+        snprintf(tok, sizeof tok, "%s", xw_token); /* 兼容 X-Workd-Token 头 */
+        has_tok = 1;
+    }
+    if (!has_tok || !g_local_token[0] || strcmp(tok, g_local_token) != 0)
+    {
+        http_error(c, 403, "Forbidden");
+        return 1;
+    }
+    if (!util_query_get(q + 1, "user", user, sizeof user))
+    {
+        http_error(c, 400, "Bad Request");
+        return 1;
+    }
+    if (strstr(path, "/session/end") != NULL)
+    {
+        session_end_user_remote(user, "该账号已在实体机登录，远程会话已结束");
+        http_json_reply(c, "{\"ok\":true}");
+    }
+    else
+    {
+        char body[96];
+        int act = session_user_remote_active(user);
+        snprintf(body, sizeof body, "{\"active\":%d}", act ? 1 : 0);
+        http_json_reply(c, body);
+    }
+    return 1;
+}
+
+/* /api 路由（文件传输 + 本地会话控制）。返回 1=已处理，0=非 /api 路径。 */
 static int http_route_api(conn *c, const char *method, const char *path,
                           const char *xw_token, size_t body_start, size_t len,
                           long clen)
 {
+    if (http_route_local(c, path, xw_token))
+    {
+        c->http_done = 1;
+        return 1;
+    }
     if (strncmp(path, "/api/", 5) != 0)
         return 0;
     if (!strcmp(method, "POST"))
