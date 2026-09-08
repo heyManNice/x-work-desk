@@ -8,6 +8,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import {
     sshConnect, sshWrite, sshResize, sshClose, sshOnData, sshOnClose,
+    clipWriteText, clipPoll,
 } from '../platform';
 import type { SessionState, SessionStatus } from './session';
 
@@ -36,6 +37,10 @@ export class TerminalSession {
     private unData: (() => void) | null = null;
     private unClose: (() => void) | null = null;
     private ro: ResizeObserver | null = null;
+    /* 右键菜单（复制 / 粘贴） */
+    private menu: HTMLElement | null = null;
+    private menuClean: (() => void) | null = null;
+    private lastSel = '';
 
     constructor(id: string, opt: SshOptions) {
         this.id = id;
@@ -55,6 +60,10 @@ export class TerminalSession {
         });
         this.fit = new FitAddon();
         this.term.loadAddon(this.fit);
+        /* 缓存最新选中文本：右键菜单“复制”用 */
+        this.term.onSelectionChange(() => {
+            this.lastSel = this.term.getSelection() || '';
+        });
     }
 
     get currentState(): SessionState {
@@ -134,6 +143,12 @@ export class TerminalSession {
         this.wrap.appendChild(termHost);
         this.wrap.classList.add('show');
         this.overlay.classList.remove('show');
+        /* 右键菜单：复制选中文字 / 粘贴剪贴板 */
+        termHost.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            this.lastSel = this.term.getSelection() || '';
+            this.openTermMenu(e.clientX, e.clientY);
+        });
         requestAnimationFrame(() => {
             this.layout();
             this.term.focus();
@@ -169,6 +184,77 @@ export class TerminalSession {
         this.sendResize();
     }
 
+    /* ---------------- 右键菜单：复制 / 粘贴 ---------------- */
+
+    private openTermMenu(x: number, y: number): void {
+        this.closeTermMenu();
+        const m = document.createElement('div');
+        m.className = 'ctx-menu';
+        /* 视口内裁剪，避免超出窗口 */
+        const W = 148, H = 2 * 33 + 10 + 6;
+        m.style.left = `${Math.min(x, window.innerWidth - W - 8)}px`;
+        m.style.top = `${Math.min(y, window.innerHeight - H - 8)}px`;
+
+        const btnCopy = document.createElement('button');
+        btnCopy.className = 'ctx-item';
+        btnCopy.textContent = '复制';
+        btnCopy.disabled = !this.lastSel; /* 无选中文字时不可用 */
+        btnCopy.addEventListener('click', () => {
+            this.closeTermMenu();
+            if (this.lastSel) void clipWriteText(this.lastSel);
+        });
+
+        const btnPaste = document.createElement('button');
+        btnPaste.className = 'ctx-item';
+        btnPaste.textContent = '粘贴';
+        btnPaste.addEventListener('click', () => {
+            this.closeTermMenu();
+            void this.pasteClipboard();
+        });
+
+        m.append(btnCopy, btnPaste);
+        document.body.appendChild(m);
+        this.menu = m;
+
+        /* 点击菜单外 / Esc / 窗口失焦 时关闭 */
+        const onDown = (ev: MouseEvent) => {
+            if (this.menu && !this.menu.contains(ev.target as Node)) {
+                this.closeTermMenu();
+            }
+        };
+        const onKey = (ev: KeyboardEvent) => {
+            if (ev.key === 'Escape') this.closeTermMenu();
+        };
+        const onBlur = () => this.closeTermMenu();
+        window.addEventListener('mousedown', onDown, true);
+        window.addEventListener('keydown', onKey, true);
+        window.addEventListener('blur', onBlur);
+        this.menuClean = () => {
+            window.removeEventListener('mousedown', onDown, true);
+            window.removeEventListener('keydown', onKey, true);
+            window.removeEventListener('blur', onBlur);
+        };
+    }
+
+    private closeTermMenu(): void {
+        this.menuClean?.();
+        this.menuClean = null;
+        if (this.menu) {
+            this.menu.remove();
+            this.menu = null;
+        }
+    }
+
+    /* 读取系统剪贴板文本并粘贴到终端（走主进程 IPC，Electron 环境可靠） */
+    private async pasteClipboard(): Promise<void> {
+        try {
+            const r = await clipPoll();
+            const t = (r && r.text) || '';
+            if (!t || this.destroyed || !this.conn) return;
+            this.term.paste(t);
+        } catch { /* 忽略 */ }
+    }
+
     /* 断开：关闭 SSH（会话由服务端结束） */
     disconnect(): void {
         if (this.conn || this.status === 'connecting') {
@@ -179,6 +265,7 @@ export class TerminalSession {
 
     destroy(): void {
         this.destroyed = true;
+        this.closeTermMenu();
         this.unData?.();
         this.unClose?.();
         this.ro?.disconnect();
