@@ -35,10 +35,10 @@ set -euo pipefail
 if [[ \$(id -u) -ne 0 ]]; then echo "需要 root"; exit 1; fi
 PREFIX="$PREFIX"
 mkdir -p "\$PREFIX"
-echo "[xworkd] 安装运行/会话基础依赖（ffmpeg/Xorg dummy 等）..."
+echo "[xworkd] 安装运行/会话基础依赖（Xorg dummy、X 运行库、libopus 等）..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y >/dev/null 2>&1 || true
-apt-get install -y ffmpeg xserver-xorg-video-dummy x11-xserver-utils xauth xclip dbus-x11 >/dev/null 2>&1 || true
+apt-get install -y xserver-xorg-video-dummy x11-xserver-utils xauth xclip dbus-x11 libopus0 libx11-6 libxext6 libxtst6 libxfixes3 libxrandr2 >/dev/null 2>&1 || true
 install -m 0755 xworkd "\$PREFIX/xworkd"
 rm -rf "\$PREFIX/www"
 cp -r www "\$PREFIX/www"
