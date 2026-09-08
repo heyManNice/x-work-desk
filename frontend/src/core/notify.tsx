@@ -31,9 +31,15 @@ export interface XwNotif {
 
 interface Toast {
     id: number;
-    kind: Exclude<NotifKind, 'progress'>;
+    kind: NotifKind;
     title: string;
     body?: string;
+    /** 关联的通知记录 id（进度任务气泡：patchTask 刷新 / finishTask 收敛移除） */
+    notifId?: number;
+    /** 进度 0..1；null = 不确定进度 */
+    pct?: number | null;
+    /** 进度阶段文案 */
+    label?: string;
 }
 
 let seq = 1;
@@ -96,13 +102,26 @@ export function notifyError(title: string, body?: string): void {
     addToast({ kind: 'error', title, body });
 }
 
-/** 开启一个进度任务，返回任务 id；完成后用 finishTask 收敛 */
+/** 开启一个进度任务，返回任务 id；完成后用 finishTask 收敛。
+ * 同步挂一个"进行中"气泡（不自动消失），让后台任务在界面角落可见：
+ * patchTask 刷新气泡进度，finishTask 收敛为结果气泡。 */
 export function startTask(title: string, label?: string): number {
-    return addNotif({ kind: 'progress', title, label, pct: 0 }).id;
+    const rec = addNotif({ kind: 'progress', title, label, pct: 0 });
+    setToasts((l) => [...l, { id: rec.id, kind: 'progress', title, label, pct: 0, notifId: rec.id }]);
+    return rec.id;
 }
 
 export function patchTask(id: number, p: { pct?: number | null; label?: string; title?: string; body?: string }): void {
     setNotifs((l) => l.map((x) => (x.id === id ? { ...x, ...p } : x)));
+    /* 同步刷新关联的进行中气泡 */
+    setToasts((l) => l.map((t) =>
+        t.notifId !== id ? t : {
+            ...t,
+            title: p.title ?? t.title,
+            body: p.body ?? t.body,
+            pct: p.pct !== undefined ? p.pct : t.pct,
+            label: p.label !== undefined ? p.label : t.label,
+        }));
 }
 
 export function finishTask(id: number, ok: boolean, o?: { title?: string; body?: string }): void {
@@ -112,6 +131,7 @@ export function finishTask(id: number, ok: boolean, o?: { title?: string; body?:
         const body = o?.body ?? x.body;
         return { ...x, kind: ok ? 'success' : 'error', pct: ok ? 1 : 0, label: undefined, title, body, unread: true };
     }));
+    setToasts((l) => l.filter((t) => t.notifId !== id)); /* 收起进行中气泡，交由下方结果气泡接管 */
     const cur = notifs().find((x) => x.id === id);
     if (cur) addToast({ kind: ok ? 'success' : 'error', title: o?.title ?? cur.title, body: o?.body ?? cur.body });
 }
@@ -225,10 +245,16 @@ export function NotifyPanelHost() {
                 <For each={toasts()}>
                     {(t) => (
                         <div class="toast" classList={{ [`k-${t.kind}`]: true }} onClick={openNotifyFromToast} title="查看通知">
-                            <span class="toast-ico">{t.kind === 'success' ? <CheckCircle2 size={15} /> : t.kind === 'error' ? <XCircle size={15} /> : <Info size={15} />}</span>
+                            <span class="toast-ico" classList={{ spin: t.kind === 'progress' }}>
+                                {t.kind === 'success' ? <CheckCircle2 size={15} /> : t.kind === 'error' ? <XCircle size={15} /> : t.kind === 'progress' ? <Loader2 size={15} /> : <Info size={15} />}
+                            </span>
                             <div class="toast-main">
                                 <div class="toast-title">{t.title}</div>
-                                <Show when={t.body}><div class="toast-body">{t.body}</div></Show>
+                                <Show when={t.kind === 'progress'}>
+                                    <div class="nbar"><div class="nbar-fill" classList={{ indet: t.pct === null }} style={{ width: t.pct == null ? undefined : `${Math.round(t.pct! * 100)}%` }} /></div>
+                                    <Show when={t.label}><div class="toast-label">{t.label}</div></Show>
+                                </Show>
+                                <Show when={t.kind !== 'progress' && t.body}><div class="toast-body">{t.body}</div></Show>
                             </div>
                             <button class="toast-x" onClick={(e) => { e.stopPropagation(); setToasts((l) => l.filter((x) => x.id !== t.id)); }} title="移除"><X size={11} /></button>
                         </div>
