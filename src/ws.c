@@ -162,6 +162,7 @@ int ws_flush(conn *c)
         if (c->snd)
             return 1; /* 半发送，等 POLLOUT */
     }
+    return 1; /* 出站队列已排空，连接仍有效 */
 }
 
 /* 解析缓冲中尽可能多的完整帧；剩余部分留在缓冲头部。
