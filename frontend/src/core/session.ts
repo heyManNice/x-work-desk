@@ -7,11 +7,13 @@
 
 import {
     MSG_VIDEO, MSG_CONFIG, MSG_LOGIN_RESULT, MSG_CLOSE, MSG_SESSION_EXISTS,
+    MSG_LOCAL_IN_USE,
     MSG_CURSOR, MSG_AUDIO, MSG_CLIPBOARD, MSG_TRANSFER_TOKEN, MSG_TRANSFER_REQUEST,
     MSG_TRANSFER_ERROR, MSG_CLIPBOARD_FILES, MSG_SESSION_DIRS,
     parseConfig, parseLoginResult, parseCursor, parseTransferRequest,
     TRANSFER_ACT_DOWNLOAD, TRANSFER_ACT_UPLOADDIR,
     msgLogin, msgResize, msgKeyframe, msgTakeover, msgTakeoverCancel,
+    msgKickLocal,
     msgLogout, msgRequestConfig, msgClipboard, msgSetFps, msgSetCodec,
     msgSetAnimations, msgSetAudio, msgSetClipboard,
 } from '../protocol';
@@ -445,6 +447,9 @@ export class Session {
             case MSG_SESSION_EXISTS:
                 void this.handleSessionExists();
                 break;
+            case MSG_LOCAL_IN_USE:
+                void this.handleLocalInUse();
+                break;
             case MSG_VIDEO: {
                 const flags = b[1];
                 if ((flags & 0x01) !== 0) {
@@ -531,6 +536,22 @@ export class Session {
         if (this.destroyed) return;
         this.send(take ? msgTakeover() : msgTakeoverCancel());
         if (!take) {
+            /* 用户取消：断开本次连接 */
+            this.disconnect();
+        }
+    }
+
+    /* 实体机占用：服务端检测到该账号正坐在实体机（本机屏幕）前登录。
+     * 确认后服务端会先结束实体机会话再继续登录流程；取消则断开。 */
+    private async handleLocalInUse(): Promise<void> {
+        const kick = await showConfirm(
+            '检测到实体机占用',
+            '该账号正在实体机（本机屏幕）上登录使用。\n\n继续登录将结束实体机上的会话（需先踢出实体机），之后才进入远程桌面。是否踢出实体机并继续？',
+        );
+        if (this.destroyed) return;
+        if (kick) {
+            this.send(msgKickLocal());
+        } else {
             /* 用户取消：断开本次连接 */
             this.disconnect();
         }

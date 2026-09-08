@@ -126,6 +126,7 @@ int main(int argc, char **argv)
         return 1;
     }
     log_info("开始服务...");
+    session_start_local_guard(); /* root+shadow：实体机登录优先抢占监视 */
     net_run();
     runtime_wait_destroyed(); /* 等待异步会话销毁收尾，避免孤儿 X/进程 */
     return 0;

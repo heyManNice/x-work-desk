@@ -13,6 +13,7 @@ export const MSG_TRANSFER_REQUEST = 0x0a;
 export const MSG_TRANSFER_ERROR = 0x0b;
 export const MSG_CLIPBOARD_FILES = 0x0c; /* 远程剪贴板复制了文件：每行一个 realpath */
 export const MSG_SESSION_DIRS = 0x0d;   /* home/desktop 目录下发 */
+export const MSG_LOCAL_IN_USE = 0x0e;   /* 实体机(seat0)正登录该账号：需先踢出实体机会话 */
 
 export const TRANSFER_ACT_DOWNLOAD = 1;
 export const TRANSFER_ACT_UPLOADDIR = 2;
@@ -31,6 +32,7 @@ export const MSG_SET_AUDIO = 0x1a;
 export const MSG_SET_CLIPBOARD = 0x1b;
 export const MSG_LOGOUT = 0x1c; /* 注销当前会话（销毁桌面） */
 export const MSG_REQUEST_CONFIG = 0x1e; /* 请求重发 CONFIG（接管后补拉流） */
+export const MSG_KICK_LOCAL = 0x1f; /* 确认踢出实体机会话，继续远程登录 */
 
 export const VIDEO_FLAG_KEY = 0x01;
 export const MOUSE_FLAG_MOTION = 0x01;
@@ -181,6 +183,10 @@ export function msgTakeover(): Uint8Array {
 
 export function msgTakeoverCancel(): Uint8Array {
     return new Uint8Array([MSG_TAKEOVER_CANCEL]);
+}
+
+export function msgKickLocal(): Uint8Array {
+    return new Uint8Array([MSG_KICK_LOCAL]);
 }
 
 export function msgSetFps(fps: number): Uint8Array {

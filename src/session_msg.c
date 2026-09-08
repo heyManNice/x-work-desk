@@ -6,6 +6,7 @@
 #include "session.h"
 #include "sessproc.h"
 #include "sess_table.h"
+#include "localsess.h"
 #include "audio.h"
 #include "clip.h"
 #include "protocol.h"
@@ -160,6 +161,62 @@ static void *login_worker(void *arg)
     /* 会话密钥环解锁需要登录密码（resize 重建会话时还会再用） */
     memcpy(rt->pass, j->pass, sizeof rt->pass);
     memset(j->pass, 0, sizeof j->pass); /* 密码不再需要 */
+
+    /* 实体机(seat0)占用检测：同一账号正坐在实体机屏幕前登录时（仅 root
+     * 服务能 loginctl），先推送提示并等待前端确认；确认后踢出实体机会话
+     * 才进入远程会话。前端取消/断开（S_CLOSED）则放弃本次登录。 */
+    int local_state = -1;
+    if (geteuid() == 0)
+        local_state = localsess_user_on_seat(j->user);
+    if (local_state > 0)
+    {
+        atomic_store(&rt->kick_local, 0);
+        push_text_msg(c, MSG_LOCAL_IN_USE, NULL, 0, j->user);
+        log_info("账户 %s 正被实体机使用，等待确认踢出", j->user);
+        for (;;)
+        {
+            pthread_mutex_lock(&rt->lock);
+            int closed = (rt->state == S_CLOSED);
+            pthread_mutex_unlock(&rt->lock);
+            if (closed)
+                break; /* 取消/断开连接 */
+            if (atomic_load(&rt->kick_local))
+                break; /* 前端确认踢出实体机 */
+            usleep(60000);
+        }
+        pthread_mutex_lock(&rt->lock);
+        int canceled = (rt->state == S_CLOSED);
+        pthread_mutex_unlock(&rt->lock);
+        if (canceled)
+        {
+            log_info("取消踢出实体机登录: %s", j->user);
+            conn_unref(c);
+            runtime_unref(rt);
+            free(j);
+            return NULL;
+        }
+        if (localsess_kick_user(j->user) != 0)
+        {
+            push_login_result(c, 0, "未能结束实体机上的会话，无法进入远程桌面");
+            log_err("踢出实体机会话失败: %s", j->user);
+            memset(rt->pass, 0, sizeof rt->pass);
+            pthread_mutex_lock(&rt->lock);
+            if (rt->state == S_AUTHING)
+                rt->state = S_LOGIN; /* 允许客户端重试 */
+            pthread_mutex_unlock(&rt->lock);
+            conn_unref(c);
+            runtime_unref(rt);
+            free(j);
+            return NULL;
+        }
+        log_info("已踢出实体机会话，继续远程登录: %s", j->user);
+    }
+    else if (local_state < 0)
+    {
+        /* 非 root 或 loginctl 不可用：无法判定实体机占用，按无占用继续 */
+        log_info("[guard] 实体机冲突检测不可用（非 root 或 logind 无权限），跳过: %s",
+                 j->user);
+    }
 
     runtime *sess = session_lookup(j->user);
     if (sess && session_gone(sess))
@@ -420,11 +477,10 @@ static void handle_input_msg(runtime *rt, uint8_t t, const uint8_t *data, size_t
 /* 客户端请求注销当前会话（等同在远程桌面里注销系统）：
  * 从会话表移除并断开连接 → 引用归零后 destroy_worker 异步 teardown
  * （杀 Xorg/桌面进程），桌面被销毁，下次登录重建全新会话。 */
-static void handle_logout_msg(conn *c, runtime *rt)
+/* 注销运行中会话：标记关闭 → 从会话表摘除 → 推 CLOSE → 断开连接。
+ * 由客户端注销（handle_logout_msg）与实体机抢占 guard 线程共用。 */
+static void terminate_running_session(runtime *rt, const char *reason)
 {
-    if (!rt_state_is(rt, S_RUNNING))
-        return; /* 仅已建立的会话可注销 */
-    log_info("客户端请求注销会话: %s (%s)", rt->user, rt->proc.display_str);
     pthread_mutex_lock(&rt->lock);
     rt->state = S_CLOSED; /* 不再被登录复用/接管 */
     pthread_mutex_unlock(&rt->lock);
@@ -432,10 +488,79 @@ static void handle_logout_msg(conn *c, runtime *rt)
     conn *cur = atomic_exchange(&rt->conn, NULL);
     if (cur)
     {
-        push_text_msg(cur, MSG_CLOSE, NULL, 0, "会话已注销，桌面已退出");
+        if (reason)
+            push_text_msg(cur, MSG_CLOSE, NULL, 0, reason);
         net_close_conn(cur); /* session_on_close 释放连接引用 → 归零则异步销毁 */
     }
+}
+
+static void handle_logout_msg(conn *c, runtime *rt)
+{
+    if (!rt_state_is(rt, S_RUNNING))
+        return; /* 仅已建立的会话可注销 */
+    log_info("客户端请求注销会话: %s (%s)", rt->user, rt->proc.display_str);
+    terminate_running_session(rt, "会话已注销，桌面已退出");
     (void)c;
+}
+
+/* 实体机占用提示后的等待态（登录中）收到确认：唤醒 login worker 踢出实体机 */
+static void handle_kick_local_msg(runtime *rt)
+{
+    if (!rt_state_is(rt, S_AUTHING))
+        return;
+    atomic_store(&rt->kick_local, 1);
+}
+
+/* ---------------- 实体机优先抢占监视 ----------------
+ * root+shadow 生产服务下，周期性扫描实体机(seat0)上正登录的用户；若发现
+ * 某用户恰有活跃的远程会话（人在实体机前又登录了同一账号），实体机优先——
+ * 自动结束远程会话并给前端推送原因，避免两端同时操作同一用户桌面。
+ * （反向场景——远程登录时实体机已占用——由 login worker 的检测提示处理。） */
+static void *local_guard_thread(void *arg)
+{
+    (void)arg;
+    for (;;)
+    {
+        sleep(1);
+        char users[64][64];
+        int n = localsess_seat_users(users, 64);
+        if (n < 0)
+        {
+            log_err("[guard] logind 不可用，实体机抢占监视退出");
+            break;
+        }
+        for (int i = 0; i < n; i++)
+        {
+            runtime *sess = session_lookup(users[i]);
+            if (!sess)
+                continue;
+            if (!session_gone(sess) && atomic_load(&sess->conn) != NULL &&
+                sess->state != S_CLOSED)
+            {
+                log_info("[guard] 实体机已登录 %s，结束其远程会话", users[i]);
+                terminate_running_session(
+                    sess, "实体机已登录该账号，远程会话已被结束");
+            }
+            runtime_unref(sess);
+        }
+    }
+    return NULL;
+}
+
+void session_start_local_guard(void)
+{
+    if (geteuid() != 0)
+        return; /* 仅 root 服务（生产）可读取/终止实体机会话 */
+    if (g_cfg.auth_mode != AUTH_SHADOW)
+        return; /* 开发 auth none 不启用，避免干扰本地调试 */
+    pthread_t th;
+    if (pthread_create(&th, NULL, local_guard_thread, NULL) != 0)
+    {
+        log_err("[guard] 无法启动实体机抢占监视线程");
+        return;
+    }
+    pthread_detach(th);
+    log_info("[guard] 实体机优先抢占监视已启动");
 }
 
 static void handle_takeover_msg(conn *c, runtime *rt)
@@ -505,6 +630,9 @@ void session_on_message(conn *c, const uint8_t *data, size_t len)
         break;
     case MSG_LOGOUT:
         handle_logout_msg(c, rt);
+        break;
+    case MSG_KICK_LOCAL:
+        handle_kick_local_msg(rt);
         break;
     case MSG_REQUEST_CONFIG:
         /* 接管后可能错过 CONFIG：重发 CONFIG 与关键帧，保证新端能解码出画面 */

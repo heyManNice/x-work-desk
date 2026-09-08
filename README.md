@@ -62,6 +62,9 @@
 - 每次登录连接对应服务端一个用户会话（独立 display，从 `:10` 起）。
 - 视频流：关键帧（含 SPS/PPS）→ 客户端按需请求关键帧后解码 delta 帧。
 - 同账号已在别处登录时会话提醒，可选择接管（桌面会话不销毁）。
+- 实体机与远程冲突（root 生产部署）：远程登录时若该账号正坐在实体机
+  （seat0/GDM）前登录，会提示“踢出实体机”并需确认后才进入远程；反向——
+  实体机登录同一账号时自动结束对应远程会话（实体机优先），见 `src/localsess.c`。
 
 ## 二进制协议
 
@@ -83,6 +86,7 @@
 | S→C | `0x0b` TRANSFER_ERROR | 传输错误 |
 | S→C | `0x0c` CLIPBOARD_FILES | 剪贴板复制的文件路径列表 |
 | S→C | `0x0d` SESSION_DIRS | home / desktop 目录 |
+| S→C | `0x0e` LOCAL_IN_USE | 实体机(seat0)正登录该账号，需先踢出实体机 |
 | C→S | `0x10` LOGIN | user/pass + 请求宽高 |
 | C→S | `0x11` MOUSE | 移动 / 按键 |
 | C→S | `0x12` KEY | 键盘事件（KeyboardEvent.code） |
@@ -91,6 +95,7 @@
 | C→S | `0x15`/`0x16` TAKEOVER(_CANCEL) | 接管 / 取消接管 |
 | C→S | `0x17` SET_FPS / `0x18` SET_CODEC / `0x19` SET_ANIMATIONS / `0x1a` SET_AUDIO / `0x1b` SET_CLIPBOARD | 编码与功能开关 |
 | C→S | `0x1c` LOGOUT / `0x1e` REQUEST_CONFIG | 注销 / 请求重发 CONFIG |
+| C→S | `0x1f` KICK_LOCAL | 确认踢出实体机会话并继续登录 |
 
 ## 构建
 

@@ -62,15 +62,17 @@ struct runtime
     proc_ctx proc;
     capture_ctx cap;
     encoder_ctx enc;
+    _Atomic int kick_local; /* 实体机占用提示后用户确认踢出（login worker 等待此标志） */
 };
 
 /* 由 net.c 调用（session.c / session_msg.c 实现） */
 void session_on_open(conn *c);
 void session_on_message(conn *c, const uint8_t *data, size_t len);
 void session_on_close(conn *c);
-void session_sweep(void);          /* 事件循环周期调用：清理已结束的会话 */
-void session_shutdown_all(void);   /* 服务退出前清理所有会话（优雅停机） */
-void runtime_wait_destroyed(void); /* 停机前等待异步销毁完成 */
+void session_sweep(void);             /* 事件循环周期调用：清理已结束的会话 */
+void session_shutdown_all(void);      /* 服务退出前清理所有会话（优雅停机） */
+void session_start_local_guard(void); /* root+shadow 服务启动：实体机登录优先占用的监视线程 */
+void runtime_wait_destroyed(void);    /* 停机前等待异步销毁完成 */
 
 /* runtime 引用计数（sess_table.c 等模块使用） */
 void runtime_ref(runtime *rt);
