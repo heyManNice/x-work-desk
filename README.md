@@ -47,8 +47,8 @@
 │  · net.c     HTTP + WebSocket 服务器（poll 事件循环）                         │
 │  · session.c 会话管理：每个登录用户一个 runtime                                │
 │  · auth.c    shadow+crypt 认证（需 root）；--auth none 开发模式                │
-│  · capture.c Xorg(dummy)/Xvfb 虚拟屏抓帧 + BGRA→I420                          │
-│  · encoder.c H.264（NVENC/VAAPI 优先，回退 libx264）                          │
+│  · capture.c Xorg(dummy)/Xvfb 虚拟屏抓帧 + BGRA→NV12                          │
+│  · encoder.c H.264（CPU-only，静态链接 x264，无 FFmpeg）                    │
 │  · input.c   XTest 注入鼠标/键盘                                              │
 │  · audio.c / clip.c  音频采集、剪贴板共享（含文件）                            │
 └───────────────────────────────┬──────────────────────────────────────────────┘
@@ -95,13 +95,16 @@
 ## 构建
 
 依赖：`gcc meson ninja node npm Xvfb xauth` + X11 开发头
-（`libx11-dev libxext-dev libxtst-dev libxfixes-dev`）+ FFmpeg 开发库
-（`libavcodec-dev libavutil-dev`；硬件编码需系统 NVENC/VAAPI 支持）。
+（`libx11-dev libxext-dev libxtst-dev libxfixes-dev`）+ 编码库
+（`libx264-dev` 提供静态库；音频用 `libopus-dev`）。H.264 为 CPU 软件
+编码（静态 x264，无 FFmpeg/libavcodec 依赖）。
 
 ```bash
-# 1) 后端（meson）
-sudo apt install libavcodec-dev libavutil-dev libxfixes-dev xvfb xauth
-meson setup build && ninja -C build        # 产出 build/xworkd
+# 1) 后端（meson；系统无 libx264-dev 时先自建：
+#    cd third_party/x264 && ./configure --enable-static --disable-cli \
+#        --disable-shared && make -j$(nproc)，再执行下方命令）
+sudo apt install libx264-dev libopus-dev libxfixes-dev xvfb xauth
+meson setup build && ninja -C build        # 产出 build/xworkd（静态 x264，无动态 FFmpeg）
 
 # 2) 前端（vite，被 Electron 加载）
 cd frontend && npm install && npm run build   # 产出 frontend/dist

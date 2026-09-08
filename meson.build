@@ -23,17 +23,25 @@ deps += pam_dep
 crypt_dep = cc.find_library('crypt', required: false)
 deps += crypt_dep
 
-avcodec_dep = dependency('libavcodec', required: false)
-if not avcodec_dep.found()
-  avcodec_dep = cc.find_library('avcodec', required: true)
+# ---- x264（H.264 软件编码，静态链接，无 FFmpeg/动态依赖） ----
+# 优先系统静态库 libx264.a（libx264-dev）；
+# 缺失时回退 third_party/x264 自建的静态库（无 libx264-dev 的环境：
+#   cd third_party/x264 && ./configure --enable-static --disable-cli \
+#       --disable-shared --disable-asm && make
+#   生成 libx264.a 后本构建即可直接使用）
+x264_dep = cc.find_library('x264', required: false, static: true)
+if not x264_dep.found()
+  third_x264 = meson.current_source_dir() / 'third_party' / 'x264' / 'libx264.a'
+  if import('fs').is_file(third_x264)
+    x264_dep = declare_dependency(
+      link_args: [third_x264],
+      include_directories: include_directories('third_party/x264'))
+  endif
 endif
-deps += avcodec_dep
-
-avutil_dep = dependency('libavutil', required: false)
-if not avutil_dep.found()
-  avutil_dep = cc.find_library('avutil', required: true)
+if not x264_dep.found()
+  error('找不到静态 libx264：请安装 libx264-dev，或在 third_party/x264 下先构建 libx264.a（见注释）')
 endif
-deps += avutil_dep
+deps += x264_dep
 
 opus_dep = dependency('opus', required: false)
 if not opus_dep.found()
@@ -81,7 +89,7 @@ if import('fs').is_dir(frontend / 'node_modules')
     build_by_default: true)
 endif
 
-# ---- 单元测试（纯逻辑模块，不依赖 X/FFmpeg，可无头运行） ----
+# ---- 单元测试（纯逻辑模块，不依赖 X，可无头运行） ----
 test_units = [
   ['test-util', ['test/test_util.c', 'src/util.c']],
   ['test-msgq', ['test/test_msgq.c', 'src/msgqueue.c']],

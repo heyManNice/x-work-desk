@@ -1,6 +1,7 @@
 /* audio.c —— 桌面音频传输：PipeWire 采集（pw-record）→ Opus 编码 → MSG_AUDIO。
  * 采集命令录默认 sink 的输出（桌面应用播放的声音），
- * 以 20ms 帧（48kHz 立体声 s16）喂给 FFmpeg Opus 编码器推流。 */
+ * 以 20ms 帧（48kHz 立体声 s16）喂给 libopus 编码器推流
+ * （libopus 直编，去掉 FFmpeg/libavcodec 依赖）。 */
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE
 #include "session.h"
@@ -16,39 +17,27 @@
 #include <sys/wait.h>
 #include <pwd.h>
 #include <grp.h>
-#include <libavcodec/avcodec.h>
-#include <libavutil/opt.h>
-#include <libavutil/channel_layout.h>
-#include <libavutil/time.h>
+#include <opus/opus.h>
 
 #define AUDIO_RATE 48000
 #define AUDIO_CHANNELS 2
 #define AUDIO_FRAME_MS 20
-#define AUDIO_SAMPLES (AUDIO_RATE * AUDIO_FRAME_MS / 1000)   /* 960 */
+#define AUDIO_SAMPLES (AUDIO_RATE * AUDIO_FRAME_MS / 1000)     /* 960 */
 #define AUDIO_FRAME_BYTES (AUDIO_SAMPLES * AUDIO_CHANNELS * 2) /* 3840 */
 
-/* 创建 Opus 编码器 */
-static AVCodecContext *audio_encoder_open(void)
+/* 创建 Opus 编码器（libopus 直编） */
+static OpusEncoder *audio_encoder_open(void)
 {
-    const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_OPUS);
-    if (!codec)
+    int err = OPUS_OK;
+    OpusEncoder *e = opus_encoder_create(AUDIO_RATE, AUDIO_CHANNELS,
+                                         OPUS_APPLICATION_AUDIO, &err);
+    if (err != OPUS_OK || !e)
     {
-        log_err("找不到 Opus 编码器");
+        log_err("Opus 编码器创建失败: %s", opus_strerror(err));
         return NULL;
     }
-    AVCodecContext *ctx = avcodec_alloc_context3(codec);
-    if (!ctx)
-        return NULL;
-    ctx->sample_fmt = AV_SAMPLE_FMT_S16;
-    ctx->sample_rate = AUDIO_RATE;
-    ctx->bit_rate = 128000;
-    ctx->ch_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO;
-    if (avcodec_open2(ctx, codec, NULL) < 0)
-    {
-        avcodec_free_context(&ctx);
-        return NULL;
-    }
-    return ctx;
+    opus_encoder_ctl(e, OPUS_SET_BITRATE(128000)); /* 与原 ffmpeg opus 128kbps 一致 */
+    return e;
 }
 
 static void *audio_thread(void *arg)
@@ -132,24 +121,17 @@ static void *audio_thread(void *arg)
     fd = pfd[0];
     rt->audio_pid = pid;
 
-    AVCodecContext *ctx = audio_encoder_open();
-    AVFrame *frame = av_frame_alloc();
-    AVPacket *pkt = av_packet_alloc();
-    if (!ctx || !frame || !pkt)
+    OpusEncoder *ctx = audio_encoder_open();
+    if (!ctx)
     {
         kill(-pid, SIGTERM);
         close(fd);
         return NULL;
     }
-    frame->format = AV_SAMPLE_FMT_S16;
-    frame->sample_rate = AUDIO_RATE;
-    frame->ch_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO;
-    frame->nb_samples = AUDIO_SAMPLES;
-    av_frame_get_buffer(frame, 0);
 
     uint8_t buf[AUDIO_FRAME_BYTES];
     size_t have = 0;
-    int64_t pts = 0; /* 以样本为单位的单调 PTS */
+    unsigned char obuf[4000]; /* opus 单帧输出上限（960 样本立体声远小于此） */
     while (atomic_load(&rt->audio_running))
     {
         ssize_t n = read(fd, buf + have, sizeof buf - have);
@@ -162,28 +144,22 @@ static void *audio_thread(void *arg)
         have += (size_t)n;
         while (have >= AUDIO_FRAME_BYTES)
         {
-            memcpy(frame->data[0], buf, AUDIO_FRAME_BYTES);
+            /* buf 内 3840 字节 = 960 样本 × 2 声道 × 2 字节（交错 s16），
+             * 与 libopus 的 20ms 帧对齐，直接编码为完整 opus 帧 */
+            int len = opus_encode(ctx, (const opus_int16 *)buf, AUDIO_SAMPLES,
+                                  obuf, sizeof obuf);
             memmove(buf, buf + AUDIO_FRAME_BYTES, have - AUDIO_FRAME_BYTES);
             have -= AUDIO_FRAME_BYTES;
-            frame->pts = pts;
-            pts += AUDIO_SAMPLES;
-            if (avcodec_send_frame(ctx, frame) == 0)
+            if (len > 0)
             {
-                while (avcodec_receive_packet(ctx, pkt) == 0)
-                {
-                    if (pkt->size > 0)
-                    {
-                        uint8_t *out = malloc(1 + (size_t)pkt->size);
-                        out[0] = MSG_AUDIO;
-                        memcpy(out + 1, pkt->data, (size_t)pkt->size);
-                        conn *c = atomic_load(&rt->conn);
-                        if (c)
-                            net_push_take(c, out, 1 + (size_t)pkt->size, 1);
-                        else
-                            free(out);
-                    }
-                    av_packet_unref(pkt);
-                }
+                uint8_t *out = malloc(1 + (size_t)len);
+                out[0] = MSG_AUDIO;
+                memcpy(out + 1, obuf, (size_t)len);
+                conn *c = atomic_load(&rt->conn);
+                if (c)
+                    net_push_take(c, out, 1 + (size_t)len, 1);
+                else
+                    free(out);
             }
         }
     }
@@ -191,9 +167,7 @@ static void *audio_thread(void *arg)
     kill(-pid, SIGTERM);
     waitpid(pid, NULL, 0);
     close(fd);
-    av_packet_free(&pkt);
-    av_frame_free(&frame);
-    avcodec_free_context(&ctx);
+    opus_encoder_destroy(ctx);
     rt->audio_pid = 0;
     atomic_store(&rt->audio_running, 0);
     return NULL;

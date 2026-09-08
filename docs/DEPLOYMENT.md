@@ -18,9 +18,10 @@
 
 ```bash
 # 依赖: gcc meson ninja node npm Xvfb xauth + libx11-dev libxext-dev libxtst-dev
+#       + libx264-dev libopus-dev（H.264 静态 x264 软件编码，无 FFmpeg）
 
-# 自建 x264（系统无 libx264-dev 时）
-cd third_party/x264 && ./configure --disable-asm --disable-cli --enable-static && make -j$(nproc)
+# 自建 x264（系统无 libx264-dev 时；生成 libx264.a 供 meson 静态链接）
+cd third_party/x264 && ./configure --enable-static --disable-cli --disable-shared && make -j$(nproc)
 
 # 后端
 cd /path/to/x-work-desk && meson setup build && ninja -C build

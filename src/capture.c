@@ -153,7 +153,7 @@ static inline uint8_t rgb2y(int r, int g, int b) { return (uint8_t)((66 * r + 12
 static inline uint8_t rgb2u(int r, int g, int b) { return (uint8_t)((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128; }
 static inline uint8_t rgb2v(int r, int g, int b) { return (uint8_t)((112 * r - 94 * g - 18 * b + 128) >> 8) + 128; }
 
-/* NV12：Y 平面 + 交错 UV 平面（硬件编码器 NVENC/VAAPI 的通用输入格式） */
+/* NV12：Y 平面 + 交错 UV 平面（x264 软件编码器的输入格式） */
 static void bgra_to_nv12(const uint8_t *bgra, video_buf *vb)
 {
     int w = vb->width, h = vb->height;
@@ -268,10 +268,14 @@ static void cursor_check(runtime *rt)
     }
     uint8_t *p = buf;
     *p++ = MSG_CURSOR;
-    wr_u16(p, (uint16_t)ci->width); p += 2;
-    wr_u16(p, (uint16_t)ci->height); p += 2;
-    wr_u16(p, (uint16_t)ci->xhot); p += 2;
-    wr_u16(p, (uint16_t)ci->yhot); p += 2;
+    wr_u16(p, (uint16_t)ci->width);
+    p += 2;
+    wr_u16(p, (uint16_t)ci->height);
+    p += 2;
+    wr_u16(p, (uint16_t)ci->xhot);
+    p += 2;
+    wr_u16(p, (uint16_t)ci->yhot);
+    p += 2;
     /* XRender ARGB32（premultiplied alpha）→ 直通 RGBA */
     for (size_t i = 0; i < px; i++)
     {

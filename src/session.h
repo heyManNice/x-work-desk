@@ -46,12 +46,11 @@ struct runtime
     _Atomic int64_t cap_start_ms; /* 抓帧线程启动时间（单调毫秒） */
     _Atomic int settle_pending;   /* 登录早期分辨率请求：等 GNOME 稳定后补一次 */
 
-    /* ---- 音频传输（Opus，前端开关控制） ---- */
+    /* ---- 音频传输（Opus，libopus 直编，前端开关控制） ---- */
     int _Atomic audio_enabled;
     _Atomic int audio_running;
     pthread_t audio_thread;
-    pid_t audio_pid;                  /* pw-record 采集子进程 */
-    struct AVCodecContext *audio_ctx; /* Opus 编码器 */
+    pid_t audio_pid; /* pw-record 采集子进程 */
 
     /* ---- 剪贴板共享（每会话独立状态） ---- */
     int _Atomic clip_enabled;
