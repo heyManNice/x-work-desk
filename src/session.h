@@ -17,7 +17,8 @@ enum session_state
     S_AUTHING = 1,
     S_CONFIRM = 2, /* 已有活跃会话，等待前端确认接管 */
     S_RUNNING = 3,
-    S_CLOSED = 4
+    S_CLOSED = 4,
+    S_RESTARTING = 5 /* 运行中但 Xvfb 整体重建进行中（事件循环对其绕行） */
 };
 
 /* 单个用户的会话：连接状态机 + Xvfb/抓帧/编码等子系统 */
@@ -30,8 +31,7 @@ struct runtime
     conn *_Atomic conn; /* 当前绑定的活动连接（可换绑；NULL=无人连接） */
     char user[64];
     char token[64];           /* 文件传输 token：注入扩展环境变量 + 浏览器 HTTP 鉴权 */
-    char pass[256];           /* 登录密码：用于解锁会话 GNOME Keyring，teardown 时清零 */
-    int req_w, req_h;         /* 登录请求的分辨率（接管确认后重建会话用） */
+    char pass[256];           /* 登录密码：解锁会话 GNOME Keyring；Xvfb 重建会复用，真正销毁时擦除 */
     int _Atomic fps;          /* 最大抓帧帧率（前端可调） */
     int _Atomic static_skip;  /* 静态帧优化开关（画面无变化跳过编码） */
     int _Atomic bitrate_kbps; /* 目标码率上限（0=自动/CRF 质量模式） */
@@ -47,7 +47,6 @@ struct runtime
     _Atomic int settle_pending;   /* 登录早期分辨率请求：等 GNOME 稳定后补一次 */
 
     /* ---- 音频传输（Opus，libopus 直编，前端开关控制） ---- */
-    int _Atomic audio_enabled;
     _Atomic int audio_running;
     pthread_t audio_thread;
     pid_t audio_pid; /* pw-record 采集子进程 */

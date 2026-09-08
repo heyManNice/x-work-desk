@@ -123,12 +123,15 @@ void runtime_teardown(runtime *rt)
         rt->proc.display = -1; /* 下一次 bring_up 重新分配 */
     }
     rt->cap.have_sig = 0;
-    memset(rt->pass, 0, sizeof rt->pass);
+    /* 注意：teardown 不擦除 rt->pass——Xvfb 重建(runtime_restart)会先
+     * teardown 再 bring_up，重建后 spawn_session_app 仍需密码解锁 keyring。
+     * 密码只在真正销毁(free)前的 destroy 路径擦除。 */
 }
 
 static void runtime_destroy(runtime *rt)
 {
     runtime_teardown(rt);
+    memset(rt->pass, 0, sizeof rt->pass); /* 销毁前擦除登录密码 */
     pthread_mutex_destroy(&rt->lock);
     free(rt);
 }
@@ -145,6 +148,7 @@ static void *destroy_worker(void *arg)
 {
     runtime *rt = arg;
     runtime_teardown(rt);
+    memset(rt->pass, 0, sizeof rt->pass); /* 销毁前擦除登录密码 */
     pthread_mutex_destroy(&rt->lock);
     free(rt);
     pthread_mutex_lock(&g_destroy_lock);
@@ -197,19 +201,20 @@ void session_on_open(conn *c)
     rt->proc.display = -1;
     pthread_mutex_init(&rt->lock, NULL);
     util_gen_token(rt->token, sizeof rt->token);
-    c->sess = rt;
+    atomic_store(&c->sess, rt);
 }
 
 void session_on_close(conn *c)
 {
-    runtime *rt = c->sess;
-    c->sess = NULL;
+    runtime *rt = atomic_load(&c->sess);
+    atomic_store(&c->sess, NULL);
     if (!rt)
         return;
     pthread_mutex_lock(&rt->lock);
-    if (rt->state == S_RUNNING)
+    if (rt->state == S_RUNNING || rt->state == S_RESTARTING)
     {
         /* 桌面会话与连接解耦：断开连接只解绑，会话继续在后台运行。
+         * 重建中会话同样保留（restart worker 持有引用保证 rt 存活）；
          * 若 conn 已被接管顶掉（rt->conn 指向别的连接），无需处理。 */
         if (atomic_load(&rt->conn) == c)
             atomic_store(&rt->conn, NULL);

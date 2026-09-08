@@ -92,6 +92,11 @@ void session_unregister(runtime *rt)
 /* 判断会话是否已结束：gnome-session（wrapper）或 Xvfb 已退出 */
 int session_gone(runtime *rt)
 {
+    /* Xvfb 整体重建中会先杀旧 X 进程再起新的：此窗口内不得判定会话已
+     * 结束，否则 session_sweep 会把刚重建好的会话误杀（teardown 杀 Xvfb
+     * 与 bring_up 起新 X 之间 xvfb_pid 短暂指向已死进程） */
+    if (atomic_load(&rt->restarting))
+        return 0;
     if (rt->proc.xvfb_pid > 0 && !pid_alive(rt->proc.xvfb_pid))
         return 1;
     for (int i = 0; i < rt->proc.nchildren; i++)

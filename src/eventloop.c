@@ -16,8 +16,6 @@
 #include <poll.h>
 #include <sys/socket.h>
 
-#define MAX_HTTP_REQ 65536
-
 static int set_nonblock(int fd)
 {
     int fl = fcntl(fd, F_GETFL, 0);
@@ -69,7 +67,7 @@ void net_close_conn(conn *c)
         close(c->fd);
         c->fd = -1;
     }
-    if (c->is_ws && c->sess)
+    if (c->is_ws && atomic_load(&c->sess))
         session_on_close(c);
     /* 不能立即 conn_unref 释放：事件循环/其他连接的处理中可能仍持有指向
      * 本连接的指针（如 nx=c->next 预存、PAM end 在处理 A 时关闭 B）。

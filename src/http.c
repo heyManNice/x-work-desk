@@ -18,6 +18,9 @@
 #include <sys/stat.h>
 
 #define WS_GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+/* POST body 上限（上传按分片，单片远小于此）：防止未认证连接用可控的
+ * Content-Length 无限灌内存。超限直接 413 拒绝，不等 body 收满。 */
+#define HTTP_MAX_BODY (64u << 20)
 
 static const char *mime_for(const char *path)
 {
@@ -348,6 +351,12 @@ static int http_route_api(conn *c, const char *method, const char *path,
         if (clen <= 0)
         {
             http_error(c, 411, "Length Required");
+            c->http_done = 1;
+            return 1;
+        }
+        if ((uint64_t)clen > HTTP_MAX_BODY)
+        {
+            http_error(c, 413, "Payload Too Large");
             c->http_done = 1;
             return 1;
         }

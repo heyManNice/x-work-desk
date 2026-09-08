@@ -34,9 +34,7 @@ typedef struct conn
     int close_after_flush; /* 响应冲刷完毕后关闭连接 */
 
     /* ---- HTTP POST body 累积（transfer 上传分片） ---- */
-    char http_method[8];  /* 当前请求方法 */
     size_t http_clen;     /* Content-Length */
-    size_t http_body_got; /* 已收到的 body 字节数 */
     int http_await_body;  /* 1=正在等待 body 收满 */
 
     /* ---- HTTP 流式文件下载（sendfile） ---- */
@@ -53,7 +51,7 @@ typedef struct conn
     uint8_t *snd;
     size_t snd_len, snd_off;
 
-    struct runtime *sess;   /* 会话（session.c / session_msg.c 管理） */
+    struct runtime *_Atomic sess; /* 会话（session.c / session_msg.c 管理；跨线程原子访问） */
     struct conn *next;      /* 活跃连接链（net_conns） */
     struct conn *dead_next; /* 已关闭待回收链（net_close_conn 挂入，事件循环清扫） */
 } conn;

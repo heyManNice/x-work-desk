@@ -120,7 +120,7 @@ static void takeover_session(runtime *sess, conn *c)
 {
     runtime_ref(sess); /* 新连接持有会话引用 */
     atomic_store(&sess->conn, c);
-    c->sess = sess;
+    atomic_store(&c->sess, sess);
     /* 会话已有 SPS/PPS，capture 线程不会再自动发 CONFIG；
      * 置 need_config 让抓帧线程下一帧补发，并强制请求关键帧 */
     atomic_store(&sess->cap.need_config, 1);
@@ -221,18 +221,13 @@ static void *login_worker(void *arg)
     runtime *sess = session_lookup(j->user);
     if (sess && session_gone(sess))
     {
-        /* 旧会话的桌面已退出（如刚在系统内注销）：不等每秒的 sweep，
-         * 立即清理，避免新登录撞上"假活跃"会话 */
-        conn *old = atomic_exchange(&sess->conn, NULL);
-        pthread_mutex_lock(&sess->lock);
-        sess->state = S_CLOSED;
-        pthread_mutex_unlock(&sess->lock);
-        if (old)
-            net_close_conn(old);
-        session_unregister(sess);
+        /* 旧会话桌面已死（注销/崩溃）：不可复用、不可接管。
+         * net_close_conn 只能在事件循环线程执行，工作线程不得越界操作
+         * 连接表；遗留会话交由事件循环 session_sweep 收口（最迟一个
+         * poll 周期），这里直接走新建路径。 */
         runtime_unref(sess); /* 释放 lookup 引用 */
         sess = NULL;
-        log_info("清理已结束的旧会话: %s", j->user);
+        log_info("发现已结束的旧会话(交 session_sweep 清理): %s", j->user);
     }
     if (sess && atomic_load(&sess->conn) != NULL)
     {
@@ -263,8 +258,6 @@ static void *login_worker(void *arg)
             return NULL;
         }
         /* 该账户确有活跃连接：询问是否注销接管 */
-        rt->req_w = j->width;
-        rt->req_h = j->height;
         snprintf(rt->user, sizeof rt->user, "%s", j->user);
         pthread_mutex_lock(&rt->lock);
         rt->state = S_CONFIRM;
@@ -586,7 +579,7 @@ static void handle_takeover_msg(conn *c, runtime *rt)
 
 void session_on_message(conn *c, const uint8_t *data, size_t len)
 {
-    runtime *rt = c->sess;
+    runtime *rt = atomic_load(&c->sess);
     if (!rt || len < 1)
         return;
     uint8_t t = data[0];
@@ -661,7 +654,6 @@ void session_on_message(conn *c, const uint8_t *data, size_t len)
             break;
         if (len >= 2)
         {
-            atomic_store(&rt->audio_enabled, data[1] ? 1 : 0);
             if (data[1])
                 audio_start(rt);
             else
@@ -688,7 +680,10 @@ void session_on_message(conn *c, const uint8_t *data, size_t len)
     }
 }
 
-/* 以新分辨率重建会话（Xvfb 不支持运行时改分辨率，只能整体重建） */
+/* 以新分辨率重建会话（Xvfb 不支持运行时改分辨率，只能整体重建）。
+ * 锁只在检查状态/切换状态的瞬间持有，绝不在持锁状态下执行 teardown+
+ * bring_up 这类秒级重活——否则事件循环任何需要这把锁的路径（session_sweep、
+ * session_on_close）都会被冻结数十秒（X 启动轮询/systemd-user 最长 10s）。 */
 static int runtime_restart(runtime *rt, int w, int h)
 {
     if (!rt || w <= 0 || h <= 0 || w > 8192 || h > 8192)
@@ -705,19 +700,33 @@ static int runtime_restart(runtime *rt, int w, int h)
         pthread_mutex_unlock(&rt->lock);
         return 0;
     }
+    /* 置 S_RESTARTING：事件循环对该会话的字段访问全部绕行
+     * （rt_state_is(RUNNING)=false），可安全解锁做重活 */
+    rt->state = S_RESTARTING;
+    pthread_mutex_unlock(&rt->lock);
 
     log_info("重建会话到 %dx%d (原 %dx%d)", w, h, rt->video.width, rt->video.height);
     runtime_teardown(rt);
 
     if (session_bring_up(rt, rt->user, w, h) != 0)
     {
+        /* 重建失败：桌面多半半死，尽力回到运行态，由 session_gone/sweep
+         * 检测到 X 进程退出后收尸（与历史行为一致） */
+        log_err("会话重建失败: %s (%dx%d)", rt->user, w, h);
+        pthread_mutex_lock(&rt->lock);
+        if (rt->state == S_RESTARTING)
+            rt->state = S_RUNNING;
         pthread_mutex_unlock(&rt->lock);
         return -1;
     }
 
+    pthread_mutex_lock(&rt->lock);
+    /* 重建期间若已被注销/PAM end 置 S_CLOSED，保持关闭，不再回运行态 */
+    if (rt->state == S_RESTARTING)
+        rt->state = S_RUNNING;
+    pthread_mutex_unlock(&rt->lock);
     /* CONFIG 由抓帧线程在重建后的首个关键帧发送 */
     atomic_store(&rt->cap.req_keyframe, 1);
     log_info("会话重建完成: %s (%dx%d)", rt->user, rt->video.width, rt->video.height);
-    pthread_mutex_unlock(&rt->lock);
     return 0;
 }
