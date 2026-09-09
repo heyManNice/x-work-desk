@@ -1161,10 +1161,11 @@ html[data-theme='light'] .host-item.active {
     animation: xwd-spin 0.8s linear infinite;
 }
 
+/* 连接 loading 大圈（桌面/SSH overlay 共用）：2/3 尺寸，二者对称一致 */
 .spinner.big {
-    width: 38px;
-    height: 38px;
-    border-width: 4px;
+    width: 25px;
+    height: 25px;
+    border-width: 3px;
 }
 
 @keyframes xwd-spin {
@@ -2413,7 +2414,6 @@ canvas {
     overflow: auto;
     background: var(--bg-elev);
     border-radius: 12px;
-    border: 1px solid var(--hover);
     flex: 0 1 auto;
 }
 

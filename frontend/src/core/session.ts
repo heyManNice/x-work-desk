@@ -41,6 +41,7 @@ export interface SessionOptions {
     root: HTMLElement;          /* 会话视图容器（Session 在内部自建 DOM） */
     host: HostConfig;           /* 展示名/配置 */
     target: ServerTarget;       /* origin / wsUrl / apiBase */
+    name: string;               /* 主机显示名（连接中提示“正在连接 名字”用） */
     user: string;
     pass: string;
     onStatus: (s: SessionStatus) => void;
@@ -146,7 +147,7 @@ export class Session {
         spinner.className = 'spinner big';
         const ovText = document.createElement('div');
         ovText.className = 'ov-text';
-        ovText.textContent = '正在连接…';
+        ovText.textContent = `正在连接 ${this.opt.name}`;
         /* 断开/错误画面底部：重新连接按钮（仅中断/失败时显示） */
         const ovBtns = document.createElement('div');
         ovBtns.className = 'ov-btns';
@@ -247,8 +248,8 @@ export class Session {
 
     connect(): void {
         if (this.destroyed) return;
-        this.setStatus('connecting', '正在连接…');
-        this.ovText.textContent = '正在建立连接…';
+        this.setStatus('connecting', `正在连接 ${this.opt.name}`);
+        this.ovText.textContent = `正在连接 ${this.opt.name}`;
         this.ovSpinner.hidden = false;
         this.overlay.classList.add('show');
 

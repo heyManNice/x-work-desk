@@ -464,7 +464,9 @@ async function ensureServerReady(h: HostConfig, pass: string): Promise<boolean> 
     }
 }
 
-/* 点击主机：建立/激活连接（kind=desktop 桌面远程 / terminal SSH 终端） */
+/* 点击主机：建立/激活连接（kind=desktop 桌面远程 / terminal SSH 终端）。
+ * 先开标签页并跳转过去（标签内 Session 先显示“正在连接…”），
+ * 再在标签内探测远端服务端就绪后才发起连接 —— 详见 SessionPane。 */
 async function connectHost(h: HostConfig, kind: ConnKind = 'desktop'): Promise<void> {
     /* 该主机正在一键安装服务端：桌面连接暂不可用，避免重复安装 */
     if (kind === 'desktop' && isInstalling(h.id)) {
@@ -501,13 +503,7 @@ async function connectHost(h: HostConfig, kind: ConnKind = 'desktop'): Promise<v
         pass = p;
     }
 
-    /* 桌面远程：先经 SSH 探测服务端，未装/停止则引导安装/启动 */
-    if (kind === 'desktop') {
-        const ready = await ensureServerReady(h, pass);
-        if (!ready) return;
-    }
-
-    /* 再次检查（等待期间可能已打开） */
+    /* 再次检查（询问密码/等待期间可能已打开） */
     const ex2 = tabs().find((t) => t.hostId === h.id && t.type === kind);
     if (ex2) { setActiveId(ex2.id); return; }
 
@@ -533,7 +529,7 @@ async function connectHost(h: HostConfig, kind: ConnKind = 'desktop'): Promise<v
         pass,
     });
     setTabsSig([...tabs(), rec]);
-    setActiveId(id);
+    setActiveId(id); /* 跳转到新开的连接标签页（桌面连接先在此显示“正在连接…”，见 SessionPane） */
 }
 
 function closeTab(id: number): void {
@@ -876,42 +872,56 @@ function FullscreenBar() {
 
 function SessionPane(props: { id: number }) {
     let rootEl: HTMLDivElement | undefined;
+    let alive = true; /* 标签已关闭则不再继续探测/连接 */
     onMount(() => {
         const pend = pendingMap.get(props.id);
         const rec = tabs().find((t) => t.id === props.id);
         if (!pend || !rec || !rootEl) return;
 
-        let sess: ConnSession;
         if (pend.type === 'terminal') {
-            /* SSH 终端 */
+            /* SSH 终端：直接建立连接 */
             const ts = new TerminalSession(String(props.id), {
                 root: rootEl,
                 host: pend.sshHost,
                 port: pend.sshPort,
                 user: pend.user,
                 pass: pend.pass,
+                name: rec.title,
                 onStatus: (s: SessionStatus) => rec.setStatus(s.state),
             });
-            sess = ts;
+            sessionMap.set(props.id, ts);
+            ts.setActive(activeId() === props.id);
             void ts.connect();
-        } else {
-            /* 桌面远程 */
-            const s = new Session(String(props.id), {
-                root: rootEl,
-                host: pend.host,
-                target: pend.target!,
-                user: pend.user,
-                pass: pend.pass,
-                onStatus: (s: SessionStatus) => rec.setStatus(s.state),
-                onRequestClose: () => closeTab(props.id),
-            });
-            sess = s;
-            s.connect();
+            return;
         }
-        sessionMap.set(props.id, sess);
-        sess.setActive(activeId() === props.id);
+
+        /* 桌面远程：先建 Session（本标签内即显示“正在连接…”loading），
+         * 再经 SSH 探测远端服务端（未装/停止则引导安装/启动）；
+         * 就绪后才真正发起连接；失败/取消则关闭本标签。 */
+        const s = new Session(String(props.id), {
+            root: rootEl,
+            host: pend.host,
+            target: pend.target!,
+            name: rec.title,
+            user: pend.user,
+            pass: pend.pass,
+            onStatus: (ss: SessionStatus) => rec.setStatus(ss.state),
+            onRequestClose: () => closeTab(props.id),
+        });
+        sessionMap.set(props.id, s);
+        s.setActive(activeId() === props.id);
+        void (async () => {
+            const ready = await ensureServerReady(pend.host, pend.pass);
+            if (!alive) return; /* 等待期间标签被关闭 */
+            if (ready) {
+                s.connect();
+            } else {
+                closeTab(props.id); /* 探测失败/用户取消：关闭连接标签 */
+            }
+        })();
     });
     onCleanup(() => {
+        alive = false;
         const sess = sessionMap.get(props.id);
         if (sess) {
             sess.destroy();

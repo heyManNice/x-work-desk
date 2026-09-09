@@ -18,6 +18,7 @@ export interface SshOptions {
     port: number;
     user: string;
     pass: string;
+    name: string;                 /* 主机显示名（连接中提示“正在连接 名字”用） */
     onStatus: (s: SessionStatus) => void;
 }
 
@@ -84,7 +85,7 @@ export class TerminalSession {
         spinner.className = 'spinner big';
         const text = document.createElement('div');
         text.className = 'ov-text';
-        text.textContent = '正在连接 SSH…';
+        text.textContent = `正在连接 ${this.opt.name}`;
         overlay.append(spinner, text);
 
         root.append(wrap, overlay);
@@ -120,7 +121,7 @@ export class TerminalSession {
     async connect(): Promise<void> {
         const { host, port, user, pass } = this.opt;
         this.setStatus('connecting');
-        this.ovText.textContent = `正在连接 ${user}@${host}:${port} …`;
+        this.ovText.textContent = `正在连接 ${this.opt.name}`;
         this.ovSpinner.hidden = false;
         this.overlay.classList.add('show');
 
