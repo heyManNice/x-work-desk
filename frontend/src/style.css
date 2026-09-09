@@ -813,6 +813,10 @@ html[data-theme='light'] .host-item.active {
     background: var(--bg-elev-2);
     color: var(--text);
     white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
 }
 
 .btn:hover {

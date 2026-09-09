@@ -172,6 +172,12 @@ async function pingOne(id: string, host: string): Promise<void> {
 /* 启动：对所有已保存主机各 ping 一次 */
 void Promise.all(hosts().map((h) => pingOne(h.id, h.host)));
 
+/* 周期刷新连通状态（延迟列/状态点保持较新） */
+window.setInterval(() => {
+    const list = hosts();
+    if (list.length) void Promise.all(list.map((h) => pingOne(h.id, h.host)));
+}, 20000);
+
 /* ---------------- 各主机最近一次成功连接时间 ---------------- */
 const LASTSEEN_KEY = 'xwd-lastseen';
 function loadLastSeen(): Record<string, number> {
@@ -921,6 +927,18 @@ function SessionPane(props: { id: number }) {
     );
 }
 
+/* 延迟格：可达显示绿色毫秒，否则灰色 “—”。
+ * 注意：必须在 JSX 响应式位置以 getter 读取 reachMap，
+ * 不能在 For 项内先 `const ms = reachMap()[...]` 存快照，否则编译器只执行一次、永不再更新。 */
+function LatCell(props: { id: string }) {
+    const ms = () => reachMap()[props.id] ?? -1;
+    return (
+        <span class="hlat" classList={{ up: ms() >= 0 }}>
+            {ms() >= 0 ? `${ms()} ms` : '—'}
+        </span>
+    );
+}
+
 /* 收起侧栏时主页的主机列表表格：延迟/名字/用户名/地址/上次连接/操作 */
 function HostTable() {
     return (
@@ -942,35 +960,32 @@ function HostTable() {
                     </thead>
                     <tbody>
                         <For each={hosts()}>
-                            {(h) => {
-                                const ms = reachMap()[h.id] ?? -1;
-                                return (
-                                    <tr
-                                        class="hrow"
-                                        onClick={() => void connectHost(h)}
-                                        onContextMenu={(e) => openHostMenu(e, h)}
-                                        title={`连接 ${hostDisplay(h)}`}
-                                    >
-                                        <td class="hcol-lat"><span class="hlat" classList={{ up: ms >= 0 }}>{ms >= 0 ? `${ms} ms` : '—'}</span></td>
-                                        <td class="hcol-name">{h.name || hostDisplay(h)}</td>
-                                        <td>{h.user || '—'}</td>
-                                        <td class="hcol-addr">{h.host}</td>
-                                        <td class="hcol-last">{fmtLast(lastSeen()[h.id])}</td>
-                                        <td class="hcol-ops" onClick={(e) => e.stopPropagation()}>
-                                            <span class="ht-ops">
-                                                <button class="host-op" title="SSH 终端连接" onClick={() => void connectHost(h, 'terminal')}><TerminalIcon size={14} /></button>
-                                                <button
-                                                    class="host-op"
-                                                    classList={{ disabled: isInstalling(h.id) }}
-                                                    disabled={isInstalling(h.id)}
-                                                    title={isInstalling(h.id) ? '正在安装远程桌面服务端…' : '连接远程桌面'}
-                                                    onClick={() => { if (!isInstalling(h.id)) void connectHost(h, 'desktop'); }}
-                                                ><Monitor size={14} /></button>
-                                            </span>
-                                        </td>
-                                    </tr>
-                                );
-                            }}
+                            {(h) => (
+                                <tr
+                                    class="hrow"
+                                    onClick={() => void connectHost(h)}
+                                    onContextMenu={(e) => openHostMenu(e, h)}
+                                    title={`连接 ${hostDisplay(h)}`}
+                                >
+                                    <td class="hcol-lat"><LatCell id={h.id} /></td>
+                                    <td class="hcol-name">{h.name || hostDisplay(h)}</td>
+                                    <td>{h.user || '—'}</td>
+                                    <td class="hcol-addr">{h.host}</td>
+                                    <td class="hcol-last">{fmtLast(lastSeen()[h.id])}</td>
+                                    <td class="hcol-ops" onClick={(e) => e.stopPropagation()}>
+                                        <span class="ht-ops">
+                                            <button class="host-op" title="SSH 终端连接" onClick={() => void connectHost(h, 'terminal')}><TerminalIcon size={14} /></button>
+                                            <button
+                                                class="host-op"
+                                                classList={{ disabled: isInstalling(h.id) }}
+                                                disabled={isInstalling(h.id)}
+                                                title={isInstalling(h.id) ? '正在安装远程桌面服务端…' : '连接远程桌面'}
+                                                onClick={() => { if (!isInstalling(h.id)) void connectHost(h, 'desktop'); }}
+                                            ><Monitor size={14} /></button>
+                                        </span>
+                                    </td>
+                                </tr>
+                            )}
                         </For>
                     </tbody>
                 </table>
