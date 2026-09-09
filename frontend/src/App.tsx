@@ -19,10 +19,10 @@ import {
     isMac, winMinimize, winToggleMaximize, winClose,
     winIsMaximized, onWinMaximizeChange,
     winSetFullScreen, winIsFullScreen, onWinFullScreenChange,
-    platform, clipWriteText,
+    platform, clipWriteText, pingHost,
     sshProbeServer, sshStartServer, sshInstallServer, sshOnInstallProgress,
 } from './platform';
-import { resolveServer, type ServerTarget } from './server';
+import { resolveServer, hostEndpoint, type ServerTarget } from './server';
 import { showConfirm } from './modal';
 import type { HostConfig, RatioMode } from './core/host';
 import {
@@ -150,6 +150,18 @@ function setHosts(h: HostConfig[]): void {
     setHostsSig(h);
     saveHosts(h);
 }
+
+/* ---------------- 主机连通性（列表前状态点：灰=不通 / 绿=可达） ---------------- */
+const [reachMap, setReachMap] = createSignal<Record<string, boolean>>({});
+
+async function pingOne(id: string, host: string): Promise<void> {
+    const ep = hostEndpoint(host);
+    const ok = ep ? await pingHost(ep.host, ep.port) : false;
+    setReachMap((m) => (m[id] === ok ? m : { ...m, [id]: ok }));
+}
+
+/* 启动：对所有已保存主机各 ping 一次 */
+void Promise.all(hosts().map((h) => pingOne(h.id, h.host)));
 
 /* 窗口 resize → 通知激活会话（auto 分辨率时跟随） */
 window.addEventListener('resize', () => {
@@ -285,8 +297,10 @@ function saveEditor(d: HostConfig): void {
     if (!editing) return;
     if (!d.name.trim()) d.name = d.host || '未命名主机';
     d.id = editing.id || newId();
-    setHosts(upsertHost(hosts(), d));
+    const saved = upsertHost(hosts(), d);
+    setHosts(saved);
     setEditorOpen(false); /* 保留 data：让收起动画期间面板仍存在 */
+    void pingOne(d.id, d.host); /* 新增/编辑后立即探测连通性 */
 }
 
 function deleteHostById(id: string): void {
@@ -294,6 +308,12 @@ function deleteHostById(id: string): void {
     const victims = tabs().filter((t) => t.hostId === id).map((t) => t.id);
     for (const vid of victims) closeTab(vid);
     setHosts(removeHost(hosts(), id));
+    setReachMap((m) => {
+        if (!(id in m)) return m;
+        const n = { ...m };
+        delete n[id];
+        return n;
+    });
     if (editorOpen() && editorData()?.id === id) setEditorOpen(false);
 }
 
@@ -599,7 +619,7 @@ function Sidebar() {
                             onClick={() => void connectHost(h)}
                             onContextMenu={(e) => openHostMenu(e, h)}
                         >
-                            <span class="host-dot" />
+                            <span class="host-dot" classList={{ up: reachMap()[h.id] === true }} />
                             <div class="host-line" title={hostDisplay(h)}>
                                 <span class="host-name">{h.name || hostDisplay(h)}</span>
                                 <span class="host-addr-inline">{hostDisplay(h)}</span>
@@ -922,7 +942,7 @@ function HostEditor() {
     };
 
     return (
-        <div class="modal-layer" classList={{ show: editorOpen() }} onClick={(e) => { if (e.target === e.currentTarget) closeEditor(); }}>
+        <div class="modal-layer" classList={{ show: editorOpen() }} onPointerDown={(e) => { if (e.target === e.currentTarget) closeEditor(); }}>
             <Show when={editing()}>
                 {(h) => (
                     <div class="modal-panel" onClick={(e) => e.stopPropagation()}>

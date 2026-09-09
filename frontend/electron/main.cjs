@@ -13,6 +13,7 @@
 
 const { app, BrowserWindow, ipcMain, clipboard, dialog } = require('electron');
 const { Client } = require('ssh2');
+const net = require('net');
 const path = require('path');
 const fs = require('fs');
 
@@ -174,6 +175,24 @@ async function uploadLocalFiles({ api, token, dir, files }) {
 /* ---------------- IPC 注册 ---------------- */
 
 function registerIpc() {
+    /* TCP 连通性探测（主机列表状态点）：能建立 TCP 连接即视为可达 */
+    ipcMain.handle('xwd:ping', (_e, opt) => new Promise((resolve) => {
+        const host = String((opt && opt.host) || '').trim();
+        const port = Number((opt && opt.port) || 5268);
+        if (!host) { resolve(false); return; }
+        const sock = net.connect({ host, port });
+        let settled = false;
+        const done = (v) => {
+            if (settled) return;
+            settled = true;
+            try { sock.destroy(); } catch { /* 忽略 */ }
+            resolve(v);
+        };
+        sock.setTimeout(2000);
+        sock.once('connect', () => done(true));
+        sock.once('timeout', () => done(false));
+        sock.once('error', () => done(false));
+    }));
     ipcMain.handle('xwd:clipWriteText', async (_e, text) => {
         try { await clipboard.writeText(String(text ?? '')); } catch { /* 忽略 */ }
     });

@@ -44,3 +44,12 @@ export function resolveServer(hostPort: string): ServerTarget | null {
         apiBase: origin,
     };
 }
+
+/* 取 host[:port]（可带 http(s):// 前缀）中的主机名与端口（默认 5268），供连通性探测 */
+export function hostEndpoint(hostPort: string): { host: string; port: number } | null {
+    const t = resolveServer(hostPort);
+    if (!t) return null;
+    const m = /^[a-z][a-z0-9+.-]*:\/\/([^/:]+)(?::(\d+))?$/i.exec(t.origin);
+    if (!m || !m[1]) return null;
+    return { host: m[1], port: Number(m[2] || 5268) };
+}

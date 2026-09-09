@@ -10,6 +10,7 @@ export interface TransferProgress {
 
 interface DesktopBridge {
     platform?: string;
+    ping?(opt: { host: string; port?: number }): Promise<boolean>;
     clipWriteText(text: string): Promise<void>;
     clipPoll(): Promise<{ text: string | null; files: string[] }>;
     downloadRemoteFiles(opt: {
@@ -68,6 +69,15 @@ function bridge(): DesktopBridge | null {
 /* 平台：darwin / win32 / linux */
 export function platform(): string {
     return bridge()?.platform || '';
+}
+
+/* TCP 连通性探测（主机列表状态点）；无桌面壳（纯浏览器 dev）视为不可达 */
+export async function pingHost(host: string, port?: number): Promise<boolean> {
+    const b = bridge();
+    if (b && typeof b.ping === 'function') {
+        try { return !!(await b.ping({ host, port })); } catch { /* 忽略 */ }
+    }
+    return false;
 }
 
 export function isMac(): boolean {

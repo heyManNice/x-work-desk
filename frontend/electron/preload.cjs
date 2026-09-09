@@ -5,6 +5,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('xwd', {
     /* 平台：darwin / win32 / linux */
     platform: process.platform,
+    /* TCP 连通性探测（主机列表状态点） */
+    ping: (opt) => ipcRenderer.invoke('xwd:ping', opt),
     /* 剪贴板 */
     clipWriteText: (text) => ipcRenderer.invoke('xwd:clipWriteText', text),
     clipPoll: () => ipcRenderer.invoke('xwd:clipPoll'),

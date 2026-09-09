@@ -443,16 +443,19 @@ html[data-theme='light'] .host-item.active {
     background: rgba(31, 111, 235, 0.15);
 }
 
+/* 主机连通性状态点：默认灰（未探测/不通），ping 通后变绿 */
 .host-dot {
     width: 7px;
     height: 7px;
     border-radius: 50%;
     flex: 0 0 7px;
     background: var(--text-faint);
+    transition: background 0.2s ease;
 }
 
-.host-item.active .host-dot {
-    background: var(--accent);
+.host-dot.up {
+    background: #2ecc71;
+    box-shadow: 0 0 4px rgba(46, 204, 113, 0.55);
 }
 
 /* 单行：名字 + user@地址，空间不足整体省略 */
@@ -477,14 +480,20 @@ html[data-theme='light'] .host-item.active {
     margin-left: 6px;
 }
 
+/* 常驻占位（透明隐藏）：避免 hover 时操作按钮进出文档流把行撑高，导致文字高度位移 */
 .host-ops {
-    display: none;
+    display: flex;
     gap: 2px;
     flex: 0 0 auto;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
 }
 
-.host-item:hover .host-ops {
-    display: flex;
+.host-item:hover .host-ops,
+.host-item:focus-within .host-ops {
+    opacity: 1;
+    pointer-events: auto;
 }
 
 .host-op {
@@ -508,7 +517,8 @@ html[data-theme='light'] .host-item.active {
 
 /* 正在安装服务端：常显操作区，桌面按钮置灰不可点 */
 .host-item.installing .host-ops {
-    display: flex;
+    opacity: 1;
+    pointer-events: auto;
 }
 
 .host-op:disabled,
@@ -1000,7 +1010,7 @@ html[data-theme='light'] .host-item.active {
 }
 
 .he-grid-basic {
-    grid-template-columns: 3fr 5fr;
+    grid-template-columns: 1fr 1fr;
 }
 
 .he-grid-basic:nth-of-type(2) {

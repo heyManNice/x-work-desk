@@ -18,16 +18,17 @@ export function showConfirm(title: string, text: string): Promise<boolean> {
             mask.classList.remove('show'); /* 播放关闭动画后由 CSS visibility 延迟隐藏 */
             okBtn.removeEventListener('click', onOk);
             cancelBtn.removeEventListener('click', onCancel);
-            mask.removeEventListener('click', onMaskClick);
+            mask.removeEventListener('pointerdown', onMaskDown);
             resolve(v);
         };
         const onOk = () => finish(true);
         const onCancel = () => finish(false);
-        const onMaskClick = (e: MouseEvent) => {
-            if (e.target === mask) onCancel(); /* 点击遮罩空白处等同取消 */
+        /* 按下(press)遮罩空白即取消：抬起关闭在拖动/选择文本时易误触 */
+        const onMaskDown = (e: MouseEvent) => {
+            if (e.target === mask) onCancel(); /* 按遮罩空白处等同取消 */
         };
         okBtn.addEventListener('click', onOk);
         cancelBtn.addEventListener('click', onCancel);
-        mask.addEventListener('click', onMaskClick);
+        mask.addEventListener('pointerdown', onMaskDown);
     });
 }
