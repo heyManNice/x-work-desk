@@ -7,7 +7,7 @@
  */
 
 import {
-    createSignal, createEffect, For, Show,
+    createSignal, createEffect, createMemo, For, Show,
     onMount, onCleanup, type Accessor,
 } from 'solid-js';
 import {
@@ -24,6 +24,7 @@ import {
 } from './platform';
 import { resolveServer, hostEndpoint, type ServerTarget } from './server';
 import { showConfirm } from './modal';
+import { sshHostOf, resolveActiveConn, type ActiveConn } from './core/conn';
 import type { HostConfig, RatioMode } from './core/host';
 import {
     loadHosts, saveHosts, upsertHost, removeHost,
@@ -134,6 +135,13 @@ const pendingMap = new Map<number, {
     user: string;
     pass: string;
 }>();
+
+/* 当前激活连接的统一视图：顶栏文件/系统监控与“关于”共用（推导见 core/conn） */
+const currentConn = createMemo<ActiveConn | null>(() => {
+    const t = tabs().find((x) => x.id === activeId());
+    if (!t) return null;
+    return resolveActiveConn(t.id, pendingMap.get(t.id));
+});
 
 /* 全屏切换：窗口级全屏（沉浸模式，DOM 全保留） */
 function toggleFullscreen(): void {
@@ -318,17 +326,6 @@ function deleteHostById(id: string): void {
     if (editorOpen() && editorData()?.id === id) setEditorOpen(false);
 }
 
-/* 从保存的主机地址解析出纯主机名（剥 scheme/端口），SSH 走 22 端口 */
-function sshHostOf(h: HostConfig): string {
-    let hp = (h.host || '').trim();
-    const s = /^[a-z][a-z0-9+.-]*:\/\//i.exec(hp);
-    if (s) hp = hp.slice(s[0].length);
-    hp = hp.replace(/\/+$/, '');
-    const c = hp.lastIndexOf(':');
-    if (c > 0 && /^\d+$/.test(hp.slice(c + 1))) hp = hp.slice(0, c);
-    return hp || 'localhost';
-}
-
 /* 桌面连接前：经 SSH 探测远端服务端，未装/停止则引导一键安装/启动。
 /* 一键安装（经通知中心反馈进度）：主进程 xwd:ssh:install-progress → 进度条/阶段文案 */
 async function installServerWithProgress(opt: { host: string; port: number; user: string; pass?: string }) {
@@ -508,29 +505,22 @@ createEffect(() => {
     sessionMap.forEach((s, tid) => s.setActive(tid === id));
 });
 
-/* “关于”面板的已连接主机上下文：优先激活中的运行中会话（桌面/SSH），其次任意运行中的会话 */
+/* “关于”面板上下文：仅当前激活且运行中的会话（桌面/SSH），口径与顶栏一致 */
 createEffect(() => {
-    /* 只取“当前激活”的运行中会话（桌面/SSH），与顶栏工具的口径保持一致 */
-    const t = tabs().find((x) => x.id === activeId() && x.status() === 'running');
-    if (!t) {
+    const t = tabs().find((x) => x.id === activeId());
+    const c = currentConn();
+    if (!t || !c || t.status() !== 'running') {
         setAboutHost(null);
         return;
     }
-    const p = pendingMap.get(t.id);
-    if (!p) {
-        setAboutHost(null);
-        return;
-    }
-    const h = p.host;
-    const kind = t.type;
     setAboutHost({
-        kind,
-        name: h.name || hostDisplay(h),
-        apiBase: kind === 'desktop' && p.target ? p.target.apiBase : '',
-        host: sshHostOf(h),
-        port: p.sshPort || 22,
-        user: p.user,
-        pass: p.pass,
+        kind: t.type,
+        name: c.name,
+        apiBase: c.type === 'desktop' ? c.apiBase : '',
+        host: c.sshHost,
+        port: c.sshPort,
+        user: c.user,
+        pass: c.pass,
     });
 });
 
@@ -696,14 +686,11 @@ function Sidebar() {
 
 function TabBar() {
     const activeTab = () => tabs().find((x) => x.id === activeId());
-    /* 当前活动会话的 SSH 凭据（用于 SFTP 文件面板） */
-    const fmCtx = () => {
-        const t = tabs().find((x) => x.id === activeId());
-        if (!t) return null;
-        const p = pendingMap.get(t.id);
-        if (!p) return null;
-        const host = p.type === 'terminal' ? (p.sshHost || sshHostOf(p.host)) : sshHostOf(p.host);
-        return { tabId: t.id, host, port: p.sshPort || 22, user: p.user, pass: p.pass };
+    /* 当前活动会话的 SSH 凭据（SFTP 文件面板/系统监控） */
+    const fmCtx = (): FmCtx | null => {
+        const c = currentConn();
+        if (!c) return null;
+        return { tabId: c.tabId, host: c.sshHost, port: c.sshPort, user: c.user, pass: c.pass };
     };
     return (
         <div class="tabbar">
@@ -796,14 +783,11 @@ function FullscreenBar() {
     const [open, setOpen] = createSignal(false);
 
     const activeTab = () => tabs().find((x) => x.id === activeId());
-    /* 活动会话的 SSH 凭据（SFTP 文件面板，与 TabBar.fmCtx 同口径） */
+    /* 活动会话的 SSH 凭据（SFTP 文件面板/系统监控，与 TabBar 同口径） */
     const fm = (): FmCtx | null => {
-        const t = tabs().find((x) => x.id === activeId());
-        if (!t) return null;
-        const p = pendingMap.get(t.id);
-        if (!p) return null;
-        const host = p.type === 'terminal' ? (p.sshHost || sshHostOf(p.host)) : sshHostOf(p.host);
-        return { tabId: t.id, host, port: p.sshPort || 22, user: p.user, pass: p.pass };
+        const c = currentConn();
+        if (!c) return null;
+        return { tabId: c.tabId, host: c.sshHost, port: c.sshPort, user: c.user, pass: c.pass };
     };
 
     /* 活动标签非桌面会话时兜底退出全屏 */
