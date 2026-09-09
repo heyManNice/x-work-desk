@@ -38,8 +38,12 @@ void runtime_teardown(runtime *rt)
     {
         XShmDetach(rt->cap.dpy, &rt->cap.shminfo);
         XDestroyImage(rt->cap.img);
-        shmctl(rt->cap.shminfo.shmid, IPC_RMID, NULL);
         rt->cap.img = NULL;
+        /* 解除本进程 shmat 映射：只 IPC_RMID 不 shmdt 会让段一直驻留 → 内存泄漏 */
+        if (rt->cap.shminfo.shmaddr && rt->cap.shminfo.shmaddr != (char *)-1)
+            shmdt(rt->cap.shminfo.shmaddr);
+        rt->cap.shminfo.shmaddr = NULL;
+        shmctl(rt->cap.shminfo.shmid, IPC_RMID, NULL);
     }
     if (rt->cap.dpy)
     {

@@ -52,6 +52,10 @@ static int rebuild_capture(runtime *rt, int w, int h)
     XShmDetach(cap->dpy, &cap->shminfo);
     XDestroyImage(cap->img);
     cap->img = NULL;
+    /* 解除本进程 shmat 映射：只 IPC_RMID 不 shmdt 会让段一直挂在地址空间 → RSS 泄漏 */
+    if (cap->shminfo.shmaddr && cap->shminfo.shmaddr != (char *)-1)
+        shmdt(cap->shminfo.shmaddr);
+    cap->shminfo.shmaddr = NULL;
     shmctl(cap->shminfo.shmid, IPC_RMID, NULL);
     if (init_shm(cap, w, h) != 0)
         return -1;
