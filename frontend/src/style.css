@@ -2378,3 +2378,129 @@ canvas {
     opacity: 0.55;
     cursor: not-allowed;
 }
+
+/* ============================================================
+ * 收起侧栏时主页的主机列表表格
+ * ============================================================ */
+
+.landing {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 12vh 16px 24px;
+    height: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+/* 提示/图标与展开态首页同款（复用 .empty-logo/.empty-hint 全局样式） */
+.landing .empty-hint {
+    margin: 0;
+}
+
+.landing .empty-logo {
+    line-height: 0;
+}
+
+.htable-wrap {
+    width: min(560px, 92%);
+    max-height: min(60vh, 540px);
+    overflow: auto;
+    background: var(--bg-elev);
+    border-radius: 12px;
+    border: 1px solid var(--hover);
+    flex: 0 1 auto;
+}
+
+.htable {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+}
+
+.htable thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-elev-2);
+    color: var(--text-faint);
+    font-weight: 500;
+    text-align: left;
+    padding: 8px 12px;
+    font-size: 11.5px;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--hover);
+}
+
+.htable tbody td {
+    padding: 7px 12px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+    border-bottom: 1px solid var(--hover);
+}
+
+.htable tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.htable tbody tr.hrow {
+    cursor: pointer;
+}
+
+.htable tbody tr.hrow:hover {
+    background: var(--hover);
+}
+
+.htable th.hcol-lat,
+.htable td.hcol-lat {
+    width: 90px;
+}
+
+.hlat {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-faint);
+}
+
+.hlat.up {
+    color: #2ecc71;
+}
+
+.htable td.hcol-name {
+    color: var(--text);
+    font-weight: 500;
+    max-width: 220px;
+}
+
+.htable td.hcol-addr {
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+
+.htable th.hcol-ops,
+.htable td.hcol-ops {
+    width: 76px;
+    text-align: right;
+}
+
+.ht-ops {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.ht-ops .host-op {
+    color: var(--text-dim);
+    width: 24px;
+    height: 24px;
+}
+
+.htable-empty {
+    padding: 40px 0;
+    text-align: center;
+    color: var(--text-faint);
+    font-size: 13px;
+}

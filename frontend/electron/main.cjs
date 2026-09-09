@@ -175,18 +175,19 @@ async function uploadLocalFiles({ api, token, dir, files }) {
 /* ---------------- IPC 注册 ---------------- */
 
 function registerIpc() {
-    /* TCP 连通性探测（主机列表状态点）：能建立 TCP 连接即视为可达 */
+    /* TCP 连通性探测（主机状态/延迟）：返回连接耗时毫秒；失败 -1 */
     ipcMain.handle('xwd:ping', (_e, opt) => new Promise((resolve) => {
         const host = String((opt && opt.host) || '').trim();
         const port = Number((opt && opt.port) || 5268);
-        if (!host) { resolve(false); return; }
+        if (!host) { resolve(-1); return; }
+        const t0 = Date.now();
         const sock = net.connect({ host, port });
         let settled = false;
-        const done = (v) => {
+        const done = (ok) => {
             if (settled) return;
             settled = true;
             try { sock.destroy(); } catch { /* 忽略 */ }
-            resolve(v);
+            resolve(ok ? Date.now() - t0 : -1);
         };
         sock.setTimeout(2000);
         sock.once('connect', () => done(true));

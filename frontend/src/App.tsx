@@ -160,17 +160,64 @@ function setHosts(h: HostConfig[]): void {
     saveHosts(h);
 }
 
-/* ---------------- 主机连通性（列表前状态点：灰=不通 / 绿=可达） ---------------- */
-const [reachMap, setReachMap] = createSignal<Record<string, boolean>>({});
+/* ---------------- 主机连通性（延迟 ms，-1=不通/未测；列表点/表格延迟列） ---------------- */
+const [reachMap, setReachMap] = createSignal<Record<string, number>>({});
 
 async function pingOne(id: string, host: string): Promise<void> {
     const ep = hostEndpoint(host);
-    const ok = ep ? await pingHost(ep.host, ep.port) : false;
-    setReachMap((m) => (m[id] === ok ? m : { ...m, [id]: ok }));
+    const ms = ep ? await pingHost(ep.host, ep.port) : -1;
+    setReachMap((m) => (m[id] === ms ? m : { ...m, [id]: ms }));
 }
 
 /* 启动：对所有已保存主机各 ping 一次 */
 void Promise.all(hosts().map((h) => pingOne(h.id, h.host)));
+
+/* ---------------- 各主机最近一次成功连接时间 ---------------- */
+const LASTSEEN_KEY = 'xwd-lastseen';
+function loadLastSeen(): Record<string, number> {
+    try {
+        const o = JSON.parse(localStorage.getItem(LASTSEEN_KEY) || '{}');
+        return o && typeof o === 'object' ? (o as Record<string, number>) : {};
+    } catch {
+        return {};
+    }
+}
+function persistLastSeen(m: Record<string, number>): void {
+    try { localStorage.setItem(LASTSEEN_KEY, JSON.stringify(m)); } catch { /* 忽略 */ }
+}
+const [lastSeen, setLastSeen] = createSignal<Record<string, number>>(loadLastSeen());
+function markLastSeen(id: string): void {
+    setLastSeen((m) => {
+        if (m[id] && Date.now() - m[id] < 30_000) return m; /* 30s 内去重 */
+        const n = { ...m, [id]: Date.now() };
+        persistLastSeen(n);
+        return n;
+    });
+}
+/* 会话首次进入 running 即记为“最近连接” */
+const seenRunning = new Set<string>();
+createEffect(() => {
+    for (const t of tabs()) {
+        if (t.status() === 'running' && !seenRunning.has(t.hostId)) {
+            seenRunning.add(t.hostId);
+            markLastSeen(t.hostId);
+        }
+    }
+});
+
+function fmtLast(ts?: number): string {
+    if (!ts) return '—';
+    const now = Date.now();
+    const diff = now - ts;
+    const d = new Date(ts);
+    const cur = new Date();
+    const same = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const p = (n: number) => (n < 10 ? '0' + n : '' + n);
+    if (diff < 60_000) return '刚刚';
+    if (same(d, cur)) return `${p(d.getHours())}:${p(d.getMinutes())}`;
+    if (same(d, new Date(now - 86_400_000))) return '昨天';
+    return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
 
 /* 窗口 resize → 通知激活会话（auto 分辨率时跟随） */
 window.addEventListener('resize', () => {
@@ -651,7 +698,7 @@ function Sidebar() {
                             onClick={() => void connectHost(h)}
                             onContextMenu={(e) => openHostMenu(e, h)}
                         >
-                            <span class="host-dot" classList={{ up: reachMap()[h.id] === true }} />
+                            <span class="host-dot" classList={{ up: (reachMap()[h.id] ?? -1) >= 0 }} />
                             <div class="host-line" title={hostDisplay(h)}>
                                 <span class="host-name">{h.name || hostDisplay(h)}</span>
                                 <span class="host-addr-inline">{hostDisplay(h)}</span>
@@ -874,17 +921,84 @@ function SessionPane(props: { id: number }) {
     );
 }
 
+/* 收起侧栏时主页的主机列表表格：延迟/名字/用户名/地址/上次连接/操作 */
+function HostTable() {
+    return (
+        <div class="htable-wrap">
+            <Show
+                when={hosts().length > 0}
+                fallback={<div class="htable-empty">还没有保存的主机 —— 点“新建主机”添加一台</div>}
+            >
+                <table class="htable">
+                    <thead>
+                        <tr>
+                            <th class="hcol-lat">延迟</th>
+                            <th>名字</th>
+                            <th>用户名</th>
+                            <th>地址</th>
+                            <th>上次连接</th>
+                            <th class="hcol-ops">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <For each={hosts()}>
+                            {(h) => {
+                                const ms = reachMap()[h.id] ?? -1;
+                                return (
+                                    <tr
+                                        class="hrow"
+                                        onClick={() => void connectHost(h)}
+                                        onContextMenu={(e) => openHostMenu(e, h)}
+                                        title={`连接 ${hostDisplay(h)}`}
+                                    >
+                                        <td class="hcol-lat"><span class="hlat" classList={{ up: ms >= 0 }}>{ms >= 0 ? `${ms} ms` : '—'}</span></td>
+                                        <td class="hcol-name">{h.name || hostDisplay(h)}</td>
+                                        <td>{h.user || '—'}</td>
+                                        <td class="hcol-addr">{h.host}</td>
+                                        <td class="hcol-last">{fmtLast(lastSeen()[h.id])}</td>
+                                        <td class="hcol-ops" onClick={(e) => e.stopPropagation()}>
+                                            <span class="ht-ops">
+                                                <button class="host-op" title="SSH 终端连接" onClick={() => void connectHost(h, 'terminal')}><TerminalIcon size={14} /></button>
+                                                <button
+                                                    class="host-op"
+                                                    classList={{ disabled: isInstalling(h.id) }}
+                                                    disabled={isInstalling(h.id)}
+                                                    title={isInstalling(h.id) ? '正在安装远程桌面服务端…' : '连接远程桌面'}
+                                                    onClick={() => { if (!isInstalling(h.id)) void connectHost(h, 'desktop'); }}
+                                                ><Monitor size={14} /></button>
+                                            </span>
+                                        </td>
+                                    </tr>
+                                );
+                            }}
+                        </For>
+                    </tbody>
+                </table>
+            </Show>
+        </div>
+    );
+}
+
 function Workspace() {
     return (
         <section class="main">
             <TabBar />
             <div class="workspace">
                 <Show when={tabs().length === 0} fallback={<For each={tabs()}>{(t) => <SessionPane id={t.id} />}</For>}>
-                    <div class="empty">
-                        <div class="empty-logo"><Monitor size={56} /></div>
-                        <p class="empty-hint">从左侧选择一个主机开始连接，或新建一个</p>
-                        <button class="btn primary" onClick={openEditorForNew}><Plus size={15} /> 新建主机</button>
-                    </div>
+                    {sbCollapsed() ? (
+                        <div class="landing">
+                            <div class="empty-logo"><Monitor size={56} /></div>
+                            <p class="empty-hint">从左侧选择一个主机开始连接，或新建一个</p>
+                            <button class="btn primary" onClick={openEditorForNew}><Plus size={15} /> 新建主机</button>
+                            <HostTable />
+                        </div>
+                    ) : (
+                        <div class="empty">
+                            <div class="empty-logo"><Monitor size={56} /></div>
+                            <p class="empty-hint">从左侧选择一个主机开始连接，或新建一个</p>
+                            <button class="btn primary" onClick={openEditorForNew}><Plus size={15} /> 新建主机</button>
+                        </div>
+                    )}
                 </Show>
             </div>
         </section>
