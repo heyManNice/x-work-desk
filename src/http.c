@@ -7,6 +7,7 @@
 #include "util.h"
 #include "transfer.h"
 #include "session.h"
+#include "config.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -369,6 +370,13 @@ static int http_route_api(conn *c, const char *method, const char *path,
         }
         const uint8_t *body = (const uint8_t *)c->rbuf + body_start;
         transfer_handle_http(c, method, path, xw_token, body, (size_t)clen);
+    }
+    else if (!strcmp(method, "GET") && !strcmp(path, "/api/info"))
+    {
+        /* 服务端版本（编译期固定）暴露给客户端“关于”面板 */
+        char body[128];
+        snprintf(body, sizeof body, "{\"version\":\"%s\"}", XWORKD_VERSION);
+        http_json_reply(c, body);
     }
     else
     {

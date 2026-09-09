@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('xwd', {
     platform: process.platform,
     /* TCP 连通性探测（主机列表状态点） */
     ping: (opt) => ipcRenderer.invoke('xwd:ping', opt),
+    /* “关于”：SSH 采集远端系统 / 桌面环境版本 */
+    aboutHostInfo: (opt) => ipcRenderer.invoke('xwd:about:hostinfo', opt),
     /* 剪贴板 */
     clipWriteText: (text) => ipcRenderer.invoke('xwd:clipWriteText', text),
     clipPoll: () => ipcRenderer.invoke('xwd:clipPoll'),

@@ -193,6 +193,8 @@ function registerIpc() {
         sock.once('timeout', () => done(false));
         sock.once('error', () => done(false));
     }));
+    /* “关于”信息：经 SSH 采集远端系统版本 / 桌面环境版本 */
+    ipcMain.handle('xwd:about:hostinfo', (_e, opt) => sshCollectAbout(opt || {}));
     ipcMain.handle('xwd:clipWriteText', async (_e, text) => {
         try { await clipboard.writeText(String(text ?? '')); } catch { /* 忽略 */ }
     });
@@ -348,6 +350,32 @@ async function sshInstallServer(opt) {
     const ok = r.out.includes('XWORKD_INSTALL_OK') || r.code === 0;
     return { ok, needSudo, msg: ((r.out || '') + (r.err || '')).trim().slice(-1000), code: r.code };
 }
+/* “关于”：经 SSH 采集远端系统版本 / 桌面环境版本（一次命令，容忍缺失） */
+async function sshCollectAbout(opt) {
+    const cmd = [
+        'PRETTY=$(awk -F= \'/^PRETTY_NAME=/{print $2}\' /etc/os-release 2>/dev/null | tr -d \'"\')',
+        'echo "OS=${PRETTY:-Linux}"',
+        'DE=${XDG_CURRENT_DESKTOP:-}',
+        'if [ -z "$DE" ]; then for d in gnome-shell plasmashell xfce4-session mate-session cinnamon-session budgie-desktop; do if pgrep -x "$d" >/dev/null 2>&1; then DE=$d; break; fi; done; fi',
+        'case "$DE" in gnome-shell) DE="GNOME";; plasmashell) DE="KDE Plasma";; xfce4-session) DE="XFCE";; mate-session) DE="MATE";; cinnamon-session) DE="Cinnamon";; budgie-desktop) DE="Budgie";; esac',
+        'DEV=""',
+        'if command -v gnome-shell >/dev/null 2>&1; then DEV=$(gnome-shell --version 2>/dev/null | awk \'{print $3}\'); fi',
+        'echo "DE=${DE:-unknown}"',
+        'echo "DEV=${DEV:-}"',
+        'SHL=""',
+        'if [ -n "${BASH_VERSION:-}" ]; then SHL="bash ${BASH_VERSION%%(*}"; elif [ -n "${ZSH_VERSION:-}" ]; then SHL="zsh $ZSH_VERSION"; else SB=$(basename "$(readlink -f /proc/$$/exe 2>/dev/null)" 2>/dev/null); [ -n "$SB" ] && SHL="$SB"; fi',
+        'echo "SH=${SHL:-unknown}"',
+    ].join('; ');
+    const r = await sshExecOnce(opt, cmd);
+    if (r.code === -2) return { ok: false, msg: r.err };
+    const out = r.out || '';
+    const grab = (k) => {
+        const m = new RegExp('(?:^|\\n|; )' + k + '=(.*?)(?:\\n|$)', 'm').exec(out);
+        return m ? m[1].trim() : '';
+    };
+    return { ok: true, os: grab('OS'), de: grab('DE'), deVersion: grab('DEV'), shell: grab('SH') };
+}
+
 const sshSessions = new Map();
 
 function closeSshSession(id) {

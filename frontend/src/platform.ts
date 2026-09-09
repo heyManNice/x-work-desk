@@ -11,6 +11,7 @@ export interface TransferProgress {
 interface DesktopBridge {
     platform?: string;
     ping?(opt: { host: string; port?: number }): Promise<boolean>;
+    aboutHostInfo?(opt: SshServerOpt): Promise<{ ok: boolean; msg?: string; os?: string; de?: string; deVersion?: string; shell?: string }>;
     clipWriteText(text: string): Promise<void>;
     clipPoll(): Promise<{ text: string | null; files: string[] }>;
     downloadRemoteFiles(opt: {
@@ -227,6 +228,25 @@ export interface SshInstallProgress {
 export function sshOnInstallProgress(cb: (p: SshInstallProgress) => void): () => void {
     const b = bridge()?.ssh;
     return b && b.onInstallProgress ? b.onInstallProgress(cb) : () => { /* 忽略 */ };
+}
+
+export interface AboutHostInfo {
+    os?: string;
+    de?: string;
+    deVersion?: string;
+    shell?: string;
+}
+
+/* “关于”：SSH 采集远端系统 / 桌面环境 / shell 版本 */
+export async function sshHostAboutInfo(opt: SshServerOpt): Promise<AboutHostInfo> {
+    const b = bridge();
+    if (b && typeof b.aboutHostInfo === 'function') {
+        try {
+            const r = await b.aboutHostInfo(opt);
+            if (r && r.ok) return { os: r.os, de: r.de, deVersion: r.deVersion, shell: r.shell };
+        } catch { /* 忽略 */ }
+    }
+    return {};
 }
 
 /* ---- 系统监控（SSH 采集远端资源，浏览器无桥为空实现） ---- */

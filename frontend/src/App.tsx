@@ -34,6 +34,7 @@ import { TerminalSession } from './core/termSession';
 import { FileButton, FilePanelHost, fmSessionEnded, type FmCtx } from './core/filemgr';
 import { activePopup } from './core/popups';
 import { SysCpuButton, SysMemButton, SysCpuPanelHost, SysMemPanelHost } from './core/system';
+import { AboutButton, AboutPanelHost, setAboutHost, setAboutInstall } from './core/about';
 import {
     NBell, NotifyPanelHost,
     startTask, patchTask, finishTask,
@@ -352,6 +353,11 @@ async function installServerWithProgress(opt: { host: string; port: number; user
     }
 }
 
+/* “关于”面板的“更新/重新安装”动作：复用 SSH 一键安装服务端流程 */
+setAboutInstall((c) => installServerWithProgress({
+    host: c.host, port: c.port, user: c.user, pass: c.pass,
+}));
+
 /* 桌面连接前：经 SSH 探测远端服务端，未装/停止则引导一键安装/启动。
  * 返回 false 表示用户取消/失败（终止连接）。 */
 async function ensureServerReady(h: HostConfig, pass: string): Promise<boolean> {
@@ -500,6 +506,32 @@ function activateTab(id: number): void {
 createEffect(() => {
     const id = activeId();
     sessionMap.forEach((s, tid) => s.setActive(tid === id));
+});
+
+/* “关于”面板的已连接主机上下文：优先激活中的运行中会话（桌面/SSH），其次任意运行中的会话 */
+createEffect(() => {
+    const t = tabs().find((x) => x.id === activeId() && x.status() === 'running')
+        ?? tabs().find((x) => x.status() === 'running');
+    if (!t) {
+        setAboutHost(null);
+        return;
+    }
+    const p = pendingMap.get(t.id);
+    if (!p) {
+        setAboutHost(null);
+        return;
+    }
+    const h = p.host;
+    const kind = t.type;
+    setAboutHost({
+        kind,
+        name: h.name || hostDisplay(h),
+        apiBase: kind === 'desktop' && p.target ? p.target.apiBase : '',
+        host: sshHostOf(h),
+        port: p.sshPort || 22,
+        user: p.user,
+        pass: p.pass,
+    });
 });
 
 /* 侧栏展开/收起、进入/退出全屏都会改变会话可视区 → auto 分辨率需向远程更新 */
@@ -708,6 +740,7 @@ function TabBar() {
                 </Show>
                 <div class="tb-icons">
                     <NBell />
+                    <AboutButton />
                     <ThemeToggle />
                 </div>
                 <TopTools />
@@ -1116,6 +1149,7 @@ export default function App() {
             <FilePanelHost />
             <SysCpuPanelHost />
             <SysMemPanelHost />
+            <AboutPanelHost />
         </div>
     );
 }

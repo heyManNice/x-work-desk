@@ -2278,3 +2278,103 @@ canvas {
     font-weight: 500;
     font-variant-numeric: tabular-nums;
 }
+
+/* ============================================================
+ * “关于”面板：标题无图标；内容为统一一行式指标行
+ * ============================================================ */
+
+.about-panel {
+    position: fixed;
+    z-index: 1400;
+    width: 280px;
+    max-width: calc(100vw - 28px);
+    background: var(--bg-elev-3);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transform: translate(-50%, 0);
+    transform-origin: top center;
+    animation: npanel-in 0.16s ease;
+}
+
+/* 标题区与通知面板(npanel-head)样式完全一致（字号/颜色/留白/关闭按钮均复用 .npanel-*） */
+.about-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 12px;
+}
+
+.about-body {
+    padding: 0 8px 2px;
+}
+
+.about-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    /* 行间用 gap 控距，不用分隔线 */
+}
+
+.ab-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 2px;
+    font-size: 12px;
+}
+
+.ab-name {
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+}
+
+.ab-ver {
+    color: var(--text-dim);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.ab-fill {
+    flex: 1;
+}
+
+/* 右侧文字：无彩色、小号（参考 CPU 面板 Top 列表文字） */
+.ab-tag {
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+.ab-tag.ok {
+    color: var(--text-dim);
+}
+
+.ab-val {
+    color: var(--text-dim);
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 55%;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* 可交互文本：纯文本，去掉 hover 胶囊 */
+.ab-action {
+    border: none;
+    background: none;
+    color: var(--text-dim);
+    font-size: 11px;
+    padding: 0;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.ab-action:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
