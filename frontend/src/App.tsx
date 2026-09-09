@@ -31,7 +31,7 @@ import {
 } from './core/host';
 import { Session, type SessionState, type SessionStatus } from './core/session';
 import { TerminalSession } from './core/termSession';
-import { FileButton, FilePanelHost, fmSessionEnded, type FmCtx } from './core/filemgr';
+import { FileButton, FilePanelHost, fmSessionEnded, fmTabDeactivated, type FmCtx } from './core/filemgr';
 import { activePopup } from './core/popups';
 import { SysCpuButton, SysMemButton, SysCpuPanelHost, SysMemPanelHost } from './core/system';
 import { AboutButton, AboutPanelHost, setAboutHost, setAboutInstall } from './core/about';
@@ -510,8 +510,8 @@ createEffect(() => {
 
 /* “关于”面板的已连接主机上下文：优先激活中的运行中会话（桌面/SSH），其次任意运行中的会话 */
 createEffect(() => {
-    const t = tabs().find((x) => x.id === activeId() && x.status() === 'running')
-        ?? tabs().find((x) => x.status() === 'running');
+    /* 只取“当前激活”的运行中会话（桌面/SSH），与顶栏工具的口径保持一致 */
+    const t = tabs().find((x) => x.id === activeId() && x.status() === 'running');
     if (!t) {
         setAboutHost(null);
         return;
@@ -532,6 +532,16 @@ createEffect(() => {
         user: p.user,
         pass: p.pass,
     });
+});
+
+/* 激活标签切换：让文件面板随主机隔离（记住目录并收起旧主机面板） */
+let prevActiveTabId: number | null = null;
+createEffect(() => {
+    const id = activeId();
+    if (prevActiveTabId != null && prevActiveTabId !== id) {
+        fmTabDeactivated(prevActiveTabId);
+    }
+    prevActiveTabId = id;
 });
 
 /* 侧栏展开/收起、进入/退出全屏都会改变会话可视区 → auto 分辨率需向远程更新 */

@@ -42,6 +42,9 @@ const [sel, setSel] = createSignal<string | null>(null);
 const [fmMenu, setFmMenu] = createSignal<{ x: number; y: number; e: FmEntry } | null>(null);
 const [inp, setInp] = createSignal<{ mode: 'newdir' | 'rename'; value: string; entry?: FmEntry } | null>(null);
 
+/* 每个标签记住上次浏览目录（切主机时面板自动收起，目录记忆保留以便回来续用） */
+const dirsByTab = new Map<number, string>();
+
 /* 路径工具（posix，服务器端会再做归一化） */
 function pjoin(dir: string, name: string): string {
     const d = dir === '/' || dir === '' ? '' : dir.replace(/\/+$/, '');
@@ -69,8 +72,16 @@ async function connectAndList(c: FmCtx): Promise<void> {
     const r = await fmOpen({ id: c.tabId, host: c.host, port: c.port, user: c.user, pass: c.pass });
     setLoading(false);
     if (r.ok) {
-        setCwd(r.cwd || '/');
-        setEntries(r.entries || []);
+        const pref = dirsByTab.get(c.tabId);
+        if (pref && pref !== '/' && pref !== (r.cwd || '/')) {
+            /* 该标签上次浏览过其它目录：连上后直接跳回 */
+            setCwd(pref);
+            setEntries([]);
+            void loadPath(pref);
+        } else {
+            setCwd(r.cwd || '/');
+            setEntries(r.entries || []);
+        }
         setSel(null);
         setQ('');
         setInp(null);
@@ -116,11 +127,23 @@ export function openFmAt(btn: HTMLElement | null | undefined, c: FmCtx): void {
     }
 }
 
-/** 关闭面板：仅收起 UI，保留连接与路径（再次打开回到上次目录） */
+/** 关闭面板：仅收起 UI，保留连接；记住当前目录（再次打开回到上次目录） */
 function doCloseFm(): void {
+    const c = ctx();
+    if (c) dirsByTab.set(c.tabId, cwd() || '/');
     closePopup('file');
     setFmMenu(null);
     setInp(null);
+}
+
+/** 激活标签离开某会话（切到别的主机/标签）时调用：记住目录；若文件面板正显示
+ * 该会话则收起，避免面板残留上一台主机的列表（与顶栏工具按激活标签一致）。 */
+export function fmTabDeactivated(tabId: number): void {
+    const c = ctx();
+    if (c && c.tabId === tabId) {
+        dirsByTab.set(tabId, cwd() || '/');
+        if (isPopup('file')) closePopup('file');
+    }
 }
 
 /** 外部（关闭标签/断开）通知会话真正结束：回收 SFTP 连接并清空面板 */

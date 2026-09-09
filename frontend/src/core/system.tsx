@@ -9,7 +9,7 @@
  * 共用一条 SSH 监控连接，标签结束/最后一个订阅方卸载时才关闭。
  */
 
-import { createSignal, Show, For, onMount, onCleanup } from 'solid-js';
+import { createSignal, createEffect, Show, For, onCleanup } from 'solid-js';
 import { Cpu, MemoryStick, HardDrive, X } from 'lucide-solid';
 import { sysOpen, sysSample, sysClose } from '../platform';
 import { isPopup, togglePopup, closePopup } from './popups';
@@ -70,13 +70,8 @@ async function sampleOnce(key: string): Promise<void> {
     }
 }
 
-/** 挂载一个订阅方（ctx 提供 SSH 凭据）；首个订阅方建立连接并开始 5s 采集 */
-export function sysAttach(ctx: FmCtx): void {
-    const key = `sys-${ctx.tabId}`;
-    if (monKey !== key) stopMon();
-    monKey = key;
-    monRefs += 1;
-    if (monRefs !== 1) return;
+/** 建立并启动某标签的监控连接 */
+function startMon(ctx: FmCtx, key: string): void {
     setReady(false);
     setFailed(false);
     setHist([]);
@@ -86,6 +81,21 @@ export function sysAttach(ctx: FmCtx): void {
         void sampleOnce(key);
         monTimer = setInterval(() => void sampleOnce(key), 5000);
     });
+}
+
+/** 订阅方（顶部/悬浮的每个 CPU·内存按钮各挂一次）。
+ * 以标签为键：当 ctx（主机/标签）变化时自动切换到对应主机的连接与数据，
+ * 避免切换标签后仍监控上一台主机；同一标签的多个订阅方只加引用计数。 */
+export function sysAttach(ctx: FmCtx): void {
+    const key = `sys-${ctx.tabId}`;
+    if (monKey === key) {
+        monRefs += 1;
+        return;
+    }
+    stopMon(); /* 切到不同主机/标签：关旧开新，引用数按新目标重置 */
+    monKey = key;
+    monRefs = 1;
+    startMon(ctx, key);
 }
 
 /** 订阅方卸载 */
@@ -119,8 +129,12 @@ const fmtGB = (kb: number) => `${((kb / 1024 / 1024) >= 10 ? (kb / 1024 / 1024).
 
 export function SysCpuButton(props: { ctx: FmCtx }) {
     let btn: HTMLButtonElement | undefined;
-    onMount(() => sysAttach(props.ctx));
-    onCleanup(() => sysDetach());
+    /* ctx（主机/标签）变化时自动切换监控目标，而非仅首次挂载 */
+    createEffect(() => {
+        if (props.ctx == null) return;
+        sysAttach(props.ctx);
+        onCleanup(() => sysDetach());
+    });
     const toggle = () => {
         if (btn) {
             const r = btn.getBoundingClientRect();
@@ -150,8 +164,12 @@ export function SysCpuButton(props: { ctx: FmCtx }) {
 
 export function SysMemButton(props: { ctx: FmCtx }) {
     let btn: HTMLButtonElement | undefined;
-    onMount(() => sysAttach(props.ctx));
-    onCleanup(() => sysDetach());
+    /* ctx（主机/标签）变化时自动切换监控目标，而非仅首次挂载 */
+    createEffect(() => {
+        if (props.ctx == null) return;
+        sysAttach(props.ctx);
+        onCleanup(() => sysDetach());
+    });
     const toggle = () => {
         if (btn) {
             const r = btn.getBoundingClientRect();
