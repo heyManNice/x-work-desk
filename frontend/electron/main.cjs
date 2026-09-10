@@ -778,6 +778,27 @@ function createWindow() {
     });
 
     win.setMenuBarVisibility(false);
+
+    /* 禁用整个应用的缩放：
+     *  - 默认应用菜单的 View→Zoom In/Out/Reset 加速键（Ctrl + / - / 0）
+     *  - Ctrl + 鼠标滚轮造成的页面缩放
+     * before-input-event 里 preventDefault 可同时拦截菜单加速键与页面按键。 */
+    win.webContents.on('before-input-event', (e, input) => {
+        if (!input.control && !input.meta) return;
+        const k = input.key;
+        const code = input.code;
+        if (k === '+' || k === '=' || k === '-' || k === '_' || k === '0'
+            || code === 'NumpadAdd' || code === 'NumpadSubtract') {
+            e.preventDefault();
+        }
+    });
+    /* Ctrl+滚轮 兜底：一旦缩放被改动立即复位 */
+    win.webContents.on('zoom-changed', () => {
+        if (!win || win.isDestroyed()) return;
+        if (Math.abs(win.webContents.getZoomFactor() - 1) > 1e-6) win.webContents.setZoomFactor(1);
+    });
+    win.webContents.setVisualZoomLevelLimits(1, 1).catch(() => { /* 忽略 */ });
+
     win.on('maximize', () => sendWinMax(true));
     win.on('unmaximize', () => sendWinMax(false));
     /* 全屏状态变化同步给渲染层（X11/Windows 无 enter/leave-full-screen 事件，靠 resize 兜底检测） */

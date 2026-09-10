@@ -22,6 +22,25 @@ export interface SshOptions {
     onStatus: (s: SessionStatus) => void;
 }
 
+/* 终端字体：Maple Mono CN —— Latin 与 CJK 成对设计、严格 2:1 等宽、含中文字形 */
+const TERM_FONT_FAMILY = '"Maple Mono CN", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+/* 字号（Ctrl + 滚轮缩放，本地持久化） */
+const TERM_FS_KEY = 'xwd-term-fontsize';
+const TERM_FS_DEFAULT = 13;
+const TERM_FS_MIN = 8;
+const TERM_FS_MAX = 30;
+
+function loadTermFontSize(): number {
+    try {
+        const v = Number(localStorage.getItem(TERM_FS_KEY));
+        if (Number.isFinite(v) && v >= TERM_FS_MIN && v <= TERM_FS_MAX) return v;
+    } catch { /* 忽略 */ }
+    return TERM_FS_DEFAULT;
+}
+function saveTermFontSize(v: number): void {
+    try { localStorage.setItem(TERM_FS_KEY, String(v)); } catch { /* 忽略 */ }
+}
+
 export class TerminalSession {
     readonly id: string;
     private opt: SshOptions;
@@ -30,6 +49,7 @@ export class TerminalSession {
     private conn = false;
     private destroyed = false;
     private status: SessionState = 'connecting';
+    private fontSize = loadTermFontSize();
 
     private wrap!: HTMLElement;
     private overlay!: HTMLElement;
@@ -48,8 +68,8 @@ export class TerminalSession {
         this.opt = opt;
         this.buildDom();
         this.term = new Terminal({
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-            fontSize: 13,
+            fontFamily: TERM_FONT_FAMILY,
+            fontSize: this.fontSize,
             lineHeight: 1.25,
             cursorBlink: true,
             scrollback: 4000,
@@ -98,6 +118,46 @@ export class TerminalSession {
             if (this.conn) this.layout();
         });
         this.ro.observe(root);
+
+        /* Ctrl + 鼠标滚轮：缩放终端字号（捕获阶段拦截，避免触发页面缩放/终端滚动） */
+        root.addEventListener('wheel', (e) => {
+            if (!e.ctrlKey) return;
+            e.preventDefault();
+            e.stopPropagation();
+            this.zoomBy(e.deltaY < 0 ? 1 : -1);
+        }, { capture: true, passive: false });
+
+        /* Ctrl/Cmd + Shift + C / V：复制选中 / 粘贴（Linux 终端约定，xterm 自身只处理原生粘贴）。
+         * 在捕获阶段拦下：既不让 xterm 把该组合键（如 Ctrl+Shift+C 会被当成 Ctrl+C→SIGINT）
+         * 发给远端，也不触发浏览器默认动作。 */
+        root.addEventListener('keydown', (e) => {
+            if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) return;
+            const k = e.key.toLowerCase();
+            if (k !== 'c' && k !== 'v') return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (k === 'c') this.copySelection();
+            else void this.pasteClipboard();
+        }, { capture: true });
+    }
+
+    /* Ctrl/Cmd+Shift+C：把终端选中内容写入系统剪贴板 */
+    private copySelection(): void {
+        const sel = this.term.getSelection() || this.lastSel;
+        if (sel) void clipWriteText(sel);
+        this.restoreFocus();
+    }
+
+    /* 调整终端字号：重排并通知远端 PTY 新行列数 */
+    private zoomBy(step: number): void {
+        const next = Math.min(TERM_FS_MAX, Math.max(TERM_FS_MIN, this.fontSize + step));
+        if (next === this.fontSize) return;
+        this.fontSize = next;
+        this.term.options.fontSize = next; /* xterm 支持运行时改字号 */
+        saveTermFontSize(next);
+        if (!this.conn) return;
+        try { this.fit.fit(); } catch { /* 忽略 */ }
+        this.sendResize();
     }
 
     /* 打开 xterm 到容器并适配尺寸 */
@@ -241,9 +301,21 @@ export class TerminalSession {
         this.menuClean?.();
         this.menuClean = null;
         if (this.menu) {
+            /* 焦点若在菜单按钮上（点“复制/粘贴”后按钮将被移除），关闭后需把焦点还给终端 */
+            const ae = document.activeElement;
+            const focusWasInMenu = !!ae && this.menu.contains(ae);
             this.menu.remove();
             this.menu = null;
+            if (focusWasInMenu || ae === document.body) this.restoreFocus();
         }
+    }
+
+    /* 把键盘焦点还给终端：点过菜单按钮后按钮被移除、焦点落到 body，
+     * 不归还就会出现“粘贴/复制后无法继续输入”的问题。 */
+    private restoreFocus(): void {
+        if (this.destroyed || !this.conn) return;
+        if (!this.opt.root.classList.contains('active')) return; /* 非当前标签不抢焦点 */
+        this.term.focus();
     }
 
     /* 读取系统剪贴板文本并粘贴到终端（走主进程 IPC，Electron 环境可靠） */
@@ -253,6 +325,7 @@ export class TerminalSession {
             const t = (r && r.text) || '';
             if (!t || this.destroyed || !this.conn) return;
             this.term.paste(t);
+            this.restoreFocus(); /* 粘贴后确保仍可继续键入 */
         } catch { /* 忽略 */ }
     }
 

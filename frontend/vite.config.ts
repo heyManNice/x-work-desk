@@ -13,7 +13,11 @@ export default defineConfig({
     plugins: [solid()],
     build: {
         outDir: 'dist',
-        target: 'es2020',
+        /* es2022：避免把依赖里的 `||=`（ES2021）降级重写。
+         * es2020 目标会对 xterm 6 已压缩产物再做一次 esbuild 降级/压缩，
+         * 导致 `requestMode` 里 `let r; (…)(r||={})` 的声明被删，
+         * 变成给未声明变量赋值 → 终端解析 DECRQM 时抛 ReferenceError（vim 启动即卡死）。 */
+        target: 'es2022',
         assetsDir: 'assets',
     },
     server: {
