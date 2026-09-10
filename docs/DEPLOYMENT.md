@@ -114,8 +114,7 @@ sudo systemctl daemon-reload
 无 systemd 的环境手动运行：
 
 ```bash
-sudo setsid nohup ./build/xworkd --auth shadow \
-  --www-root ./frontend/dist --port 5268 \
+sudo setsid nohup ./build/xworkd --auth shadow --port 5268 \
   </dev/null >>/tmp/xworkd.log 2>&1 &
 ```
 

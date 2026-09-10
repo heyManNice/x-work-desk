@@ -81,15 +81,6 @@ executable('xworkd',
   dependencies: deps,
   install: true)
 
-# 前端构建（若存在 node_modules，则纳入 ninja 构建）
-frontend = meson.current_source_dir() / 'frontend'
-if import('fs').is_dir(frontend / 'node_modules')
-  custom_target('frontend-build',
-    command: ['sh', '-c', 'cd "$1" && npm run build', '_', frontend],
-    output: 'frontend-stamp',
-    build_by_default: true)
-endif
-
 # ---- 单元测试（纯逻辑模块，不依赖 X，可无头运行） ----
 test_units = [
   ['test-util', ['test/test_util.c', 'src/util.c']],

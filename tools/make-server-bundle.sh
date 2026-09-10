@@ -4,7 +4,7 @@
 # 用法:  tools/make-server-bundle.sh
 # 产出:  frontend/server-bundle/xworkd-server.tar.gz
 #
-# 安装包内：xworkd 二进制 + www(frontend/dist) + install.sh（apt 依赖→systemd 安装启动）
+# 安装包内：xworkd 二进制 + install.sh（apt 依赖→systemd 安装启动）
 # 远端安装：sudo bash install.sh   （由客户端经 SSH sftp 推送后以 sudo 执行）
 
 set -euo pipefail
@@ -12,19 +12,16 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 REPO="$(pwd)"
 
 BIN="$REPO/build/xworkd"
-DIST="$REPO/frontend/dist"
 OUT="$REPO/frontend/server-bundle/xworkd-server.tar.gz"
 STAGE="$REPO/build/bundle"
 SERVICE_NAME="xworkd"
 PREFIX="/opt/$SERVICE_NAME"
 
 if [[ ! -x "$BIN" ]]; then echo "缺少 $BIN（先构建后端）"; exit 1; fi
-if [[ ! -f "$DIST/index.html" ]]; then echo "缺少 $DIST（先构建前端）"; exit 1; fi
 
 rm -rf "$STAGE"
-mkdir -p "$STAGE/xworkd-server/www"
+mkdir -p "$STAGE/xworkd-server"
 cp "$BIN" "$STAGE/xworkd-server/xworkd"
-cp -r "$DIST"/. "$STAGE/xworkd-server/www/"
 cp "$REPO/deploy/xworkd-gdm-guard" "$STAGE/xworkd-server/xworkd-gdm-guard"
 cp "$REPO/deploy/install-pam.sh" "$STAGE/xworkd-server/install-pam.sh"
 
@@ -40,8 +37,6 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y >/dev/null 2>&1 || true
 apt-get install -y xserver-xorg-video-dummy x11-xserver-utils xauth xclip dbus-x11 libopus0 libx11-6 libxext6 libxtst6 libxfixes3 libxrandr2 >/dev/null 2>&1 || true
 install -m 0755 xworkd "\$PREFIX/xworkd"
-rm -rf "\$PREFIX/www"
-cp -r www "\$PREFIX/www"
 cat > /etc/systemd/system/$SERVICE_NAME.service <<UNIT
 [Unit]
 Description=XWorkDesk remote desktop server
@@ -52,7 +47,7 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-ExecStart=\$PREFIX/xworkd --auth shadow --www-root \$PREFIX/www --port 5268
+ExecStart=\$PREFIX/xworkd --auth shadow --port 5268
 WorkingDirectory=\$PREFIX
 Restart=on-failure
 RestartSec=3

@@ -1,5 +1,5 @@
-/* http.c —— 极简 HTTP/1.1：静态文件服务 + WebSocket 握手。
- * 静态文件响应通过发送缓冲异步冲刷（非阻塞事件循环），
+/* http.c —— 极简 HTTP/1.1：WebSocket 握手 + 少量 JSON/传输接口。
+ * 不提供前端静态文件服务（客户端自带 dist 离线加载）。
  * WS 握手因浏览器同步等待，使用短暂阻塞发送完成 101 应答。
  */
 #define _GNU_SOURCE
@@ -16,40 +16,11 @@
 #include <errno.h>
 #include <poll.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 
 #define WS_GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 /* POST body 上限（上传按分片，单片远小于此）：防止未认证连接用可控的
  * Content-Length 无限灌内存。超限直接 413 拒绝，不等 body 收满。 */
 #define HTTP_MAX_BODY (64u << 20)
-
-static const char *mime_for(const char *path)
-{
-    const char *ext = strrchr(path, '.');
-    if (!ext)
-        return "application/octet-stream";
-    if (!strcmp(ext, ".html"))
-        return "text/html; charset=utf-8";
-    if (!strcmp(ext, ".js"))
-        return "text/javascript";
-    if (!strcmp(ext, ".mjs"))
-        return "text/javascript";
-    if (!strcmp(ext, ".css"))
-        return "text/css";
-    if (!strcmp(ext, ".svg"))
-        return "image/svg+xml";
-    if (!strcmp(ext, ".png"))
-        return "image/png";
-    if (!strcmp(ext, ".ico"))
-        return "image/x-icon";
-    if (!strcmp(ext, ".json"))
-        return "application/json";
-    if (!strcmp(ext, ".woff2"))
-        return "font/woff2";
-    if (!strcmp(ext, ".map"))
-        return "application/json";
-    return "application/octet-stream";
-}
 
 /* 短暂阻塞发送（仅用于 WS 握手应答：帧很小，浏览器同步等待） */
 static int send_brief(int fd, const void *data, size_t len)
@@ -82,74 +53,6 @@ static void http_error(conn *c, int code, const char *text)
                      "HTTP/1.1 %d %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
                      code, text);
     if (conn_queue_raw(c, (const uint8_t *)resp, (size_t)n))
-        c->close_after_flush = 1;
-    else
-    {
-        net_close_conn(c);
-    }
-}
-
-/* 路径穿越检查：按 '/' 拆分成组件，任何组件为 ".." 即拒绝。
- * 相比 strstr(uri, "..")，不会误伤 "foo..bar" 之类的合法文件名，
- * 且按路径语义检查（服务器不做百分号解码，%2e%2e 只是普通文件名）。 */
-static int path_safe(const char *uri)
-{
-    const char *p = uri;
-    while (*p)
-    {
-        const char *seg = p;
-        while (*p && *p != '/')
-            p++;
-        size_t n = (size_t)(p - seg);
-        if (n == 2 && seg[0] == '.' && seg[1] == '.')
-            return 0;
-        if (*p == '/')
-            p++;
-    }
-    return 1;
-}
-
-static void serve_file(conn *c, const char *uri)
-{
-    /* 路径安全 */
-    if (!path_safe(uri))
-    {
-        http_error(c, 400, "Bad Request");
-        return;
-    }
-    char path[2048];
-    if (!strcmp(uri, "/") || !uri[0])
-        snprintf(path, sizeof path, "%s/index.html", net_www_root);
-    else
-        snprintf(path, sizeof path, "%s%s", net_www_root, uri);
-
-    struct stat st;
-    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode))
-    {
-        http_error(c, 404, "Not Found");
-        return;
-    }
-    FILE *f = fopen(path, "rb");
-    if (!f)
-    {
-        http_error(c, 404, "Not Found");
-        return;
-    }
-    size_t sz = st.st_size > 0 ? (size_t)st.st_size : 0;
-    uint8_t *body = malloc(sz + 1);
-    size_t rd = fread(body, 1, sz, f);
-    fclose(f);
-
-    char hdr[512];
-    int hn = snprintf(hdr, sizeof hdr,
-                      "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %zu\r\n"
-                      "Cache-Control: no-cache\r\nConnection: close\r\n\r\n",
-                      mime_for(path), rd);
-    int ok = conn_queue_raw(c, (const uint8_t *)hdr, (size_t)hn);
-    if (ok && rd > 0)
-        ok = conn_queue_raw(c, body, rd);
-    free(body);
-    if (ok)
         c->close_after_flush = 1;
     else
     {
@@ -435,7 +338,7 @@ void http_on_data(conn *c)
     if (http_route_api(c, method, path, h.xw_token, body_start, len, h.clen))
         return;
 
-    /* 普通请求：响应缓冲化，事件循环冲刷后关闭 */
-    serve_file(c, path);
+    /* 其余路径：本服务不再提供静态资源（客户端自带页面），一律 404 */
+    http_error(c, 404, "Not Found");
     c->http_done = 1;
 }

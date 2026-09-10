@@ -21,7 +21,6 @@ int net_listen_fd = -1;
 int net_wake_fds[2] = {-1, -1};
 conn *net_conns = NULL;
 int net_nconns = 0;
-char net_www_root[1024];
 
 void conn_ref(conn *c)
 {
@@ -52,9 +51,8 @@ void net_wake(void)
     }
 }
 
-int net_init(int port, const char *root)
+int net_init(int port)
 {
-    snprintf(net_www_root, sizeof net_www_root, "%s", root);
     net_listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (net_listen_fd < 0)
     {

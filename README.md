@@ -147,13 +147,13 @@ Windows MSI / NSIS、Linux deb、macOS dmg × x64+arm64 共 6 个产物并上传
 桌面以当前用户运行）：
 
 ```bash
-./build/xworkd --auth none --www-root ./frontend/dist --port 5268
+./build/xworkd --auth none --port 5268
 ```
 
 生产（root，shadow 认证，登录后以该账号运行 GNOME 会话）：
 
 ```bash
-sudo ./build/xworkd --auth shadow --www-root ./frontend/dist --port 5268
+sudo ./build/xworkd --auth shadow --port 5268
 # 可选：--app "gnome-shell"；--width/--height/--fps；--server xorg|xvfb
 ```
 

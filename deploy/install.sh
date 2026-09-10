@@ -24,10 +24,6 @@ if [[ ! -x "$REPO_DIR/build/xworkd" ]]; then
     echo "错误: 缺少 $REPO_DIR/build/xworkd，请先构建后端" >&2
     exit 1
 fi
-if [[ ! -f "$REPO_DIR/frontend/dist/index.html" ]]; then
-    echo "错误: 缺少 $REPO_DIR/frontend/dist，请先构建前端" >&2
-    exit 1
-fi
 
 # Xorg+dummy 虚拟显示（默认 --server xorg，支持运行时改分辨率）依赖
 if ! dpkg -s xserver-xorg-video-dummy >/dev/null 2>&1; then

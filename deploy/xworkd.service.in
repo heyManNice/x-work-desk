@@ -9,7 +9,7 @@ Type=simple
 # shadow 认证需要读 /etc/shadow，且要 setuid/setgid 到登录用户，必须 root
 User=root
 Group=root
-ExecStart=__XWORKD_HOME__/build/xworkd --auth shadow --www-root __XWORKD_HOME__/frontend/dist --port __XWORKD_PORT__
+ExecStart=__XWORKD_HOME__/build/xworkd --auth shadow --port __XWORKD_PORT__
 WorkingDirectory=__XWORKD_HOME__
 Restart=on-failure
 RestartSec=3

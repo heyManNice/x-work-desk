@@ -6,7 +6,6 @@
 typedef struct
 {
     int port;
-    char www_root[1024];
     int auth_mode; /* AUTH_SHADOW / AUTH_NONE */
     char session_cmd[1024];
     int server; /* SERVER_XVFB / SERVER_XORG */

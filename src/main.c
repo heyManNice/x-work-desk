@@ -59,7 +59,6 @@ static void usage(const char *prog)
     fprintf(stderr,
             "用法: %s [选项]\n"
             "  --port N            监听端口 (默认 5268)\n"
-            "  --www-root DIR      前端静态文件目录 (默认 ./frontend/dist)\n"
             "  --auth none|shadow  认证模式 (默认 shadow；开发用 none)\n"
             "  --app CMD           在桌面上启动的会话命令 (默认 gnome-shell)\n"
             "  --server xorg|xvfb  虚拟显示服务器 (默认 xorg；xorg 支持运行时改分辨率)\n"
@@ -71,7 +70,6 @@ static void usage(const char *prog)
 int main(int argc, char **argv)
 {
     g_cfg.port = 5268;
-    snprintf(g_cfg.www_root, sizeof g_cfg.www_root, "%s", "./frontend/dist");
     g_cfg.auth_mode = AUTH_SHADOW;
     g_cfg.session_cmd[0] = 0;
     g_cfg.server = SERVER_XORG;
@@ -83,8 +81,6 @@ int main(int argc, char **argv)
     {
         if (!strcmp(argv[i], "--port") && i + 1 < argc)
             g_cfg.port = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--www-root") && i + 1 < argc)
-            snprintf(g_cfg.www_root, sizeof g_cfg.www_root, "%s", argv[++i]);
         else if (!strcmp(argv[i], "--auth") && i + 1 < argc)
         {
             i++;
@@ -139,10 +135,10 @@ int main(int argc, char **argv)
     XSetErrorHandler(x_error_handler);
     auth_init(g_cfg.auth_mode);
 
-    log_info("XWorkDesk 服务启动: 端口=%d www-root=%s auth=%s",
-             g_cfg.port, g_cfg.www_root, g_cfg.auth_mode == AUTH_NONE ? "none(dev)" : "shadow");
+    log_info("XWorkDesk 服务启动: 端口=%d auth=%s",
+             g_cfg.port, g_cfg.auth_mode == AUTH_NONE ? "none(dev)" : "shadow");
     init_local_api_token();
-    if (net_init(g_cfg.port, g_cfg.www_root) != 0)
+    if (net_init(g_cfg.port) != 0)
     {
         log_err("网络初始化失败");
         return 1;
