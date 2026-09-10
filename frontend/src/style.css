@@ -31,6 +31,10 @@
     --active: rgba(76, 141, 255, 0.16);
     --overlay: rgba(0, 0, 0, 0.55);
     --scroll-thumb: #3a3d42;
+    --term-bg: #101014;
+    /* 终端底色（xterm 主题另在 termSession.ts 里按主题切） */
+    /* spinner 轨道色（跟随主题） */
+    --spinner-track: rgba(255, 255, 255, 0.18);
 
     color-scheme: dark;
 }
@@ -58,6 +62,8 @@ html[data-theme='light'] {
     --active: rgba(31, 111, 235, 0.12);
     --overlay: rgba(0, 0, 0, 0.32);
     --scroll-thumb: #c6c9cf;
+    --term-bg: #ffffff;
+    --spinner-track: rgba(0, 0, 0, 0.12);
 
     color-scheme: light;
 }
@@ -733,14 +739,14 @@ html[data-theme='light'] .host-item.active {
     display: flex;
 }
 
-/* 会话 overlay（连接中 / 错误） */
+/* 会话 overlay（连接中 / 错误）：背景用应用主页背景色（随主题） */
 .session-overlay {
     position: absolute;
     inset: 0;
     display: none;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.55);
+    background: var(--bg);
     z-index: 4;
     text-align: center;
     color: var(--text);
@@ -1151,12 +1157,12 @@ html[data-theme='light'] .host-item.active {
     display: none;
 }
 
-/* spinner（overlay 用） */
+/* spinner（overlay 用）：轨道色随主题，避免浅色下白圈不可见 */
 .spinner {
     width: 30px;
     height: 30px;
     border-radius: 50%;
-    border: 3px solid rgba(255, 255, 255, 0.18);
+    border: 3px solid var(--spinner-track);
     border-top-color: var(--accent);
     animation: xwd-spin 0.8s linear infinite;
 }
@@ -1353,7 +1359,7 @@ canvas {
     position: absolute;
     inset: 0;
     display: none;
-    background: #101014;
+    background: var(--term-bg);
 }
 
 .term-wrap.show {

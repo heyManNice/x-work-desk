@@ -4,7 +4,7 @@
  * 渲染层用 xterm.js 展示与输入，数据经 IPC 流式收发。
  */
 
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import {
     sshConnect, sshWrite, sshResize, sshClose, sshOnData, sshOnClose,
@@ -41,6 +41,60 @@ function saveTermFontSize(v: number): void {
     try { localStorage.setItem(TERM_FS_KEY, String(v)); } catch { /* 忽略 */ }
 }
 
+/* ---------------- 终端配色：跟随 App 主题（html[data-theme]） ---------------- */
+
+/* 深色：现状无自定 ANSI 调色（用 xterm 默认，适配深底） */
+const TERM_THEME_DARK: ITheme = {
+    background: '#101014',
+    foreground: '#d8dee9',
+    cursor: '#8fa3c0',
+};
+/* 浅色：参考 VS Code Light 终端配色（不是简单反色，保证对比度） */
+const TERM_THEME_LIGHT: ITheme = {
+    background: '#ffffff',
+    foreground: '#1f2328',
+    cursor: '#1f6feb',
+    selectionBackground: '#add6ff',
+    black: '#000000',
+    red: '#cd3131',
+    green: '#00bc00',
+    yellow: '#949800',
+    blue: '#0451a5',
+    magenta: '#bc05bc',
+    cyan: '#0598bc',
+    white: '#555555',
+    brightBlack: '#666666',
+    brightRed: '#cd3131',
+    brightGreen: '#14ce14',
+    brightYellow: '#b5ba00',
+    brightBlue: '#0451a5',
+    brightMagenta: '#bc05bc',
+    brightCyan: '#0598bc',
+    brightWhite: '#a5a5a5',
+};
+
+function currentTermTheme(): ITheme {
+    return document.documentElement.dataset.theme === 'light' ? TERM_THEME_LIGHT : TERM_THEME_DARK;
+}
+
+/* 所有终端会话共享一个 data-theme 监听（最后一个退订时断开） */
+const themeWatchers = new Set<() => void>();
+let themeObserver: MutationObserver | null = null;
+function watchTheme(cb: () => void): () => void {
+    themeWatchers.add(cb);
+    if (!themeObserver) {
+        themeObserver = new MutationObserver(() => { for (const f of themeWatchers) f(); });
+        themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    }
+    return () => {
+        themeWatchers.delete(cb);
+        if (themeWatchers.size === 0 && themeObserver) {
+            themeObserver.disconnect();
+            themeObserver = null;
+        }
+    };
+}
+
 export class TerminalSession {
     readonly id: string;
     private opt: SshOptions;
@@ -63,6 +117,8 @@ export class TerminalSession {
     private menuClean: (() => void) | null = null;
     private lastSel = '';
 
+    private unTheme: (() => void) | null = null;
+
     constructor(id: string, opt: SshOptions) {
         this.id = id;
         this.opt = opt;
@@ -73,17 +129,17 @@ export class TerminalSession {
             lineHeight: 1.25,
             cursorBlink: true,
             scrollback: 4000,
-            theme: {
-                background: '#101014',
-                foreground: '#d8dee9',
-                cursor: '#8fa3c0',
-            },
+            theme: currentTermTheme(),
         });
         this.fit = new FitAddon();
         this.term.loadAddon(this.fit);
         /* 缓存最新选中文本：右键菜单“复制”用 */
         this.term.onSelectionChange(() => {
             this.lastSel = this.term.getSelection() || '';
+        });
+        /* 与应用主题同步：切换深浅色时更新终端配色 */
+        this.unTheme = watchTheme(() => {
+            if (!this.destroyed) this.term.options.theme = currentTermTheme();
         });
     }
 
@@ -339,6 +395,8 @@ export class TerminalSession {
 
     destroy(): void {
         this.destroyed = true;
+        this.unTheme?.();
+        this.unTheme = null;
         this.closeTermMenu();
         this.unData?.();
         this.unClose?.();
