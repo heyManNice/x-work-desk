@@ -2385,6 +2385,94 @@ canvas {
 }
 
 /* ============================================================
+ * Tun 代理弹窗（仅 UI）
+ * ============================================================ */
+
+.tun-panel {
+    position: fixed;
+    z-index: 1400;
+    width: 300px;
+    max-width: calc(100vw - 28px);
+    background: var(--bg-elev-3);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transform: translate(-50%, 0);
+    transform-origin: top center;
+    animation: npanel-in 0.16s ease;
+}
+
+/* 与通知/关于面板标题区一致（复用 .about-head / .npanel-*） */
+.tun-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 4px 12px 12px;
+}
+
+.tun-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tun-input {
+    width: 100%;
+    min-width: 0;
+    height: 30px;
+    padding: 0 10px;
+    border-radius: 8px;
+    background-color: var(--field-bg);
+    color: var(--text);
+    font-size: 12.5px;
+}
+
+.tun-row .tun-input {
+    flex: 1 1 auto;
+}
+
+.tun-input:hover {
+    background-color: var(--bg-elev-2);
+}
+
+.tun-input:focus {
+    background-color: var(--bg-elev-2);
+    caret-color: var(--accent);
+}
+
+.tun-input::placeholder {
+    color: var(--text-faint);
+}
+
+.tun-check {
+    flex: 0 0 auto;
+    height: 30px;
+    padding: 0 14px;
+    border-radius: 8px;
+    background: var(--field-bg);
+    color: var(--text);
+    font-size: 12.5px;
+}
+
+.tun-check:hover {
+    background: var(--bg-elev-2);
+}
+
+.tun-enable {
+    height: 32px;
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: 12.5px;
+    font-weight: 500;
+}
+
+.tun-enable:hover {
+    background: var(--accent-hover);
+}
+
+/* ============================================================
  * 收起侧栏时主页的主机列表表格
  * ============================================================ */
 

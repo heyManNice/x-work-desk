@@ -103,6 +103,7 @@ export class InputRelay {
 
         window.addEventListener('keydown', (e) => {
             if (!this.active) return; // 登录页不拦截键盘，保证输入框可正常输入
+            if (isTypingTarget(e.target)) return; // 焦点在输入框：交给控件，不转发给远端
             if (e.code && !this.pressedKeys.has(e.code)) {
                 this.send(msgKey(true, e.code));
                 this.pressedKeys.add(e.code);
@@ -112,6 +113,10 @@ export class InputRelay {
 
         window.addEventListener('keyup', (e) => {
             if (!this.active) return;
+            /* 已转发过的按键必须补发抬起（即使焦点已移入输入框），避免远端按键卡住；
+             * 未转发过且当前在输入框内敲的按键则忽略 */
+            const tracked = !!e.code && this.pressedKeys.has(e.code);
+            if (!tracked && isTypingTarget(e.target)) return;
             if (e.code) {
                 this.send(msgKey(false, e.code));
                 this.pressedKeys.delete(e.code);
@@ -138,4 +143,14 @@ function jsToXButton(b: number): number {
         case 4: return 9; // 前进
         default: return 1;
     }
+}
+
+/* 键盘事件是否应交给普通输入控件处理（而非转发给远端桌面）。
+ * 桌面会话把 keydown/keyup 绑在 window 上，若不排除，则面板里的
+ * 输入框（文件面板路径、Tun 服务器/排除地址等）都无法输入。 */
+function isTypingTarget(target: EventTarget | null): boolean {
+    const el = (target as HTMLElement | null) ?? (document.activeElement as HTMLElement | null);
+    if (!el || el.nodeType !== 1) return false;
+    const tag = el.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable === true;
 }

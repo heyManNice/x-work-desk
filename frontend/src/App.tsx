@@ -36,6 +36,7 @@ import { FileButton, FilePanelHost, fmSessionEnded, fmTabDeactivated, type FmCtx
 import { activePopup } from './core/popups';
 import { SysCpuButton, SysMemButton, SysCpuPanelHost, SysMemPanelHost } from './core/system';
 import { AboutButton, AboutPanelHost, setAboutHost, setAboutInstall } from './core/about';
+import { TunButton, TunPanelHost } from './core/tun';
 import {
     NBell, NotifyPanelHost,
     startTask, patchTask, finishTask,
@@ -806,6 +807,7 @@ function TextActions(props: { type: ConnKind; fm: FmCtx | null }) {
         <>
             <Show when={props.fm}>{(c) => <SysCpuButton ctx={c()} />}</Show>
             <Show when={props.fm}>{(c) => <SysMemButton ctx={c()} />}</Show>
+            <TunButton />
             <Show when={props.fm}>{(c) => <FileButton ctx={c()} label="文件" />}</Show>
             <Show when={props.type === 'desktop'}>
                 <button class="tab-btn" onClick={toggleFullscreen} title={fsActive() ? '退出全屏' : '全屏显示'}>
@@ -1283,6 +1285,7 @@ export default function App() {
             <SysCpuPanelHost />
             <SysMemPanelHost />
             <AboutPanelHost />
+            <TunPanelHost />
         </div>
     );
 }

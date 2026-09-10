@@ -7,7 +7,7 @@
 
 import { createSignal } from 'solid-js';
 
-export type PopupName = 'notify' | 'file' | 'syscpu' | 'sysmem' | 'about';
+export type PopupName = 'notify' | 'file' | 'syscpu' | 'sysmem' | 'about' | 'tun';
 
 const [active, setActive] = createSignal<PopupName | null>(null);
 
