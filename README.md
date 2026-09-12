@@ -6,6 +6,10 @@ Electron + SolidJS 桌面应用（Windows / Linux / macOS），以标签页管�
 
 ![XWorkDesk 客户端：主机列表（延迟检测、一键连桌面 / 连 SSH）](docs/images/hero.png)
 
+> **📥 下载安装包：** [前往最新构建（Actions）挑选与你电脑匹配的安装包](https://github.com/heyManNice/x-work-desk/actions)
+> —— 打开最近一次 Run，在页面底部 **Artifacts** 里按平台取用：
+> Windows MSI (x64) / NSIS (ARM64) · Linux deb (x64 / ARM64) · macOS dmg (Intel / Apple Silicon)。
+
 ## 为什么值得用
 
 | | |
