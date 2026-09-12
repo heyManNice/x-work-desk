@@ -261,24 +261,30 @@ function registerIpc() {
     ipcMain.handle('xwd:file:close', (_e, id) => { sftpClose(id); return { ok: true }; });
 }
 
-/* ---- 一次性 SSH exec / sftp（服务探测与安装） ---- */
-function sshExecOnce(opt, cmd, stdinData) {
-    return new Promise((resolve) => {
-        const client = new Client();
-        const chunks = [];
-        let errBuf = '';
-        client.on('ready', () => {
-            client.exec(cmd, (err, stream) => {
-                if (err) {
-                    client.end();
-                    resolve({ code: -1, out: '', err: err.message });
-                    return;
-                }
+/* ---- 一次性 SSH exec / sftp（服务探测、启动与安装） ----
+ * 经 sshBorrow 复用当前已打开的 SSH 连接（同账户）：主机上已有终端/监控/文件
+ * 面板在用时不再重新做一遍 TCP + 认证；无活跃连接时才临时新建、用完即断。 */
+async function sshExecOnce(opt, cmd, stdinData) {
+    const b = await sshBorrow(opt);
+    if (!b.ok) return { code: -2, out: '', err: b.msg || 'SSH 连接失败' };
+    let off = null;
+    try {
+        return await new Promise((resolve) => {
+            let done = false;
+            const fin = (r) => { if (!done) { done = true; resolve(r); } };
+            /* 借用的连接可能中途断开：立即返回，避免 IPC 调用永不返回 */
+            off = b.onClose(() => fin({ code: -2, out: '', err: 'SSH 连接已断开' }));
+            b.client.exec(cmd, (err, stream) => {
+                if (err) { fin({ code: -1, out: '', err: err.message }); return; }
+                const chunks = [];
+                let errBuf = '';
                 stream.on('data', (d) => chunks.push(d));
                 stream.stderr.on('data', (d) => { errBuf += d.toString(); });
                 stream.on('close', (code) => {
-                    client.end();
-                    resolve({ code: code == null ? -1 : code, out: Buffer.concat(chunks).toString(), err: errBuf });
+                    fin({ code: code == null ? -1 : code, out: Buffer.concat(chunks).toString(), err: errBuf });
+                });
+                stream.on('error', (e) => {
+                    fin({ code: -1, out: Buffer.concat(chunks).toString(), err: (e && e.message) || errBuf });
                 });
                 if (stdinData) {
                     stream.stdin.write(stdinData);
@@ -286,40 +292,32 @@ function sshExecOnce(opt, cmd, stdinData) {
                 }
             });
         });
-        client.on('error', (e) => resolve({ code: -2, out: '', err: (e && e.message) || String(e) }));
-        const p = Number(opt.port) || 22;
-        client.connect({
-            host: String(opt.host || 'localhost'),
-            port: p,
-            username: String(opt.user || ''),
-            password: opt.pass ? String(opt.pass) : undefined,
-            readyTimeout: 12000,
-        });
-    });
+    } finally {
+        if (off) off();
+        b.release();
+    }
 }
 
-function sftpPutOnce(opt, localFile, remoteFile) {
-    return new Promise((resolve) => {
-        const client = new Client();
-        const finish = (r) => { try { client.end(); } catch { /* 忽略 */ } resolve(r); };
-        client.on('ready', () => {
-            client.sftp((err, sftp) => {
-                if (err) return finish({ ok: false, msg: 'sftp 打开失败: ' + err.message });
+async function sftpPutOnce(opt, localFile, remoteFile) {
+    const b = await sshBorrow(opt);
+    if (!b.ok) return { ok: false, msg: b.msg || 'SSH 连接失败' };
+    let off = null;
+    try {
+        return await new Promise((resolve) => {
+            let done = false;
+            const fin = (r) => { if (!done) { done = true; resolve(r); } };
+            off = b.onClose(() => fin({ ok: false, msg: 'SSH 连接已断开' }));
+            b.client.sftp((err, sftp) => {
+                if (err) { fin({ ok: false, msg: 'sftp 打开失败: ' + err.message }); return; }
                 sftp.fastPut(localFile, remoteFile, (e) => {
-                    finish(e ? { ok: false, msg: '上传失败: ' + e.message } : { ok: true });
+                    fin(e ? { ok: false, msg: '上传失败: ' + e.message } : { ok: true });
                 });
             });
         });
-        client.on('error', (e) => finish({ ok: false, msg: (e && e.message) || String(e) }));
-        const p = Number(opt.port) || 22;
-        client.connect({
-            host: String(opt.host || 'localhost'),
-            port: p,
-            username: String(opt.user || ''),
-            password: opt.pass ? String(opt.pass) : undefined,
-            readyTimeout: 12000,
-        });
-    });
+    } finally {
+        if (off) off();
+        b.release();
+    }
 }
 
 /* 探测远端 xworkd 服务状态：running / stopped / not_installed / unreachable */
@@ -377,13 +375,201 @@ async function sshCollectAbout(opt) {
     return { ok: true, os: grab('OS'), de: grab('DE'), deVersion: grab('DEV'), shell: grab('SH') };
 }
 
-const sshSessions = new Map();
+/* ---------------- SSH 连接池（同一账户复用一条连接） ----------------
+ * 对「同一个账户」只建立一条 TCP + 一次 SSH 认证的连接：终端 shell、系统监控
+ * exec、文件 SFTP 各自在这条连接上开自己的 channel（SSH 协议原生支持一条连接
+ * 多 channel），避免每启用一个功能就重做一遍 TCP 握手 + KEX + 密码认证
+ * （密码认证在广域网上往往是秒级开销）。
+ *
+ * 复用键：user@host:port；持有者（holder）为 ssh:<tabId> / sys:<tabId> /
+ * file:<tabId> / once:<n>，引用计数归零才真正断开。因此关闭某个标签只关掉它
+ * 自己的 channel，不影响同一主机上其它标签/面板。
+ *
+ * 与「全局连接池」的区别：不做跨主机的空闲连接驻留，条目随最后一个使用者
+ * 释放而销毁；连接意外断开时会把挂在其上的各功能逐一清理并通知前端。
+ */
+const sshPool = new Map();    /* key -> entry */
+const sshHolders = new Map(); /* holder -> entry（按持有者释放用） */
+let sshOnceSeq = 0;
+
+function sshKeyOf(o) {
+    return `${String((o && o.user) || '')}@${String((o && o.host) || 'localhost')}:${Number((o && o.port) || 0) || 22}`;
+}
+
+function sshConnectClient(opt) {
+    const client = new Client();
+    client.connect({
+        host: String(opt.host || 'localhost'),
+        port: Number(opt.port) || 22,
+        username: String(opt.user || ''),
+        password: opt.pass ? String(opt.pass) : undefined,
+        readyTimeout: 12000,
+    });
+    return client;
+}
+
+/* 建池条目：处理「就绪 / 连接失败 / 断开」三种结局 */
+function sshPoolOpen(key, opt) {
+    const entry = {
+        key,
+        opt: { ...opt },
+        client: null,
+        refs: 0,
+        holders: new Set(),
+        ready: false,
+        dead: false,
+        readyCbs: [],
+        failCbs: [],
+        closedCbs: new Map(), /* holder -> cb（一次性借用者关心断开，避免调用永不返回） */
+    };
+    sshPool.set(key, entry);
+
+    const client = sshConnectClient(opt);
+    entry.client = client;
+    let settled = false;
+
+    client.on('ready', () => {
+        settled = true;
+        entry.ready = true;
+        const cbs = entry.readyCbs;
+        entry.readyCbs = [];
+        entry.failCbs = [];
+        for (const cb of cbs) cb({ ok: true, conn: entry });
+    });
+    client.on('error', (e) => {
+        if (settled) return; /* 就绪后的错误由 close 统一处置 */
+        settled = true;
+        entry.dead = true;
+        if (sshPool.get(key) === entry) sshPool.delete(key);
+        const msg = (e && e.message) || String(e);
+        const cbs = entry.failCbs;
+        entry.readyCbs = [];
+        entry.failCbs = [];
+        for (const cb of cbs) cb({ ok: false, msg });
+    });
+    client.on('close', () => {
+        entry.dead = true;
+        if (sshPool.get(key) === entry) sshPool.delete(key);
+        if (!settled) {
+            settled = true;
+            const cbs = entry.failCbs;
+            entry.readyCbs = [];
+            entry.failCbs = [];
+            for (const cb of cbs) cb({ ok: false, msg: 'SSH 连接已断开' });
+        }
+        sshPoolClosed(entry);
+    });
+    return entry;
+}
+
+/* 获取（必要时建立）到某账户的连接；holder 作为使用者标识参与引用计数 */
+function sshAcquire(opt, holder) {
+    const key = sshKeyOf(opt);
+    let entry = sshPool.get(key);
+    if (entry && entry.dead) entry = undefined;
+    if (!entry) entry = sshPoolOpen(key, opt);
+    entry.refs += 1;
+    entry.holders.add(holder);
+    sshHolders.set(holder, entry);
+    if (entry.ready) return Promise.resolve({ ok: true, conn: entry });
+    return new Promise((resolve) => {
+        entry.readyCbs.push(() => resolve({ ok: true, conn: entry }));
+        entry.failCbs.push((r) => {
+            sshHolders.delete(holder);
+            entry.holders.delete(holder);
+            entry.refs = Math.max(0, entry.refs - 1);
+            resolve({ ok: false, msg: r.msg });
+        });
+    });
+}
+
+/* 释放一个使用者；最后一个使用者退出时才真正断开连接 */
+function sshRelease(holder) {
+    const entry = sshHolders.get(holder);
+    if (!entry) return;
+    sshHolders.delete(holder);
+    entry.holders.delete(holder);
+    entry.closedCbs.delete(holder);
+    entry.refs = Math.max(0, entry.refs - 1);
+    if (entry.refs > 0) return;
+    if (sshPool.get(entry.key) === entry) sshPool.delete(entry.key);
+    entry.dead = true;
+    try { entry.client.end(); } catch { /* 忽略 */ }
+}
+
+/* 连接断开（对端关闭/网络中断）：清理挂在它上面的各功能并通知前端，
+ * 避免面板继续停留在“已连接”的假象 */
+function sshPoolClosed(entry) {
+    for (const holder of Array.from(entry.holders)) {
+        entry.holders.delete(holder);
+        sshHolders.delete(holder);
+        const m = /^([a-z]+):(.*)$/.exec(holder);
+        if (!m) continue;
+        const kind = m[1];
+        const id = m[2];
+        if (kind === 'ssh') {
+            if (sshSessions.has(id)) sendSshClose(id, 0); /* 终端：提示“连接已关闭” */
+        } else if (kind === 'sys') {
+            sysClients.delete(id); /* 监控：下次采样失败 → 面板显示采集失败 */
+        } else if (kind === 'file') {
+            const r = fileSessions.get(id);
+            if (r) {
+                try { r.sftp.end(); } catch { /* 忽略 */ }
+                fileSessions.delete(id); /* 文件面板：后续操作提示未连接 */
+            }
+        }
+    }
+    const cbs = Array.from(entry.closedCbs.values());
+    entry.closedCbs.clear();
+    entry.refs = 0;
+    for (const cb of cbs) { try { cb(); } catch { /* 忽略 */ } }
+}
+
+/* 借一条连接做一次性任务（探测/启动/安装/关于）：
+ *   - 池中已有该账户的活跃连接 → 直接借用，用完归还（不再重新认证）；
+ *   - 没有 → 临时新建一条独立连接，用完即断（不进池，避免空闲连接驻留）。 */
+function sshBorrow(opt) {
+    const key = sshKeyOf(opt);
+    const entry = sshPool.get(key);
+    if (entry && entry.ready && !entry.dead) {
+        const holder = `once:${++sshOnceSeq}`;
+        entry.refs += 1;
+        entry.holders.add(holder);
+        sshHolders.set(holder, entry);
+        return Promise.resolve({
+            ok: true,
+            client: entry.client,
+            onClose: (cb) => { entry.closedCbs.set(holder, cb); return () => entry.closedCbs.delete(holder); },
+            release: () => sshRelease(holder),
+        });
+    }
+    return new Promise((resolve) => {
+        const client = sshConnectClient(opt);
+        let done = false;
+        const fin = (r) => { if (!done) { done = true; resolve(r); } };
+        client.on('ready', () => fin({
+            ok: true,
+            client,
+            onClose: (cb) => { client.once('close', cb); return () => { /* 临时连接随用随断 */ }; },
+            release: () => { try { client.end(); } catch { /* 忽略 */ } },
+        }));
+        client.on('error', (e) => fin({ ok: false, msg: (e && e.message) || String(e) }));
+        client.on('close', () => fin({ ok: false, msg: 'SSH 连接已断开' }));
+    });
+}
+
+/* ---------------- SSH 终端（在复用连接上开 shell channel） ---------------- */
+const sshSessions = new Map(); /* id -> { id, conn, stream, cancelled } */
 
 function closeSshSession(id) {
     const r = sshSessions.get(id);
-    if (!r) return;
-    try { r.client.end(); } catch { /* 忽略 */ }
     sshSessions.delete(id);
+    if (r) {
+        r.cancelled = true; /* 仍在建连中的会话：就绪后自行放弃 */
+        try { if (r.stream) r.stream.close(); } catch { /* 忽略 */ }
+    }
+    /* 只释放本会话占用的引用：连接上还有监控/文件等使用者时不会被断开 */
+    sshRelease(`ssh:${id}`);
 }
 
 function sendSshClose(id, code) {
@@ -391,20 +577,32 @@ function sendSshClose(id, code) {
     closeSshSession(id);
 }
 
-/* 建立 SSH 连接并打开伪终端通道；返回 {ok} 或 {ok:false,msg} */
+/* 建立 SSH 连接（复用同账户连接）并打开伪终端通道；返回 {ok} 或 {ok:false,msg} */
 function startSshSession({ id, host, port, user, pass }) {
+    const holder = `ssh:${id}`;
     return new Promise((resolve) => {
         let settled = false;
         const finish = (r) => { if (!settled) { settled = true; resolve(r); } };
         const fail = (msg) => { closeSshSession(id); finish({ ok: false, msg }); };
 
-        const client = new Client();
-        const rec = { id, client, stream: null };
+        const rec = { id, conn: null, stream: null, cancelled: false };
         sshSessions.set(id, rec);
 
-        client.on('ready', () => {
-            client.shell({ term: 'xterm-256color', cols: 80, rows: 24 }, (err, stream) => {
-                if (err) return fail('打开远程 shell 失败: ' + err.message);
+        void sshAcquire({ host, port, user, pass }, holder).then((res) => {
+            if (rec.cancelled) { finish({ ok: false, msg: '连接已取消' }); return; }
+            if (!res.ok) {
+                sshSessions.delete(id);
+                finish({ ok: false, msg: 'SSH 连接失败: ' + (res.msg || '未知错误') });
+                return;
+            }
+            rec.conn = res.conn;
+            res.conn.client.shell({ term: 'xterm-256color', cols: 80, rows: 24 }, (err, stream) => {
+                if (err) { fail('打开远程 shell 失败: ' + err.message); return; }
+                if (rec.cancelled) {
+                    try { stream.close(); } catch { /* 忽略 */ }
+                    finish({ ok: false, msg: '连接已取消' });
+                    return;
+                }
                 rec.stream = stream;
                 finish({ ok: true });
                 stream.on('data', (d) => {
@@ -413,16 +611,6 @@ function startSshSession({ id, host, port, user, pass }) {
                 stream.on('close', () => sendSshClose(id, 0));
                 stream.on('error', () => { /* close 统一处理 */ });
             });
-        });
-        client.on('error', (err) => fail('SSH 连接失败: ' + (err && err.message ? err.message : String(err))));
-
-        const p = Number(port) || 22;
-        client.connect({
-            host: String(host || 'localhost'),
-            port: p,
-            username: String(user || ''),
-            password: pass ? String(pass) : undefined,
-            readyTimeout: 12000,
         });
     });
 }
@@ -436,7 +624,8 @@ async function sshStartServer(opt) {
 ipcMain.handle('xwd:ssh:startServer', (_e, opt) => sshStartServer(opt || {}));
 
 /* ---------------- 系统监控（SSH 采集远端 CPU/内存/进程/磁盘） ---------------- */
-const sysClients = new Map(); /* id -> ssh2 Client（长连接，周期快照） */
+/* id -> { conn }：连接本体由 sshPool 持有并复用，这里只记录使用者 */
+const sysClients = new Map();
 
 const SYS_SCRIPT = [
     "c1=$(awk '/^cpu /{print $2+$3+$4, $5}' /proc/stat)",
@@ -454,30 +643,24 @@ const SYS_SCRIPT = [
     "ps -eo comm,%cpu --no-headers --sort=-%cpu | awk '!seen[$1]++' | head -6",
 ].join('\n');
 
-/* 建立监控长连接（同一 id 幂等） */
+/* 订阅某 id 的监控（幂等）：连接取自（或复用）该账户的池化连接 */
 function sysOpen(opt) {
-    return new Promise((resolve) => {
-        const id = String((opt && opt.id) || '');
-        if (!id) return resolve({ ok: false, msg: '缺少 id' });
-        if (sysClients.has(id)) return resolve({ ok: true });
-        const client = new Client();
-        client.on('ready', () => { sysClients.set(id, client); resolve({ ok: true }); });
-        client.on('error', (e) => { sysClients.delete(id); resolve({ ok: false, msg: (e && e.message) || String(e) }); });
-        client.on('close', () => { if (sysClients.get(id) === client) sysClients.delete(id); });
-        const p = Number(opt.port) || 22;
-        client.connect({
-            host: String(opt.host || 'localhost'),
-            port: p,
-            username: String(opt.user || ''),
-            password: opt.pass ? String(opt.pass) : undefined,
-            readyTimeout: 12000,
+    const id = String((opt && opt.id) || '');
+    if (!id) return Promise.resolve({ ok: false, msg: '缺少 id' });
+    if (sysClients.has(id)) return Promise.resolve({ ok: true });
+    const holder = `sys:${id}`;
+    return sshAcquire({ host: opt.host, port: opt.port, user: opt.user, pass: opt.pass }, holder)
+        .then((res) => {
+            if (!res.ok) return { ok: false, msg: res.msg };
+            if (!sshHolders.has(holder)) return { ok: false, msg: '已取消' }; /* 建连期间标签已关闭 */
+            sysClients.set(id, { conn: res.conn });
+            return { ok: true };
         });
-    });
 }
 
 function sysClose(id) {
-    const c = sysClients.get(id);
-    if (c) { try { c.end(); } catch { /* 忽略 */ } sysClients.delete(id); }
+    sysClients.delete(id);
+    sshRelease(`sys:${id}`);
 }
 
 /* 解析快照输出 → 结构化样本 */
@@ -536,12 +719,12 @@ function parseSysOut(out) {
     return s;
 }
 
-/* 快照一次：脚本内含 sleep 1 采 CPU 近 1s 平均，单连接串行 */
+/* 快照一次：脚本内含 sleep 1 采 CPU 近 1s 平均，同一连接上开一个新的 exec channel */
 function sysSample(id) {
     return new Promise((resolve) => {
-        const client = sysClients.get(id);
-        if (!client) return resolve({ ok: false, msg: '未连接' });
-        client.exec(SYS_SCRIPT, (err, stream) => {
+        const rec = sysClients.get(id);
+        if (!rec) return resolve({ ok: false, msg: '未连接' });
+        rec.conn.client.exec(SYS_SCRIPT, (err, stream) => {
             if (err) return resolve({ ok: false, msg: err.message });
             let out = '';
             stream.on('data', (d) => { out += d.toString(); });
@@ -555,19 +738,25 @@ ipcMain.handle('xwd:sys:open', (_e, opt) => sysOpen(opt || {}));
 ipcMain.handle('xwd:sys:sample', (_e, id) => sysSample(String(id || '')));
 ipcMain.on('xwd:sys:close', (_e, id) => sysClose(String(id || '')));
 
-/* ---------------- 远程文件面板（基于 SFTP） ---------------- */
-const fileSessions = new Map(); /* id -> { client, sftp } */
+/* ---------------- 远程文件面板（基于 SFTP，复用同账户 SSH 连接） ---------------- */
+const fileSessions = new Map(); /* id -> { conn, sftp } */
 
 function sftpGet(id) {
     const r = fileSessions.get(id);
     return r && r.sftp ? r.sftp : null;
 }
 
-function sftpClose(id) {
+/* 只关闭 SFTP channel，不释放连接引用（同一标签重新打开面板时用） */
+function sftpDropChannel(id) {
     const r = fileSessions.get(id);
     if (!r) return;
-    try { r.client.end(); } catch { /* 忽略 */ }
     fileSessions.delete(id);
+    try { r.sftp.end(); } catch { /* 忽略 */ }
+}
+
+function sftpClose(id) {
+    sftpDropChannel(id);
+    sshRelease(`file:${id}`);
 }
 
 function sftpJoin(dir, name) {
@@ -600,48 +789,42 @@ function readdirEntries(sftp, p, cb) {
     });
 }
 
-/* 打开（建连 + 定位到用户主目录并列出） */
-function sftpOpen(opt) {
+/* 打开（复用/建立连接 → 开 SFTP channel → 定位到用户主目录并列出） */
+async function sftpOpen(opt) {
     const id = opt.id;
-    sftpClose(id);
-    return new Promise((resolve) => {
-        const client = new Client();
-        const fail = (msg) => {
-            try { client.end(); } catch { /* 忽略 */ }
-            resolve({ ok: false, msg });
-        };
-        client.on('ready', () => {
-            const goSftp = (home) => {
-                client.sftp((err2, sftp) => {
-                    if (err2) return fail('sftp 打开失败: ' + err2.message);
-                    fileSessions.set(id, { client, sftp });
-                    const start = home && home.startsWith('/') ? home : '/';
-                    readdirEntries(sftp, start, (err3, rows) => {
-                        if (err3) { sftpClose(id); return resolve({ ok: false, msg: '读取目录失败: ' + err3.message }); }
-                        resolve({ ok: true, cwd: start, entries: rows });
-                    });
-                });
-            };
-            let called = false;
-            const onHome = (home) => { if (!called) { called = true; goSftp(home); } };
-            client.exec('printf %s "$HOME"', (err, stream) => {
-                if (err) return onHome('/');
-                const ch = [];
-                stream.on('data', (d) => ch.push(d));
-                stream.on('close', () => onHome(Buffer.concat(ch).toString().trim() || '/'));
-                stream.on('error', () => onHome('/'));
-            });
-        });
-        client.on('error', (e) => resolve({ ok: false, msg: '连接失败: ' + ((e && e.message) || String(e)) }));
-        const p = Number(opt.port) || 22;
-        client.connect({
-            host: String(opt.host || 'localhost'),
-            port: p,
-            username: String(opt.user || ''),
-            password: opt.pass ? String(opt.pass) : undefined,
-            readyTimeout: 12000,
+    const holder = `file:${id}`;
+    /* 先取得连接引用（同账户已有连接则直接复用），再丢弃旧的 SFTP channel，
+     * 保证同一标签反复打开面板不会把连接断开重建。 */
+    const res = await sshAcquire({ host: opt.host, port: opt.port, user: opt.user, pass: opt.pass }, holder);
+    if (!res.ok) return { ok: false, msg: '连接失败: ' + (res.msg || '未知错误') };
+    if (!sshHolders.has(holder)) return { ok: false, msg: '已取消' }; /* 建连期间标签已关闭 */
+    sftpDropChannel(id);
+    const client = res.conn.client;
+
+    /* 远端 $HOME：文件面板初始目录 */
+    const home = await new Promise((resolve) => {
+        client.exec('printf %s "$HOME"', (err, stream) => {
+            if (err) return resolve('/');
+            const ch = [];
+            stream.on('data', (d) => ch.push(d));
+            stream.on('close', () => resolve(Buffer.concat(ch).toString().trim() || '/'));
+            stream.on('error', () => resolve('/'));
         });
     });
+
+    const got = await new Promise((resolve) => client.sftp((err2, sftp) => resolve(err2 || sftp)));
+    if (got instanceof Error) { sftpClose(id); return { ok: false, msg: 'sftp 打开失败: ' + got.message }; }
+    const sftp = got;
+    if (!sshHolders.has(holder)) { /* 打开 channel 期间标签被关闭 */
+        try { sftp.end(); } catch { /* 忽略 */ }
+        return { ok: false, msg: '已取消' };
+    }
+    fileSessions.set(id, { conn: res.conn, sftp });
+
+    const start = home && home.startsWith('/') ? home : '/';
+    const rows = await new Promise((resolve) => readdirEntries(sftp, start, (e, r) => resolve(e || r)));
+    if (rows instanceof Error) { sftpClose(id); return { ok: false, msg: '读取目录失败: ' + rows.message }; }
+    return { ok: true, cwd: start, entries: rows };
 }
 
 function sftpList(opt) {

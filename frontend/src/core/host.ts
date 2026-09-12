@@ -5,9 +5,11 @@ export type RatioMode = 'fit' | 'stretch' | 'pixel';
 export interface HostConfig {
     id: string;
     name: string;
-    host: string;          /* host[:port]，可带 http(s):// 前缀 */
+    host: string;          /* 服务器地址（纯主机名，可带 http(s):// 前缀；不含端口） */
     user: string;
     pass?: string;         /* 可选保存；留空则连接时询问 */
+    rdPort?: number;       /* 远程桌面（xworkd 服务）端口，留空/0 按 5268 */
+    sshPort?: number;      /* SSH 端口，留空/0 按 22 */
     /* 连接配置 */
     res: string;           /* 'auto' 或 '1920x1080' 等 */
     scale: string;         /* 分辨率倍率 '1/4'..'2'：真实分辨率 = 基础分辨率 × 倍率 */
@@ -31,6 +33,8 @@ export function defaultHost(): HostConfig {
         host: '',
         user: '',
         pass: '',
+        rdPort: 5268,
+        sshPort: 22,
         res: 'auto',
         scale: '1',
         ratio: 'fit',

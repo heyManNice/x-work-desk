@@ -22,7 +22,7 @@ import {
     platform, clipWriteText, pingHost,
     sshProbeServer, sshStartServer, sshInstallServer, sshOnInstallProgress,
 } from './platform';
-import { resolveServer, hostEndpoint, type ServerTarget } from './server';
+import { resolveServer, hostEndpoint, normalizeHost, addrPort, type ServerTarget } from './server';
 import { showConfirm } from './modal';
 import { sshHostOf, resolveActiveConn, type ActiveConn } from './core/conn';
 import type { HostConfig, RatioMode } from './core/host';
@@ -164,19 +164,19 @@ function setHosts(h: HostConfig[]): void {
 /* ---------------- 主机连通性（延迟 ms，-1=不通/未测；列表点/表格延迟列） ---------------- */
 const [reachMap, setReachMap] = createSignal<Record<string, number>>({});
 
-async function pingOne(id: string, host: string): Promise<void> {
-    const ep = hostEndpoint(host);
+async function pingOne(h: HostConfig): Promise<void> {
+    const ep = hostEndpoint(h.host, h.rdPort);
     const ms = ep ? await pingHost(ep.host, ep.port) : -1;
-    setReachMap((m) => (m[id] === ms ? m : { ...m, [id]: ms }));
+    setReachMap((m) => (m[h.id] === ms ? m : { ...m, [h.id]: ms }));
 }
 
 /* 启动：对所有已保存主机各 ping 一次 */
-void Promise.all(hosts().map((h) => pingOne(h.id, h.host)));
+void Promise.all(hosts().map((h) => pingOne(h)));
 
 /* 周期刷新连通状态（延迟列/状态点保持较新） */
 window.setInterval(() => {
     const list = hosts();
-    if (list.length) void Promise.all(list.map((h) => pingOne(h.id, h.host)));
+    if (list.length) void Promise.all(list.map((h) => pingOne(h)));
 }, 20000);
 
 /* ---------------- 各主机最近一次成功连接时间 ---------------- */
@@ -351,7 +351,8 @@ function openEditorForNew(): void {
 }
 
 function openEditorEdit(h: HostConfig): void {
-    setEditorData({ ...h });
+    /* 旧配置可能把端口写在地址里：编辑时迁移到「远程桌面端口」字段，保存后地址即为纯地址 */
+    setEditorData({ ...h, host: normalizeHost(h.host), rdPort: h.rdPort || addrPort(h.host) || 5268 });
     setEditorOpen(true);
 }
 
@@ -363,7 +364,7 @@ function saveEditor(d: HostConfig): void {
     const saved = upsertHost(hosts(), d);
     setHosts(saved);
     setEditorOpen(false); /* 保留 data：让收起动画期间面板仍存在 */
-    void pingOne(d.id, d.host); /* 新增/编辑后立即探测连通性 */
+    void pingOne(d); /* 新增/编辑后立即探测连通性 */
 }
 
 function deleteHostById(id: string): void {
@@ -412,7 +413,7 @@ setAboutInstall((c) => installServerWithProgress({
 /* 桌面连接前：经 SSH 探测远端服务端，未装/停止则引导一键安装/启动。
  * 返回 false 表示用户取消/失败（终止连接）。 */
 async function ensureServerReady(h: HostConfig, pass: string): Promise<boolean> {
-    const opt = { host: sshHostOf(h), port: 22, user: h.user, pass };
+    const opt = { host: sshHostOf(h), port: Number(h.sshPort) || 22, user: h.user, pass };
     const probe = await sshProbeServer(opt);
     if (!probe.ok || probe.status === 'unreachable') {
         /* SSH 不通：可能服务端已直接开放端口，交给 ws 直连尝试 */
@@ -483,7 +484,7 @@ async function connectHost(h: HostConfig, kind: ConnKind = 'desktop'): Promise<v
 
     let target: ServerTarget | null = null;
     if (kind === 'desktop') {
-        target = resolveServer(h.host);
+        target = resolveServer(h.host, h.rdPort);
         if (!target) {
             setEditorData({ ...h }); /* 地址无效：打开编辑 */
             setEditorOpen(true);
@@ -510,7 +511,7 @@ async function connectHost(h: HostConfig, kind: ConnKind = 'desktop'): Promise<v
 
     const id = ++tabSeq;
     const [st, setSt] = createSignal<SessionState>('connecting');
-    const sshPort = 22;
+    const sshPort = Number(h.sshPort) || 22;
     const rec: TabRec = {
         id,
         type: kind,
@@ -1059,6 +1060,8 @@ function HostEditor() {
     let rHost!: HTMLInputElement;
     let rUser!: HTMLInputElement;
     let rPass!: HTMLInputElement;
+    let rRdPort!: HTMLInputElement;
+    let rSshPort!: HTMLInputElement;
     let rRes!: HTMLSelectElement;
     let rScale!: HTMLSelectElement;
     let rRatio!: HTMLSelectElement;
@@ -1084,12 +1087,20 @@ function HostEditor() {
             const n = Number(s);
             return Number.isFinite(n) ? n : def;
         };
+        const portOr = (el: HTMLInputElement, def: number) => {
+            const n = Number(el.value.trim());
+            return Number.isFinite(n) && n > 0 && n < 65536 ? Math.floor(n) : def;
+        };
         return {
             ...h,
             name: rName.value.trim(),
-            host: rHost.value.trim(),
+            /* 地址只存主机名（可带 scheme）：端口交给下面的端口字段 */
+            host: normalizeHost(rHost.value),
             user: rUser.value.trim(),
             pass: rPass.value.trim(),
+            /* 旧习惯下地址里可能写了端口：写了就采纳，否则用「远程桌面端口」字段 */
+            rdPort: addrPort(rHost.value) || portOr(rRdPort, 5268),
+            sshPort: portOr(rSshPort, 22),
             res: rRes.value,
             scale: rScale.value || '1',
             ratio: rRatio.value as RatioMode,
@@ -1126,7 +1137,7 @@ function HostEditor() {
                                 </label>
                                 <label class="field">
                                     <span>服务器地址</span>
-                                    <input ref={rHost} value={h().host} placeholder="host[:端口]，如 192.168.1.10 或 :5268" />
+                                    <input ref={rHost} value={h().host} placeholder="192.168.1.10 / example.com（可写 https://）" />
                                 </label>
                             </div>
                             <div class="he-grid">
@@ -1137,6 +1148,14 @@ function HostEditor() {
                                 <label class="field">
                                     <span>密码</span>
                                     <input ref={rPass} type="password" value={h().pass ?? ''} placeholder="可选，留空则连接时询问" />
+                                </label>
+                                <label class="field">
+                                    <span>远程桌面端口</span>
+                                    <input ref={rRdPort} type="number" min="1" max="65535" value={String(h().rdPort || 5268)} placeholder="默认 5268" />
+                                </label>
+                                <label class="field">
+                                    <span>SSH 端口</span>
+                                    <input ref={rSshPort} type="number" min="1" max="65535" value={String(h().sshPort || 22)} placeholder="默认 22" />
                                 </label>
                             </div>
                             <details class="he-adv" open>

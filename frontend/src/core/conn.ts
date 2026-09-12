@@ -1,12 +1,13 @@
 /* core/conn.ts —— 与连接/主机相关的纯工具与类型。
  *
  * 供 App 顶栏（文件/系统监控/“关于”）统一推导“当前激活连接”的信息，
- * 也承载主机串（host[:port]，可带 http(s)://）解析，避免各处重复。
+ * 也承载主机地址（纯主机名，可带 http(s)://）解析，避免各处重复。
+ * 端口不在地址里：远程桌面端口见 HostConfig.rdPort，SSH 端口见 HostConfig.sshPort。
  */
 
 export type ConnKind = 'desktop' | 'terminal';
 
-/** 从保存的主机地址解析出纯主机名（剥 scheme/端口），SSH 走 22 端口 */
+/** 从保存的主机地址解析出纯主机名（剥 scheme；旧配置里若仍带端口也一并剥掉） */
 export function sshHostOf(h: { host: string }): string {
     let hp = (h.host || '').trim();
     const s = /^[a-z][a-z0-9+.-]*:\/\//i.exec(hp);
