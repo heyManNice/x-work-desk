@@ -1263,9 +1263,13 @@ canvas {
     border-radius: 0 0 6px 6px;
 }
 
-.fs-card .tab-btn.active {
+/* 所有“展开面板”的触发按钮（普通标签栏 / 全屏悬浮工具栏）在面板展开期间统一高亮。
+ * 用 [data-popup-trigger] 一次覆盖 .tb-btn / .tab-btn / .fm-btn / .nbell-btn，
+ * 避免各按钮自成一色；放在 :hover 规则之后，鼠标悬停时也保持高亮不闪回灰色。 */
+[data-popup-trigger].active,
+[data-popup-trigger].active:hover {
     background: var(--active);
-    color: var(--text);
+    color: var(--accent);
 }
 
 /* ============ SSH 终端 ============ */
@@ -1295,15 +1299,11 @@ canvas {
  * 通知中心：铃铛(红点) / 悬浮面板 / 气泡 / 进度条
  * ============================================================ */
 
-/* 铃铛按钮（顶栏右侧，.tb-btn 基础上定位红点） */
+/* 铃铛按钮（顶栏右侧，.tb-btn 基础上定位红点）；高亮见 [data-popup-trigger].active */
 .nbell-btn {
     position: relative;
     -webkit-app-region: no-drag;
     cursor: pointer;
-}
-
-.nbell-btn.active {
-    color: var(--accent);
 }
 
 .nbell-dot {
@@ -1674,10 +1674,7 @@ canvas {
  * 远程文件面板（SFTP）
  * ============================================================ */
 
-.fm-btn.active {
-    color: var(--accent);
-    background: var(--active);
-}
+/* 按钮高亮统一由 [data-popup-trigger].active 提供 */
 
 .fmpanel {
     position: fixed;

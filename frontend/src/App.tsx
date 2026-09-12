@@ -848,7 +848,8 @@ function TextActions(props: { type: ConnKind; fm: FmCtx | null }) {
 }
 
 /* 全屏悬浮工具栏：桌面壳窗口级全屏下，原顶栏/侧栏被隐藏（DOM 全保留），屏幕顶部
- * 常态只露工具栏底部一小截作手柄；hover 手柄展开，文件面板打开期间保持展开不收起。
+ * 常态只露工具栏底部一小截作手柄；hover 手柄展开，**任一弹窗面板打开期间保持展开**
+ * （面板可能挂在工具栏按钮下方，收起会显得面板“悬空”）。
  * 窗口级全屏不遮断 DOM，点“文件”可直接在全屏里弹出面板，无需退出全屏。 */
 function FullscreenBar() {
     const [hovered, setHovered] = createSignal(false);
@@ -870,9 +871,9 @@ function FullscreenBar() {
         }
     });
 
-    /* 展开态 = hover 工具栏 或 文件面板正打开（点开文件面板期间不收） */
+    /* 展开态 = hover 工具栏 或 任一面板正打开（面板打开期间不收，避免面板悬空） */
     createEffect(() => {
-        setOpen(!!fsActive() && (hovered() || activePopup() === 'file'));
+        setOpen(!!fsActive() && (hovered() || activePopup() !== null));
     });
 
     return (
