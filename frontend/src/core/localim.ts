@@ -42,6 +42,8 @@ export class LocalIM {
     private composing = false;
     /** 远端应用上报的插入点矩形（远端屏幕坐标），null = 当前拿不到 */
     private caret: IMCaret | null = null;
+    /** 已采用的锚点 y（远端坐标）：同一行内不因上报口径差异而跳动，见 anchorOf() */
+    private anchorY: number | null = null;
 
     constructor(opt: LocalIMOpt) {
         this.opt = opt;
@@ -141,8 +143,27 @@ export class LocalIM {
             if (this.composing) this.placeAtCaret();
         } else if (this.caret !== null) {
             this.caret = null;
+            this.anchorY = null; /* 焦点没了：重新开始算锚点 */
             this.log('remote caret cleared（退回跟随鼠标）');
         }
+    }
+
+    /**
+     * 由远端矩形算出定位锚点（远端坐标）。两个实测到的坑：
+     *  ① 应用对"插入点"有两套上报口径：普通插入点 vs 组词期间的**预编辑外接矩形**。
+     *     同一行实测为 `y=88 h=25` 与 `y=84 h=36` —— 底边差 7px（预编辑矩形含
+     *     下划线/descent 而偏胖），直接用 y+h 会让候选窗在组词时**往下跳小半行**。
+     *     → 把 h 夹到"线盒"量级，两种口径就落回同一个位置。
+     *  ② 同一行内 y 还会抖几像素 → 变化很小就沿用上一次的锚点，避免候选窗跟着跳。
+     */
+    private anchorOf(c: IMCaret): { x: number; y: number } {
+        /* 远端像素；常规行盒高度量级（预编辑矩形会明显大于它） */
+        const LINE_BOX_MAX = 28;
+        /* 同一行内可容忍的 y 变化（小于它视为抖动；真正的换行差分远大于此） */
+        const Y_JITTER = 8;
+        const y = c.y + Math.min(c.h, LINE_BOX_MAX);
+        if (this.anchorY === null || Math.abs(y - this.anchorY) > Y_JITTER) this.anchorY = y;
+        return { x: c.x, y: this.anchorY };
     }
 
     /** 当前 preedit 里的光标位置（**字符数**：代理对算 1 个字符，与服务端/ibus 一致） */
@@ -173,9 +194,10 @@ export class LocalIM {
         const c = this.caret;
         if (!c || !this.opt.toLocal) return;
         if (c.w === 0 && c.h === 0) return;   /* 0,0 是"没有真实插入点"的占位值 */
-        const p = this.opt.toLocal(c.x, c.y + c.h);
+        const a = this.anchorOf(c);
+        const p = this.opt.toLocal(a.x, a.y);
         this.placeAt(p.x, p.y);
-        this.log(`place at remote caret → local ${Math.round(p.x)},${Math.round(p.y)}`);
+        this.log(`place at remote caret → local ${Math.round(p.x)},${Math.round(p.y)}（锚点 y=${a.y}）`);
     }
 
     focus(): void {
