@@ -205,5 +205,19 @@ sudo setsid nohup ./build/xworkd --auth shadow --port 5268 \
 - **端口被占**：`sudo systemctl stop xworkd` 或换 `--port` 重新安装。
 - **`Xvfb`/`xauth` 缺失**：`sudo apt install xvfb xauth`。
 - **`pw-record` 等缺失**：`sudo apt install pipewire-bin`（音频传输需要）。
+- **服务端日志在哪**：**不写日志文件**，走 systemd journal —— `journalctl -u xworkd -f`
+  （本机输入法相关行以 `IM：` 开头：`journalctl -u xworkd | grep IM`）；手动前台运行时
+  重定向到哪里就在哪里。客户端的运行日志在内存里，由顶栏「关于 → 生成日志报告」导出
+  （渲染层 + 主进程合并，含 JS 报错）。
+- **本机输入法没反应**：按下面顺序查——
+  1. 客户端「关于」导出的报告里有没有 `[im]` 组词日志：没有 = 客户端根本没接到本机 IME
+     （Linux 下从终端启动时要带上会话的 `GTK_IM_MODULE=ibus` / `XMODIFIERS=@im=ibus`
+     / `DBUS_SESSION_BUS_ADDRESS`）；
+  2. 报告里 `place(caret)` vs `place(mouse)`：后者多说明远端没上报插入点（候选窗只会跟鼠标）；
+  3. 远端会话里 `ls -l /run/xworkd/xworkd-im-<uid>-<display>.sock` 是否存在、`/run/xworkd`
+     是否 **0711**（目录不可穿越时引擎在跑也永远接不上）；
+  4. `journalctl -u xworkd | grep IM` 看切源与接入：`IM：引擎已接入` / `IM：通知客户端引擎状态 = 0`。
+- **候选窗位置不对**：客户端隐藏输入框的落点有三个校准常量（`CARET_LIFT_Y` / `OFF_X` /
+  `OFF_Y`，见 `frontend/src/core/localim.ts` 顶部），改完 `npm run build` 即生效。
 - **认证模式**：`--auth shadow` 必须 root；开发用 `--auth none`（任意账号
   可登录，非 root 时以当前进程用户运行会话）。

@@ -86,16 +86,19 @@ flowchart LR
 
 **客户端（Electron 渲染层 + 主进程）**
 
-- `src/core/imrelay.ts`（新）——组合事件 → `MSG_IM_PREEDIT` / `MSG_IM_COMMIT`；
-  接收 `MSG_IM_CARET` 维护锚点；管理"当前是否处于本机输入法模式"。
+- `src/core/localim.ts`（最终实现名）——组合事件 → `MSG_IM_PREEDIT` / `MSG_IM_COMMIT`；
+  接收 `MSG_IM_CARET` 维护锚点；管理隐藏输入框与"当前是否处于本机输入法模式"。
 - `src/input.ts` —— 改动：
   - `event.isComposing === true` 或 `keyCode === 229` → **不转发**（交给本地 IME）；
-  - `compositionend` → 发 `MSG_IM_COMMIT`，清空隐藏输入框；
-  - 命中原生保留键表 → 不转发、不 `preventDefault`；
-  - 其余键照旧走 `MSG_KEY`。
-- 隐藏 `<textarea>`：`opacity: 0`、尺寸 1×1、始终 `focus()`；位置 = 当前锚点。
-- UI：预编辑浮层（远端应用不支持 IM 时的降级显示）、状态指示（"本机输入法：中/英"）、
-  主机配置里的勾选框。
+  - `setLocalIME(on)` + `isLocalReservedKey()`：输入法切换键留在本地（**实现只做了 `Meta`/`Win`
+    与 `Ctrl+Space`**，Windows 单按 `Shift`、macOS 的 `Cmd` 组合等见 §13）；
+  - 组词的"提交/取消"在 `core/localim.ts` 里处理（**不在** input.ts）。
+- 隐藏 `<textarea>`：`opacity: 0`、`wrap="off"` + `white-space: nowrap`、始终 `focus()`；
+  位置 = 当前锚点。**尺寸不能是 1×1**：Windows 的 IME 靠 Chromium 上报的"组词串文字范围"
+  算候选窗位置，1px 宽 + `overflow:hidden` 会让这个范围退化成一条缝（还会被自动横滚），
+  表现为"拼音越长、候选窗越往左"。现为 `40em×16px`（高仍是一行，与客户端 `CARET_LIFT_Y` 对齐）。
+- UI：状态指示（"输入法：就绪 / 被切走 / 远端引擎不可用"，写进 HUD）、
+  引擎不可用时的通知、主机配置里的勾选框。
 
 ## 5. 协议
 
@@ -123,14 +126,16 @@ flowchart LR
 
 ## 6. 客户端行为
 
-主机配置新增布尔字段（暂定名 `localIM`，默认 `false`）：**使用本机输入法（输入内容在远端显示）**。
+主机配置新增布尔字段（`localIM`，默认 `false`）：**使用本机输入法（输入内容在远端显示）**。
 
 **开启时**
 
 1. 主进程/服务端：记录远端当前 ibus 引擎 → 切到 `xworkd-im`。
 2. 渲染层：启用隐藏输入框 + 组合事件分流（字符走 `PREEDIT`/`COMMIT`，快捷键仍走 `MSG_KEY`）。
-3. 锚点：**组合开始时定位一次**；优先级：`MSG_IM_CARET` 的远端 caret > 上次远端点击位置 >
-   画面内固定位置。**绝不能用 (0,0)**，否则第一次输入候选窗会跑到左上角。
+3. 锚点：**远端插入点一变就重摆**（`MSG_IM_CARET` → `setCaret()` → `syncToCaret()`），
+   **不是"组合开始时定位一次"** —— Windows 上远端组词期间往往一次 caret 都不上报，只在组词
+   开始摆一次就会用到过期位置；拿不到 caret 时退回跟随鼠标。0×0 是"没有真实插入点"的占位值，
+   **不能当成 (0,0) 使用**（否则候选窗会跑到左上角）。
 4. 位置换算：远端屏幕坐标 → 被捕获显示区域 → 画面坐标 → 本地 CSS 坐标，
    复用现有 `fit/stretch/pixel` 换算；越界时钳制在窗口内。
 
@@ -151,7 +156,8 @@ flowchart LR
 
 ## 7. 关键细节与坑
 
-- **节流**：本地每敲一键都会 `compositionupdate`，同一帧只发最后一次 preedit。
+- **preedit 发送**：本地每敲一键都会 `compositionupdate`；实现是**每次都发**（**未做**"同一帧只发
+  最后一次"的节流）—— 单条 preedit 很短，实测不构成压力；若要节流，按帧合并即可，协议无需改。
 - **reset**：远端引擎 `focus-out`/`reset`、客户端失焦/切标签/点别处，都必须丢弃或提交当前组合。
 - **按键不被消费**：引擎 `process_key_event` 恒返回 `false`，否则应用收不到普通按键。
 - **引擎被切走**：用户或系统可能切走引擎（如按了输入法切换键）：引擎收到 `disable` 后上报
@@ -181,52 +187,38 @@ flowchart LR
 
 - 引擎二进制：`/usr/libexec/xworkd/xworkd-im`。
 - component 注册：`/usr/share/ibus/component/xworkd-im.xml`，安装后执行 `ibus write-cache`。
-- socket：`/run/xworkd/im-<uid>.sock`。
-- 拉起方式：由 xworkd 在会话内以用户身份启动（不用 systemd --user 单元，避免与会话生命周期错位）。
+- socket：`/run/xworkd/xworkd-im-<uid>-<display>.sock`（0600，属主为会话用户）；
+  socket 目录 `/run/xworkd` 必须 **0711（可穿越）**，否则会话用户连不上自己的 socket。
+- 拉起方式：**不在会话启动时直接拉起** —— 引擎由 **ibus-daemon 按组件注册激活**，xworkd 只负责
+  "切成当前输入源"；xworkd 用 `XWORKD_IM_SOCK` 把 socket 路径交给会话，但引擎不能只靠环境变量
+  （daemon 的启动方式决定环境继承），它会再用 `DISPLAY` 自行推导同一路径（多候选尝试）。
 - **分发方式（已定）**：引擎由 xworkd 同一个 meson 工程构建，**随服务端一起安装**：
   `deploy/install.sh` 装二进制与 component XML，`tools/make-server-bundle.sh` 的产物里一并带上。
   注意：`libibus-1.0-dev` 只是构建期依赖，构建时用 `dependency('ibus-1.0', required: false)`
   做成可选目标，缺头文件时不影响主程序构建（本机当前就未安装该 dev 包）。
 - 卸载：停进程 → 删 XML → `ibus write-cache` → 恢复原引擎。
 
-## 9. PoC（已完成使命，验证器已删）
+## 9. PoC（已完成使命，验证器已从仓库删除）
 
-三条关键假设已在 X11 + `zenity --entry`（GTK3）上实测成立：应用会上报 insert 矩形（`x=811 y=596 w=0 h=34`，
-随文本变化右移）、`update_preedit_text` 让应用**在自己的输入框里**显示 `nihao`、
-`commit_text` 直接插入 `你好`（**无需任何按键注入**）、普通按键正常透传。
-平台差异与三个坑（`<homepage>`、`register_component`、GNOME 输入源）见
-`tools/im-poc/README.md` 的「实测结论」。
+PoC 验证器（Python + PyGObject 的最小 ibus 引擎，当时放在 `tools/im-poc/`）**已删除**，
+这里只保留结论 —— 需要原始脚本时看 git 历史里引入正式实现之前的提交。当时的做法是：
+在 X11 + `zenity --entry`（GTK3）上手工驱动引擎（`F9` 推进一步 preedit、`F10` 提交「你好」、
+`F11` 隐藏，其余按键一律返回 `False` 不消费），并在 gedit / gnome-terminal(VTE) / Firefox
+的输入框里各试一遍。
 
-验证器放在 `tools/im-poc/`（**不是产品代码**，验证完可删）：
+结论（三条关键假设全部成立）：
 
-| 文件 | 作用 |
-|---|---|
-| `xworkd-im-poc.py` | Python + PyGObject 的最小 ibus 引擎：打印应用上报的插入点矩形；`F9` 推进一步 preedit、`F10` 提交“你好”、`F11` 隐藏；其余按键一律返回 `False` 不消费 |
-| `xworkd-im-poc.xml` | ibus 组件注册（服务名 / 引擎名 / exec 路径） |
-| `install-poc.sh` / `uninstall-poc.sh` | 装/卸到 `/usr/libexec/xworkd/` 与 `/usr/share/ibus/component/` |
-| `README.md` | 步骤 + **结论记录表** |
+- 应用会**上报插入点矩形**（实测 `x=811 y=596 w=0 h=34`，随文本变化右移）→ 候选窗定位可用；
+- `update_preedit_text` 让应用**在自己的输入框里**显示预编辑串（`nihao`，带下划线）；
+- `commit_text` 直接插入「你好」，**完全不需要按键注入**（XTEST）；
+- 普通打字与快捷键不受影响（引擎不消费按键）。
 
-操作步骤：
+三个当年踩到、也是正式实现必须处理的坑：组件 XML 必须有 `<homepage>`、必须调
+`ibus_bus_register_component()`、GNOME 下必须把引擎挂成**输入源**（只 `ibus engine` 会被覆盖）。
+细节见 §7 与 §12。
 
-```sh
-sudo tools/im-poc/install-poc.sh              # root：只装系统文件
-ibus engine                                  # 当前用户：先记下原引擎名（本机现为 libpinyin）
-ibus write-cache && ibus list-engine | grep xworkd   # 没有就 ibus restart
-ibus engine xworkd-im-poc
-tail -f /tmp/xworkd-im-poc.log                # 看 `*** cursor_location`
-```
-
-然后在 gedit / gnome-text-editor、gnome-terminal(VTE)、Firefox 的输入框里各试一遍。
-
-要回答的四个问题：
-
-1. `*** cursor_location` 是否出现、坐标是否为屏幕坐标（多显示器/负值呢）。
-2. `F9` 的假拼音串是否出现在**应用自己的输入框里**（带下划线）。
-3. `F10` 的“你好”是否直接落进输入框（证明不需要 XTEST 注入）。
-4. 普通打字、快捷键是否不受影响（证明引擎不消费按键）。
-
-顺带产出**降级名单**：哪些应用不显示 preedit，这些人走形态 ②。
-注：PoC 引擎激活期间中文输入不可用（它不组词），这是预期行为。
+> 当时计划的「降级名单」（哪些应用收不到 caret / 不显示 preedit）**未系统整理**，属未做项；
+> 实际用到的兜底是：拿不到插入点时候选窗退回跟随鼠标（见 §13）。
 
 ## 10. 工作量与阶段
 
@@ -243,7 +235,7 @@ tail -f /tmp/xworkd-im-poc.log                # 看 `*** cursor_location`
 
 已定（2026-09-12）：
 
-1. **先做 Python PoC 再落 C** —— 验证器已就绪（§9），结果填入 `tools/im-poc/README.md` 的结论表。
+1. **先做 Python PoC 再落 C** —— 已完成，验证器已删（结论见 §9）。
 2. **引擎随 xworkd 服务端一起构建与安装**（meson 可选目标 + `deploy/install.sh` + server-bundle）。
 3. **`PREEDIT` 携带 preedit 内光标位置**（客户端取隐藏输入框的 `selectionStart` 减去 preedit 起始偏移；
    取不到时退化为末尾）。
@@ -294,3 +286,28 @@ tail -f /tmp/xworkd-im-poc.log                # 看 `*** cursor_location`
   UI（勾选项 / 状态指示 / 不可用通知 / 本地保留键）。
 - 待办（本设计稿的“未来可选”）：形态 ②（不支持 IM 的应用 → 客户端浮层 + XTEST 注入）；
   preedit 阶段显示拼音（需 IBus auxiliary text 通道，见 §7）。
+
+## 13. 实现与设计稿的差异（以代码为准，2026-09-12）
+
+设计稿写在前、实现落地在后，下面这些地方**实现已经偏离设计稿**，改动时别按 §6/§7 的原文来：
+
+1. **候选窗定位**：不是“组合开始时定位一次”，而是**远端插入点一变就重摆**
+   （`setCaret()` → `syncToCaret()`）。Windows 上远端组词期间常常一次 caret 都不报，
+   只在组词开始摆一次 = 用过期位置，甚至一直停在鼠标兜底的位置上。
+   落点还有三个校准常量（`CARET_LIFT_Y` / `OFF_X` / `OFF_Y`，在
+   `frontend/src/core/localim.ts` 顶部）：本机 IME 把候选窗画在隐藏框“框内插入点”的下方，
+   不预扣一个行高就会整体偏低一个字。
+2. **隐藏输入框几何**：`40em×16px`（**不是** 1×1）。1px 宽 + `overflow:hidden` 时，
+   Windows 的 IME 拿到的“组词串文字范围”会退化成一条缝、还会被 Chromium 自动横滚，
+   表现为“拼音越长、候选窗越往左”；Linux/ibus 只取插入点原点，所以只有 Windows 暴露这个问题。
+3. **不做横向“抵消”**：框只按远端插入点左端摆一次，框内插入点随组词串自然右移
+   （曾经用 `measureText` 量出串宽去减，方向反了 → 越打越往左，已删除）。
+4. **保留键**：只实现了 `Meta`/`Win` 与 `Ctrl+Space`（`src/input.ts` 的 `isLocalReservedKey()`）。
+   §6 表里 Windows 单按 `Shift`、macOS `Cmd` 组合等**未实现**。
+5. **preedit 无节流**：每次 `compositionupdate` 都发（见 §7 注）。
+6. **形态 ② / fcitx5 / auxiliary text 显示拼音**：均未实现（见 §12 待办）。
+7. **日志**：引擎与通道的调试**不再写文件** —— xworkd 侧走 stderr（systemd journal，
+   `journalctl -u xworkd | grep IM`）；客户端侧进内存环形缓冲，由「关于 → 生成日志报告」导出
+   （scope `[im]`；`place(caret)` = 按远端插入点摆框，`place(mouse)` = 退回跟随鼠标，
+   `compositionupdate …（scrollLeft=…）` 里的 `scrollLeft` 恒为 0 才说明隐藏框没被横滚）。
+   引擎自身调试需让 `XWORKD_IM_DEBUG=1` 出现在**会话环境**里（引擎由 ibus-daemon 拉起）。

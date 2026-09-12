@@ -19,7 +19,8 @@
   系统监控**复用同一条 SSH 连接**（各自开 channel，关标签不影响其它面板）；
   支持 Ctrl+滚轮缩放字号、Ctrl+Shift+C/V 复制粘贴，配色跟随应用深浅色主题。
 - **远程文件（SFTP）**：工具栏“文件”面板 —— 浏览 / 上传 / 下载 / 重命名 /
-  新建 / 删除 / 搜索，同一连接内记住上次目录。- **系统资源监控**：顶栏 CPU、内存两个按钮实时显示远端占用；点开独立面板：
+  新建 / 删除 / 搜索，同一连接内记住上次目录。
+- **系统资源监控**：顶栏 CPU、内存两个按钮实时显示远端占用；点开独立面板：
   CPU 占用曲线 / 型号核数 / CPU Top 进程；内存 / 缓存 / Swap / 磁盘占用。
 - **Tun 代理**：顶栏 Tun 面板 —— 在**远端主机**上用内置的 sing-box 起一个系统级 tun
   代理（该机所有用户都走上游），提供「安装服务 / 卸载服务」「启用 / 停用」两个开关，
@@ -33,7 +34,11 @@
   远端光标旁。原理：客户端把本机 IME 的组合事件经 WS 送给会话内的 ibus 中继引擎
   （`xworkd-im`），由它调 `update_preedit_text` / `commit_text`。开关在主机配置里，
   开启时服务端会在会话内把引擎挂成当前 GNOME 输入源，关闭/断开时恢复原样。
-  需远端装有利器（服务端包已内置）；构建期依赖 `libibus-1.0-dev`（缺失则自动跳过引擎构建）。
+  需远端装有该引擎（服务端包已内置 `xworkd-im` 与组件 XML）；构建期依赖
+  `libibus-1.0-dev`（缺失则自动跳过引擎构建）。详见 [docs/input-method-local.md](docs/input-method-local.md)。
+- **关于面板与日志报告**：顶栏「关于」显示客户端/服务端版本（可经 SSH 一键更新或卸载
+  服务端）、远端系统与桌面环境版本、客户端启动时间；底部「生成日志报告」把**内存里的
+  运行日志**导出为文本（渲染层 + 主进程按时间合并，含 JS 报错）。客户端**不写日志文件**。
 - **沉浸全屏**：窗口级全屏 + 顶部悬浮工具栏（鼠标移出自动隐藏）；自定义标题栏
   与窗口控制（Win/Linux 右上最小化/最大化/关闭；macOS 红黄绿灯 + 应用名置右）。
 - **多平台产物**：Windows MSI(x64) / NSIS(arm64)、Linux deb(x64/arm64)、
@@ -44,6 +49,8 @@
 - shadow+crypt 真实账号认证（需 root）；每个登录用户一个独立 GNOME 会话。
 - Xorg dummy 虚拟显示支持运行时改分辨率（桌面不重启）；音频采集、剪贴板文本
   共享、会话接管。文件传输不在协议内：客户端用顶栏 SFTP 面板直连 sshd。
+- 本机输入法中继：每会话一条 AF_UNIX 通道 + 会话内 ibus 引擎（`im/xworkd-im.c`，
+  可选构建），切/恢复 GNOME 输入源由服务端负责，详见 `docs/input-method-local.md`。
 
 ## 架构
 
@@ -53,6 +60,8 @@
 │   · 远程桌面：WS → H.264 帧 → Chromium 解码 → Canvas                         │
 │   · 输入：鼠标/键盘 → 二进制 WS 消息 → 远端 X                                │
 │   · SSH / SFTP / 系统监控：主进程 ssh2 → 远端                                │
+│   · 本机输入法：本机 IME 组词 → WS（MSG_IM_*）→ 会话内 ibus 中继引擎         │
+│   · 运行日志：内存环形缓冲（渲染层 + 主进程），「关于」面板可导出报告         │
 └───────────────────────────────┬──────────────────────────────────────────────┘
                                 │ HTTP + WebSocket（服务端自研，零依赖）
 ┌───────────────────────────────▼──────────────────────────────────────────────┐
@@ -64,6 +73,8 @@
 │  · encoder.c H.264（CPU-only，静态链接 x264，无 FFmpeg）                    │
 │  · input.c   XTest 注入鼠标/键盘                                              │
 │  · audio.c / clip.c  音频采集、剪贴板文本共享（双向）                        │
+│  · im.c   本机输入法：每会话一条 AF_UNIX 通道（引擎由会话内 ibus 拉起）        │
+│  · sessproc.c 会话子进程：拉起桌面、切/恢复 GNOME 输入源                    │
 └───────────────────────────────┬──────────────────────────────────────────────┘
                                 │ 每个登录用户一套
                       ┌─────────▼──────────┐
@@ -98,8 +109,7 @@
 | S→C | `0x06` CURSOR | 远程光标图像 |
 | S→C | `0x07` AUDIO | 音频帧 |
 | S→C | `0x08` CLIPBOARD | 剪贴板文本 |
-| S→C | `0x0e` LOCAL_IN_USE | 实体机正登录该账号，需先踢出实体机 |
-| S→C | `0x0e` LOCAL_IN_USE | 实体机(seat0)正登录该账号，需先踢出实体机 |
+| S→C | `0x0e` LOCAL_IN_USE | 实体机(seat0)正登录该账号，需先踢出实体机会话 |
 | C→S | `0x10` LOGIN | user/pass + 请求宽高 |
 | C→S | `0x11` MOUSE | 移动 / 按键 |
 | C→S | `0x12` KEY | 键盘事件（KeyboardEvent.code） |
@@ -117,6 +127,9 @@
 > 与**会话内的** ibus 中继引擎通信（帧格式 `type(1)+len(2,LE)+payload`，见 `src/im_proto.h`）。
 > 客户端不直连远端任何 socket，鉴权与网络边界都在 xworkd。详见 `docs/input-method-local.md`。
 
+> 号段中有几处历史预留未使用（`0x09`–`0x0d`、`0x1d`），完整清单以
+> `src/protocol.h` 与 `frontend/src/protocol.ts` 为准。
+
 ## 构建
 
 依赖：`gcc meson ninja node npm xauth` + X11 开发头
@@ -132,6 +145,8 @@
 #        --disable-shared && make -j$(nproc)，再执行下方命令）
 sudo apt install libx264-dev libopus-dev libxfixes-dev xvfb xauth \
     xserver-xorg-video-dummy x11-xserver-utils
+# 可选：libibus-1.0-dev —— 装了才会额外构建「本机输入法」的远端 ibus 中继引擎
+#       （im/xworkd-im.c，可选目标，缺失时自动跳过，不影响远程桌面本身）
 meson setup build && ninja -C build        # 产出 build/xworkd（静态 x264，无动态 FFmpeg）
 
 # 2) 桌面客户端（主进程 TS + 渲染层 Vite）
@@ -139,7 +154,7 @@ cd frontend && npm install && npm run build
 # 产出 dist-electron/（主进程，tsc）与 dist/（渲染层，vite）
 
 # 3) 单元测试（纯逻辑模块，可无头运行）
-meson test -C build    # test-util / test-msgq / test-ws
+meson test -C build    # test-util / test-msgq / test-ws / test-http-util / test-im
 
 # 4) 重新生成内置服务端安装包（客户端「一键安装服务端」用它；改动后端后必须重做，
 #    否则一键安装分发出去的仍是旧二进制）
@@ -151,6 +166,7 @@ tools/make-server-bundle.sh    # 产出 frontend/server-bundle/xworkd-server.tar
 ```bash
 cd frontend && npm install
 npm run build          # 必须先构建：package.json 的 main 指向 dist-electron/main.cjs
+npm run desktop        # = npm run build && electron .（改完直接跑，省一步）
 DISPLAY=:0 npx electron .   # Linux 运行（加载 dist/ + dist-electron/）；Windows/macOS 直接 npx electron .
 npm run watch:main          # 可选：主进程改动后台增量编译
 # 若报 chrome-sandbox 权限错误（未设 setuid / 以普通用户运行），追加 --no-sandbox
@@ -195,6 +211,17 @@ sudo ./build/xworkd --auth shadow --port 5268
 > `--auth shadow` 校验真实系统密码，并以该用户身份启动会话，需要 root。
 > 无 root 的 `--auth none` 不校验密码，桌面以当前进程用户运行。
 
+## 已知限制
+
+- **仅 X11**：服务端在虚拟 X 显示（Xorg dummy / Xvfb）里跑 GNOME，不支持 Wayland 原生会话。
+- **明文 HTTP/WS**：默认不带 TLS（限本机/可信内网；跨网段请自行加一层加密反代）。
+- **本机输入法**：勾选期间会切换该账号的 GNOME 输入源，若同一账号也登录本机桌面，桌面
+  输入源会一起被换掉（关闭/断开即恢复 —— GNOME 同用户共用一份 dconf 所致）；
+  不支持 IM 的应用（游戏、部分自绘控件）拿不到插入点，候选窗会退回跟随鼠标；
+  preedit 阶段显示的是 IME 给的内容（Linux/ibus 下是汉字，Windows 下是拼音串）。
+- **未做**：不支持 fcitx5 后端；「客户端浮层 + XTEST 注入」的兜底形态未实现；
+  服务端/引擎日志进 systemd journal，不写日志文件。
+
 ## 常见问题
 
 - **视频黑屏 / 一直加载**：客户端 Electron 无需额外 WebCodecs 配置；多为
@@ -205,6 +232,14 @@ sudo ./build/xworkd --auth shadow --port 5268
 - **认证失败**：`--auth shadow` 必须以 root 运行；确认账号存在且已设密码
   （`sudo passwd test`）。
 - **端口被占**：换 `--port` 重装 / 重启。
+- **本机输入法没反应 / 候选窗位置不对**：客户端顶栏「关于」→ 底部「生成日志报告」，
+  报告里搜 `[im]`（`place(caret)` = 按远端插入点摆框，`place(mouse)` = 退回跟随鼠标）；
+  服务端侧看 `journalctl -u xworkd | grep IM`。Linux 下**从终端启动客户端**时要带上
+  桌面会话的输入法环境（`GTK_IM_MODULE=ibus`、`XMODIFIERS=@im=ibus`、`QT_IM_MODULE=ibus`
+  与会话的 `DBUS_SESSION_BUS_ADDRESS`），否则 Chromium 接不上本机 IME
+  （表现为报告里完全没有 `[im]` 组词日志）。
+- **服务端日志在哪**：不进文件，走 systemd journal（`journalctl -u xworkd -f`）；
+  手动前台运行时由你自己重定向到文件。
 
 ### 重启服务后新登录黑屏（旧会话残留）
 
@@ -241,21 +276,26 @@ JS 环境报错（`window.onerror`、`unhandledrejection`、`console.error/warn`
 
 ```
 src/                后端 C 源码（meson 管理）
+im/                 本机输入法的远端 ibus 中继引擎（xworkd-im.c / xworkd-im.xml）
 frontend/           桌面客户端：Vite+SolidJS 前端 + Electron 壳 + core/* 模块
   electron/         主进程 TypeScript 源码（.cts，tsc 编译到 dist-electron/）
     main.cts          入口：应用生命周期；窗口在 window.cts，IPC 契约在 ipc/index.cts
     window.cts        主窗口单例与向渲染层的推送出口
-    ipc/              通道注册（index）与剪贴板/连通性实现
+    log.cts           主进程内存日志（生成报告时与渲染层合并，不落盘）
+    ipc/              通道注册（index）、剪贴板/连通性、日志报告落盘（logreport）
     ssh/              连接池(pool)、终端(terminal)、系统监控(sysmon)、SFTP(sftp)、
                       服务端探测/安装/关于(setup)、Tun 代理(tun)
     preload.cts       contextBridge 暴露 window.xwd（类型复用各模块定义）
-  src/core/         会话、SSH 终端、SFTP 文件面板、系统监控、通知中心、弹窗协调
+  src/core/         会话（含本机输入法 localim）、SSH 终端、SFTP 文件面板、系统监控、
+                    通知中心、内存日志（log）、弹窗协调
   server-bundle/    内置服务端安装包（一键安装用）
   tun-bundle/       内置 sing-box 安装包与远端安装脚本（Tun 代理用）
   build-resources/  打包图标
 deploy/             systemd 单元、安装脚本、PAM 守卫、WirePlumber 覆盖
-docs/DEPLOYMENT.md  服务端生产部署指南（权限、用户管理、资源规划、运维）
-test/               服务端测试（node WebSocket 客户端、单元测试、冒烟脚本）
+docs/               文档：DEPLOYMENT.md（生产部署）、input-method-local.md（本机输入法）
+test/               服务端测试（协议/通道单测 + node WebSocket 客户端与冒烟脚本）
+tools/              维护脚本：服务端包打包（make-server-bundle）、本机输入法联调（im-dev/）、
+                    版本校验、会话诊断与接管/注销回归测试
 third_party/        内置 x264（系统无 libx264-dev 时使用）
 ```
 
