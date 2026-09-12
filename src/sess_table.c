@@ -36,24 +36,6 @@ runtime *session_lookup(const char *user)
     return rt;
 }
 
-runtime *session_by_token(const char *token)
-{
-    if (!token || !token[0])
-        return NULL;
-    runtime *rt = NULL;
-    pthread_mutex_lock(&g_sess_lock);
-    for (int i = 0; i < MAX_SESSIONS; i++)
-        if (g_sessions[i].rt && g_sessions[i].rt->token[0] &&
-            !strcmp(g_sessions[i].rt->token, token))
-        {
-            rt = g_sessions[i].rt;
-            runtime_ref(rt); /* 调用方负责 unref */
-            break;
-        }
-    pthread_mutex_unlock(&g_sess_lock);
-    return rt;
-}
-
 void session_register(runtime *rt, const char *user)
 {
     pthread_mutex_lock(&g_sess_lock);

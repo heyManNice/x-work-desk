@@ -11,7 +11,6 @@
 #include <errno.h>
 #include <sys/uio.h>
 #include <sys/socket.h>
-#include <sys/sendfile.h>
 
 /* 构造一帧并发送：优先 writev 零拷贝，失败则整帧缓存 */
 static int ws_write_frame(conn *c, int opcode, const uint8_t *payload, size_t len)
@@ -112,32 +111,6 @@ int ws_flush(conn *c)
         free(c->snd);
         c->snd = NULL;
         c->snd_len = c->snd_off = 0;
-    }
-
-    /* HTTP 流式文件下载：响应头（snd）已发，逐块 sendfile 文件体 */
-    if (c->send_fd >= 0)
-    {
-        while (c->send_left > 0)
-        {
-            size_t want = c->send_left > TRANSFER_SEND_CHUNK ? TRANSFER_SEND_CHUNK : (size_t)c->send_left;
-            ssize_t n = sendfile(c->fd, c->send_fd, &c->send_off, want);
-            if (n < 0)
-            {
-                if (errno == EAGAIN || errno == EWOULDBLOCK)
-                    return 1;
-                close(c->send_fd);
-                c->send_fd = -1;
-                net_close_conn(c);
-                return 0;
-            }
-            if (n == 0)
-                break; /* EOF 提前（文件被截断） */
-            c->send_left -= (uint64_t)n;
-        }
-        close(c->send_fd);
-        c->send_fd = -1;
-        if (c->send_left == 0)
-            c->close_after_flush = 1;
     }
 
     if (c->close_after_flush)

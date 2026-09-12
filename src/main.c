@@ -18,7 +18,7 @@ char g_local_token[64];
 volatile int g_server_shutdown = 0;
 
 /* 生成本地会话控制接口令牌并写入 /run/xworkd/local.token（0600 root），
- * 供 PAM 守卫(xworkd-gdm-guard)等本机调用方经 127.0.0.1 调用 /api/local/* 鉴权 */
+ * 供 PAM 守卫(xworkd-gdm-guard)等本机调用方经 127.0.0.1 调用 /api/local/ 鉴权 */
 static void init_local_api_token(void)
 {
     util_gen_token(g_local_token, sizeof g_local_token);

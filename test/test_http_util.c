@@ -1,10 +1,8 @@
-/* 单元测试：文件传输工具函数（URL 解码 / query 解析 / home 路径权限） */
+/* 单元测试：HTTP 查询串工具（URL 解码 / query 解析）——供 /api/local/ 接口使用 */
 #include "../src/util.h"
 
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
-#include <pwd.h>
 
 static int g_failures = 0;
 #define CHECK(cond)                                                         \
@@ -58,48 +56,15 @@ static void test_query_get(void)
     CHECK(strcmp(out, "2") == 0);
 }
 
-static void test_path_in_user_home(void)
-{
-    struct passwd *pw = getpwuid(getuid());
-    if (!pw)
-        return; /* 无 passwd 条目则跳过 */
-    char resolved[4096];
-    char buf[4096];
-
-    /* 合法：home 本身（真实存在）应通过 */
-    snprintf(buf, sizeof buf, "%s", pw->pw_dir);
-    CHECK(util_path_in_user_home(pw->pw_name, buf, resolved, sizeof resolved) == 1);
-
-    /* 前缀边界：/home/test2 不算 /home/test 内 */
-    snprintf(buf, sizeof buf, "%s2/x", pw->pw_dir);
-    CHECK(util_path_in_user_home(pw->pw_name, buf, resolved, sizeof resolved) == 0);
-
-    /* 不在 home 内 */
-    CHECK(util_path_in_user_home(pw->pw_name, "/etc/passwd", resolved, sizeof resolved) == 0);
-
-    /* 符号链接/穿越逃逸：home/../etc/passwd realpath 后不在 home 内 */
-    snprintf(buf, sizeof buf, "%s/../etc/passwd", pw->pw_dir);
-    CHECK(util_path_in_user_home(pw->pw_name, buf, resolved, sizeof resolved) == 0);
-
-    /* 相对路径拒绝 */
-    CHECK(util_path_in_user_home(pw->pw_name, "relative/path", resolved, sizeof resolved) == 0);
-
-    /* 空用户 / 空路径 */
-    CHECK(util_path_in_user_home("", pw->pw_dir, resolved, sizeof resolved) == 0);
-    CHECK(util_path_in_user_home(pw->pw_name, "", resolved, sizeof resolved) == 0);
-    CHECK(util_path_in_user_home(NULL, pw->pw_dir, resolved, sizeof resolved) == 0);
-}
-
 int main(void)
 {
     test_url_decode();
     test_query_get();
-    test_path_in_user_home();
     if (g_failures)
     {
         fprintf(stderr, "%d check(s) failed\n", g_failures);
         return 1;
     }
-    printf("transfer util tests OK\n");
+    printf("http query util tests OK\n");
     return 0;
 }

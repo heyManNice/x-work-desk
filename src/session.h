@@ -30,7 +30,6 @@ struct runtime
     _Atomic int state;  /* S_LOGIN / S_AUTHING / S_RUNNING / S_CLOSED */
     conn *_Atomic conn; /* 当前绑定的活动连接（可换绑；NULL=无人连接） */
     char user[64];
-    char token[64];           /* 文件传输 token：注入扩展环境变量 + 浏览器 HTTP 鉴权 */
     char pass[256];           /* 登录密码：解锁会话 GNOME Keyring；Xvfb 重建会复用，真正销毁时擦除 */
     int _Atomic fps;          /* 最大抓帧帧率（前端可调） */
     int _Atomic static_skip;  /* 静态帧优化开关（画面无变化跳过编码） */

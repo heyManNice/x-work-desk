@@ -65,19 +65,10 @@ static void push_session_exists(conn *c, const char *user)
     push_text_msg(c, MSG_SESSION_EXISTS, NULL, 0, user);
 }
 
-/* 下发文件传输 token：浏览器 HTTP 鉴权用（与扩展环境变量 XWORKD_TOKEN 同源） */
-static void push_transfer_token(conn *c, const char *token)
+/* 确保会话用户的 ~/Desktop 存在（桌面图标扩展依赖该目录）。 */
+static void ensure_desktop_dir(const char *user)
 {
-    if (!token || !token[0])
-        return;
-    push_text_msg(c, MSG_TRANSFER_TOKEN, NULL, 0, token);
-}
-
-/* 下发会话可用目录（客户端上传默认落点等）：home 与 desktop 绝对路径。
- * 若 ~/Desktop 不存在则创建并 chown 给会话用户（拖入上传的默认落点）。 */
-static void push_session_dirs(conn *c, const char *user)
-{
-    if (!c || !user || !user[0])
+    if (!user || !user[0])
         return;
     struct passwd *pw = getpwnam(user);
     if (!pw || !pw->pw_dir || !pw->pw_dir[0])
@@ -87,32 +78,12 @@ static void push_session_dirs(conn *c, const char *user)
     if (dn <= 0 || (size_t)dn >= sizeof desktop)
         return;
     struct stat st;
-    if (stat(desktop, &st) != 0)
+    if (stat(desktop, &st) != 0 && mkdir(desktop, 0755) == 0)
     {
-        if (mkdir(desktop, 0755) == 0)
-            chown(desktop, pw->pw_uid, pw->pw_gid);
+        if (chown(desktop, pw->pw_uid, pw->pw_gid) != 0)
+        { /* 忽略：非关键路径 */
+        }
     }
-    char buf[4096];
-    int n = snprintf(buf, sizeof buf, "home\n%s\ndesktop\n%s",
-                     pw->pw_dir, desktop);
-    if (n <= 0 || (size_t)n >= sizeof buf)
-        return;
-    push_text_msg(c, MSG_SESSION_DIRS, NULL, 0, buf);
-}
-
-/* 向连接推送扩展触发的传输请求（下载/上传目录） */
-void session_push_transfer(conn *c, int action, const char *text)
-{
-    if (!text)
-        return;
-    uint8_t prefix[1] = {(uint8_t)action};
-    push_text_msg(c, MSG_TRANSFER_REQUEST, prefix, 1, text);
-}
-
-/* 推送传输错误通知（前端右下角提醒，如路径权限不足） */
-void session_push_transfer_error(conn *c, const char *text)
-{
-    push_text_msg(c, MSG_TRANSFER_ERROR, NULL, 0, text);
 }
 
 /* 把空闲会话（无连接）绑定到新连接上，推送配置并请求关键帧 */
@@ -247,8 +218,7 @@ static void *login_worker(void *arg)
         {
             /* 旧连接已关闭：无缝接管原会话（复用桌面，不重建） */
             push_login_result(c, 1, "ok");
-            push_transfer_token(c, sess->token);
-            push_session_dirs(c, sess->user);
+            ensure_desktop_dir(sess->user);
             takeover_session(sess, c);
             log_info("接管空闲会话(刷新重连): %s", j->user);
             runtime_unref(sess); /* 释放 lookup 引用 */
@@ -274,8 +244,7 @@ static void *login_worker(void *arg)
     {
         /* 桌面空闲（无连接）：直接接管，不打扰 */
         push_login_result(c, 1, "ok");
-        push_transfer_token(c, sess->token);
-        push_session_dirs(c, sess->user);
+        ensure_desktop_dir(sess->user);
         takeover_session(sess, c);
         log_info("接管空闲会话: %s", j->user);
         runtime_unref(sess); /* takeover_session 已为新连接持有引用 */
@@ -313,8 +282,7 @@ static void *login_worker(void *arg)
     }
 
     push_login_result(c, 1, "ok");
-    push_transfer_token(c, rt->token);
-    push_session_dirs(c, rt->user);
+    ensure_desktop_dir(rt->user);
     session_register(rt, j->user);
     log_info("登录完成: %s -> %s", j->user, rt->proc.display_str);
 
@@ -564,7 +532,6 @@ static void handle_takeover_msg(conn *c, runtime *rt)
     }
 
     push_login_result(c, 1, "ok");
-    push_transfer_token(c, sess->token);
     takeover_session(sess, c);
     log_info("接管并继承会话(第二人登录): %s -> %s", rt->user,
              sess->proc.display_str);

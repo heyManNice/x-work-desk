@@ -2,20 +2,15 @@
 #include <stdint.h>
 
 /* ---------- 服务端 -> 客户端 ---------- */
-#define MSG_VIDEO 0x01            /* flags(1) + Annex-B NAL 数据 */
-#define MSG_CONFIG 0x02           /* w(2) h(2) spsLen(2) sps ppsLen(2) pps */
-#define MSG_LOGIN_RESULT 0x03     /* ok(1) + 文本消息 */
-#define MSG_CLOSE 0x04            /* 文本原因 */
-#define MSG_SESSION_EXISTS 0x05   /* 该账户已有活跃会话（询问是否注销接管） */
-#define MSG_CURSOR 0x06           /* 光标图像：w(2) h(2) hx(2) hy(2) + RGBA */
-#define MSG_AUDIO 0x07            /* Opus 音频帧（20ms/帧） */
-#define MSG_CLIPBOARD 0x08        /* 剪贴板文本（UTF-8，双向） */
-#define MSG_TRANSFER_TOKEN 0x09   /* 服务端→客户端：文件传输 token（UTF-8 文本） */
-#define MSG_TRANSFER_REQUEST 0x0a /* 服务端→客户端：扩展触发的传输请求：action(1)+路径文本 */
-#define MSG_TRANSFER_ERROR 0x0b   /* 服务端→客户端：传输请求被拒绝（UTF-8 原因文本） */
-#define MSG_CLIPBOARD_FILES 0x0c  /* 服务端→客户端：远程剪贴板复制了文件：每行一个 realpath */
-#define MSG_SESSION_DIRS 0x0d     /* 服务端→客户端：会话可用目录：home\n<路径>\ndesktop\n<路径> */
-#define MSG_LOCAL_IN_USE 0x0e     /* 服务端→客户端：检测到实体机(seat0)正登录该账号，需先踢出实体机会话（文本=用户名） */
+#define MSG_VIDEO 0x01          /* flags(1) + Annex-B NAL 数据 */
+#define MSG_CONFIG 0x02         /* w(2) h(2) spsLen(2) sps ppsLen(2) pps */
+#define MSG_LOGIN_RESULT 0x03   /* ok(1) + 文本消息 */
+#define MSG_CLOSE 0x04          /* 文本原因 */
+#define MSG_SESSION_EXISTS 0x05 /* 该账户已有活跃会话（询问是否注销接管） */
+#define MSG_CURSOR 0x06         /* 光标图像：w(2) h(2) hx(2) hy(2) + RGBA */
+#define MSG_AUDIO 0x07          /* Opus 音频帧（20ms/帧） */
+#define MSG_CLIPBOARD 0x08      /* 剪贴板文本（UTF-8，双向） */
+#define MSG_LOCAL_IN_USE 0x0e   /* 服务端→客户端：检测到实体机(seat0)正登录该账号，需先踢出实体机会话（文本=用户名） */
 
 /* ---------- 客户端 -> 服务端 ---------- */
 #define MSG_LOGIN 0x10           /* userLen(2) user passLen(2) pass w(2) h(2) */
@@ -33,9 +28,6 @@
 #define MSG_LOGOUT 0x1c          /* 客户端→服务端：注销当前会话（销毁桌面，等同远程注销） */
 #define MSG_REQUEST_CONFIG 0x1e  /* 客户端→服务端：请求重发 CONFIG（接管后错过 SPS 时补拉流） */
 #define MSG_KICK_LOCAL 0x1f      /* 客户端→服务端：确认已结束实体机会话（踢出 seat0），继续远程登录 */
-/* MSG_TRANSFER_REQUEST action 值 */
-#define TRANSFER_ACT_DOWNLOAD 1  /* 扩展请求下载文件：文本=文件路径列表(换行分隔) */
-#define TRANSFER_ACT_UPLOADDIR 2 /* 扩展请求上传到目录：文本=目标目录路径 */
 
 #define VIDEO_FLAG_KEY 0x01    /* MSG_VIDEO flags: 关键帧 */
 #define MOUSE_FLAG_MOTION 0x01 /* MSG_MOUSE flags */

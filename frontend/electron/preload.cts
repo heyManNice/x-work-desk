@@ -7,7 +7,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { IpcRendererEvent } from 'electron';
 import type { PingOpt, ClipData } from './ipc/system.cjs';
-import type { DownloadOpt, UploadOpt, TransferResult, TransferProgress } from './ipc/transfer.cjs';
 import type { SshCred, SshResult, SftpOpenResult, SftpListResult } from './ssh/types.cjs';
 import type { SshTermOpt } from './ssh/terminal.cjs';
 import type { SysOpenOpt, SysSample } from './ssh/sysmon.cjs';
@@ -27,15 +26,6 @@ contextBridge.exposeInMainWorld('xwd', {
     /* 剪贴板 */
     clipWriteText: (text: string): Promise<void> => ipcRenderer.invoke('xwd:clipWriteText', text),
     clipPoll: (): Promise<ClipData> => ipcRenderer.invoke('xwd:clipPoll'),
-    /* 传输（文件自动下载到系统下载目录 / 本地文件自动上传远程桌面） */
-    downloadRemoteFiles: (opt: DownloadOpt): Promise<TransferResult> => ipcRenderer.invoke('xwd:download', opt),
-    uploadLocalFiles: (opt: UploadOpt): Promise<TransferResult> => ipcRenderer.invoke('xwd:upload', opt),
-    /* 传输进度订阅，返回取消函数 */
-    onTransferProgress: (cb: (p: TransferProgress) => void): (() => void) => {
-        const listener = (_e: IpcRendererEvent, p: TransferProgress): void => cb(p);
-        ipcRenderer.on('xwd:progress', listener);
-        return () => ipcRenderer.removeListener('xwd:progress', listener);
-    },
     /* 窗口控制（自制标题栏） */
     windowControl: {
         minimize: (): void => ipcRenderer.send('xwd:winMin'),

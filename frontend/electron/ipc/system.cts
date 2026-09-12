@@ -1,8 +1,7 @@
-/* ipc/system.cts —— 连通性探测与剪贴板。 */
+/* ipc/system.cts —— 连通性探测与剪贴板（仅文本）。 */
 
 import { clipboard } from 'electron';
 import net from 'node:net';
-import fs from 'node:fs';
 
 export interface PingOpt {
     host: string;
@@ -11,31 +10,6 @@ export interface PingOpt {
 
 export interface ClipData {
     text: string | null;
-    files: string[];
-}
-
-/** 解析 text/uri-list（Nautilus/Windows 复制文件）：每行一个 file:// URI */
-function parseUriList(buf: Buffer): string[] {
-    const text = buf.toString('utf8');
-    const files: string[] = [];
-    for (const line of text.split('\n')) {
-        const t = line.trim();
-        if (!t || t.startsWith('#')) continue;
-        let u = t;
-        try { u = decodeURIComponent(t); } catch { /* keep */ }
-        const m = /^file:\/\/(.+)$/i.exec(u);
-        if (!m) continue;
-        let p = m[1];
-        /* 去掉 host（file://localhost/ 或 file:/// ） */
-        if (p.startsWith('localhost/')) p = p.slice('localhost/'.length);
-        p = p.replace(/\r$/, '');
-        if (process.platform === 'win32') {
-            /* file:///C:/x -> C:\x */
-            if (/^[a-zA-Z]:\//.test(p)) p = p.replace(/\//g, '\\');
-        }
-        if (p && fs.existsSync(p)) files.push(p);
-    }
-    return files;
 }
 
 /** TCP 连通性探测（主机状态/延迟）：返回连接耗时毫秒；失败 -1 */
@@ -64,31 +38,14 @@ export async function clipWriteText(text: unknown): Promise<void> {
     try { await clipboard.writeText(String(text ?? '')); } catch { /* 忽略 */ }
 }
 
-/** 读取剪贴板：返回 { text, files }。files 仅在桌面复制文件场景出现。
+/** 读取剪贴板文本（仅文本：文件传输改走 SFTP 面板，不再做剪贴板文件同步）。
  *  注：当前 Electron 的 clipboard 已改为 Promise/W3C API（readText/writeText 异步，
- *  availableFormats/readBuffer 已移除，改用 read() 的 ClipboardItem.types/getType）。 */
+ *  availableFormats/readBuffer 已移除）。 */
 export async function clipPoll(): Promise<ClipData> {
     let text = '';
     try {
         text = (await clipboard.readText()) || '';
     } catch { /* 读取失败按空处理 */ }
-    const files: string[] = [];
-    try {
-        const items = await clipboard.read();
-        for (const it of items || []) {
-            const types = (it && it.types) || [];
-            if (types.includes('text/uri-list') || types.includes('text/uri-list;charset=utf-8')) {
-                const blob = await it.getType('text/uri-list');
-                /* getType 的返回在类型上是 Blob | ClipboardBookmark，这里按能力判断 */
-                const ab = (blob as Blob).arrayBuffer;
-                if (typeof ab !== 'function') continue;
-                files.push(...parseUriList(Buffer.from(await ab.call(blob))));
-            }
-        }
-    } catch { /* 非文件场景无 files */ }
-    /* 返回前确保全部字段可结构化克隆（IPC） */
-    return {
-        text: typeof text === 'string' && text.length ? text : null,
-        files: files.filter((f) => typeof f === 'string'),
-    };
+    /* 确保字段可结构化克隆（IPC） */
+    return { text: typeof text === 'string' && text.length ? text : null };
 }

@@ -17,8 +17,10 @@
 ## 2. 依赖与构建
 
 ```bash
-# 依赖: gcc meson ninja node npm Xvfb xauth + libx11-dev libxext-dev libxtst-dev
+# 依赖: gcc meson ninja node npm xauth + libx11-dev libxext-dev libxtst-dev
 #       + libx264-dev libopus-dev（H.264 静态 x264 软件编码，无 FFmpeg）
+#       虚拟显示：xserver-xorg-video-dummy（默认 --server xorg）+ xvfb（回退
+#       --server xvfb）+ x11-xserver-utils（cvt，运行期改分辨率）
 
 # 自建 x264（系统无 libx264-dev 时；生成 libx264.a 供 meson 静态链接）
 cd third_party/x264 && ./configure --enable-static --disable-cli --disable-shared && make -j$(nproc)
@@ -26,8 +28,9 @@ cd third_party/x264 && ./configure --enable-static --disable-cli --disable-share
 # 后端
 cd /path/to/x-work-desk && meson setup build && ninja -C build
 
-# 前端
+# 桌面客户端（主进程 TypeScript + 渲染层 Vite）
 cd frontend && npm install && npm run build
+# 产出 dist-electron/（主进程）与 dist/（渲染层）
 ```
 
 ## 3. 用户管理
@@ -60,7 +63,8 @@ XWORKD_PORT=8080 XWORKD_EXTRA_ARGS="--width 1920 --height 1080 --fps 60" sudo ./
 脚本做的事：校验构建产物 → 安装 xserver-xorg-video-dummy → 用仓库路径生成
 `/etc/systemd/system/xworkd.service` → 安装 GNOME Shell 动画覆盖与
 WirePlumber 音频覆盖 → 对在线用户 `systemctl --user daemon-reload` 并重启
-wireplumber → 开机自启 → 重启服务。
+wireplumber → 接入实体机登录拦截 PAM（`install-pam.sh`，无 GDM 自动跳过）→
+清理旧版 Nautilus 扩展残留 → 开机自启 → 重启服务。
 
 **虚拟显示服务器（`--server`）**：默认 `xorg`——每用户一个 headless
 Xorg + dummy 驱动（无显示器/显卡，内存帧缓冲），支持 RandR 运行时改
@@ -120,16 +124,28 @@ sudo setsid nohup ./build/xworkd --auth shadow --port 5268 \
 
 ## 5. 网络与安全
 
-> 当前服务为明文 HTTP/WS，传输登录密码与桌面画面。**公网/跨网段必须加 TLS**。
+> 当前服务为**明文 HTTP/WS**，传输登录密码与桌面画面。限本机/可信内网使用；
+> 跨网段或公网请自行加一层加密（本仓库不内置、也不提供现成反代配置）。
 
-最小可行方案：nginx 反代 + `wss://`（示例见
-`deploy/nginx-xworkd.conf.example`）。桌面客户端填写主机地址时用 `https://host`
-前缀即可自动切到 wss。反代后只放行 443，5268 仅监听 127.0.0.1 或内网。
+两种常见做法（任选其一，都需要你自己部署）：
+
+- **TLS 反代**：自己用 nginx/Caddy 等终止 TLS，反代到 `127.0.0.1:5268`（需升级
+  WebSocket）。客户端填「服务器地址 `https://host`」+「远程桌面端口 = 反代端口」。
+- **SSH 隧道**：把 `127.0.0.1:5268` 通过 SSH 转发到本地（如
+  `ssh -L 5268:127.0.0.1:5268 user@host`），客户端直连 `127.0.0.1:5268`。
+  加密由 SSH 提供，服务端无需任何改动；注意隧道方案下不需要把 5268 对外暴露。
+
+> 服务端不再提供前端静态文件（客户端自带界面离线加载），浏览器直接访问
+> `http://host:5268/` 只会得到 404。
 
 现状与建议：
 
 - **登录限速未内置**：目前认证接口无频率限制，公网部署建议加 fail2ban 或
   在反代层限流；
+- **接口面**：服务端只暴露 WebSocket `/ws`、版本信息 `/api/info` 与本机
+  `127.0.0.1` 专用的 `/api/local/`（令牌在 `/run/xworkd/local.token`）。无文件
+  传输 HTTP 接口（已移除，文件传输走客户端 SFTP）；反代时建议直接拒绝
+  `/api/local/` 的对外暴露；
 - **审计**：认证成功/失败打 journald，生产环境请保留日志并定期归档；
 - **端口**：默认绑定 0.0.0.0，请按需收紧防火墙；
 - **同一用户多开**：每个客户端连接都是一个独立会话，目前无每用户上限，
@@ -137,10 +153,11 @@ sudo setsid nohup ./build/xworkd --auth shadow --port 5268 \
 
 ## 6. 资源规划
 
-- 每个在线用户 = 1 个 Xvfb + 1 个 GNOME 会话 + 1 条 x264 编码线程，
+- 每个在线用户 = 1 个虚拟 X 服务器（默认 headless Xorg+dummy，`--server xvfb`
+  时是 Xvfb）+ 1 个 GNOME 会话 + 1 条 x264 编码线程，
   实测单会话约 **500MB~1GB 内存 + 1~2 核**。CPU 核数决定能同时编多少路。
-- 显示号分配范围为 `:10` ~ `:199`（`find_free_display`），即**最多约 190 个
-  并发会话**；需要更多请改 `src/session.c` 中的范围。
+- 显示号分配范围为 `:10` ~ `:199`（`find_free_display`，见 `src/sessproc.c`），即
+  **最多约 190 个并发会话**；需要更多请改该函数的上界。
 - 无空闲超时：用户不注销、网络不断开会话不销毁，长期占用资源时可自行
   添加空闲断连策略。
 - systemd 单元已放宽 `LimitNOFILE=65536`，避免连接数撑满默认 fd 上限。

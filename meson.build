@@ -76,7 +76,6 @@ executable('xworkd',
     'src/localsess.c',
     'src/encoder.c',
     'src/input.c',
-    'src/transfer.c',
   ],
   dependencies: deps,
   install: true)
@@ -86,7 +85,7 @@ test_units = [
   ['test-util', ['test/test_util.c', 'src/util.c']],
   ['test-msgq', ['test/test_msgq.c', 'src/msgqueue.c']],
   ['test-ws', ['test/test_ws.c', 'src/ws_parser.c']],
-  ['test-transfer', ['test/test_transfer.c', 'src/util.c']],
+  ['test-http-util', ['test/test_http_util.c', 'src/util.c']],
 ]
 foreach t : test_units
   test(t[0], executable(t[0], t[1],

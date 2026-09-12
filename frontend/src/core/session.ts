@@ -1,17 +1,16 @@
 /* core/session.ts —— 单个远程连接会话（一个标签一个实例）。
  *
  * 自包含：自己创建 canvas / hud / overlay / 工具条 DOM（挂在外部传入的容器内），
- * 维护 WebSocket 连接、H.264 解码渲染、输入转发、音频、剪贴板共享、文件传输。
+ * 维护 WebSocket 连接、H.264 解码渲染、输入转发、音频、剪贴板文本共享。
  * 不依赖任何 UI 框架；App 层通过 onStatus 回调驱动标签/标题栏状态。
+ * 注：文件传输不在会话层，走顶栏 SFTP 文件面板。
  */
 
 import {
     MSG_VIDEO, MSG_CONFIG, MSG_LOGIN_RESULT, MSG_CLOSE, MSG_SESSION_EXISTS,
     MSG_LOCAL_IN_USE,
-    MSG_CURSOR, MSG_AUDIO, MSG_CLIPBOARD, MSG_TRANSFER_TOKEN, MSG_TRANSFER_REQUEST,
-    MSG_TRANSFER_ERROR, MSG_CLIPBOARD_FILES, MSG_SESSION_DIRS,
-    parseConfig, parseLoginResult, parseCursor, parseTransferRequest,
-    TRANSFER_ACT_DOWNLOAD, TRANSFER_ACT_UPLOADDIR,
+    MSG_CURSOR, MSG_AUDIO, MSG_CLIPBOARD,
+    parseConfig, parseLoginResult, parseCursor,
     msgLogin, msgResize, msgKeyframe, msgTakeover, msgTakeoverCancel,
     msgKickLocal,
     msgLogout, msgRequestConfig, msgClipboard, msgSetFps, msgSetCodec,
@@ -23,11 +22,7 @@ import { InputRelay } from '../input';
 import { AudioPlayer } from '../audio';
 import type { ServerTarget } from '../server';
 import { scaleFactor, type HostConfig } from './host';
-import {
-    clipWriteText, clipPoll,
-    downloadRemoteFiles, uploadLocalFiles,
-} from '../platform';
-import { transferTask, showTransferError } from '../transfer';
+import { clipWriteText, clipPoll } from '../platform';
 import { showConfirm } from '../modal';
 
 export type SessionState = 'connecting' | 'running' | 'error' | 'closed';
@@ -57,9 +52,6 @@ export class Session {
     private audio = new AudioPlayer();
     private active = false;              /* 该会话是否被用户激活（输入/音频/剪贴板） */
     private loginWaiting = false;
-    private haveToken = false;
-    private token = '';
-    private desktopDir = '';
     private clipEnabled = false;
     private clipCache = '';
     private audioEnabled = false;
@@ -437,22 +429,6 @@ export class Session {
 
     private handleMessage(b: Uint8Array): void {
         switch (b[0]) {
-            case MSG_TRANSFER_TOKEN:
-                this.token = new TextDecoder().decode(b.subarray(1));
-                this.haveToken = true;
-                break;
-            case MSG_TRANSFER_ERROR:
-                showTransferError(new TextDecoder().decode(b.subarray(1)));
-                break;
-            case MSG_TRANSFER_REQUEST:
-                this.handleTransferRequest(b);
-                break;
-            case MSG_CLIPBOARD_FILES:
-                this.handleRemoteClipboardFiles(new TextDecoder().decode(b.subarray(1)));
-                break;
-            case MSG_SESSION_DIRS:
-                this.desktopDir = this.parseSessionDirs(new TextDecoder().decode(b.subarray(1)));
-                break;
             case MSG_CLIPBOARD:
                 void this.clipWrite(new TextDecoder().decode(b.subarray(1)));
                 break;
@@ -590,59 +566,6 @@ export class Session {
         }
     }
 
-    private handleTransferRequest(b: Uint8Array): void {
-        const r = parseTransferRequest(b);
-        if (r.action === TRANSFER_ACT_DOWNLOAD) {
-            const paths = r.text.split('\n').filter((s) => s.length > 0);
-            for (const p of paths) this.downloadRemote(p);
-        } else if (r.action === TRANSFER_ACT_UPLOADDIR) {
-            /* 旧扩展入口已无来源，忽略 */
-            void r.text;
-        }
-    }
-
-    /* 远程剪贴板复制文件 → 自动下载到本地 */
-    private handleRemoteClipboardFiles(text: string): void {
-        const paths = text.split('\n').filter((s) => s.length > 0);
-        if (!paths.length) return;
-        for (const p of paths) this.downloadRemote(p);
-    }
-
-    private downloadRemote(path: string): void {
-        const { apiBase } = this.opt.target;
-        const t = this.token;
-        if (!this.haveToken) return;
-        const name = path.split('/').pop() || 'file';
-        const task = transferTask('download', name);
-        void downloadRemoteFiles({ api: apiBase, token: t, paths: [path] })
-            .then((r) => task.finish(r.ok, r.msg || undefined))
-            .catch((e) => task.finish(false, `下载失败：${String(e)}`));
-    }
-
-    /* 本地复制文件自动上传（桌面壳 clip_poll 检测到） */
-    private uploadLocal(paths: string[]): void {
-        const { apiBase } = this.opt.target;
-        const t = this.token;
-        if (!this.haveToken) return;
-        const label = paths.length === 1
-            ? (paths[0].split('/').pop() || 'file')
-            : `上传 ${paths.length} 个文件`;
-        const task = transferTask('upload', label);
-        void uploadLocalFiles({
-            api: apiBase, token: t, dir: this.desktopDir, files: paths,
-        })
-            .then((r) => task.finish(r.ok, r.msg || undefined))
-            .catch((e) => task.finish(false, `上传失败：${String(e)}`));
-    }
-
-    private parseSessionDirs(text: string): string {
-        const lines = text.split('\n').filter((s) => s.length > 0);
-        for (let i = 0; i + 1 < lines.length; i += 2) {
-            if (lines[i] === 'desktop') return lines[i + 1];
-        }
-        return '';
-    }
-
     /* ---------------- 剪贴板 ---------------- */
 
     private async clipWrite(text: string): Promise<void> {
@@ -652,7 +575,7 @@ export class Session {
         } catch { /* 忽略：写入失败不打断 */ }
     }
 
-    /* 轮询本地剪贴板：文本变化→同步远程；复制文件→自动上传 */
+    /* 轮询本地剪贴板：文本变化→同步远程 */
     private async clipReadPush(): Promise<void> {
         if (!this.active || !this.clipEnabled) return;
         try {
@@ -660,9 +583,6 @@ export class Session {
             if (p.text && p.text !== this.clipCache) {
                 this.clipCache = p.text;
                 this.send(msgClipboard(p.text));
-            }
-            if (p.files && p.files.length) {
-                this.uploadLocal(p.files);
             }
         } catch { /* 忽略 */ }
     }

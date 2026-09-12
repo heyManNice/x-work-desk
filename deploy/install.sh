@@ -75,8 +75,8 @@ for u in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do
     fi
 done
 
-# ---- 文件传输（新方案：客户端拖放/复制粘贴，不依赖 Nautilus 扩展）----
-# 清理旧版 Nautilus 右键菜单扩展（如有历史安装残留）
+# ---- 清理旧版 Nautilus 右键扩展（历史残留）----
+# 旧版本靠该扩展做右键上传/下载；现已改为客户端内置 SFTP 文件面板，扩展不再需要。
 NAUT_EXT_DIR="/usr/share/nautilus-python/extensions"
 if [ -f "$NAUT_EXT_DIR/xworkd_menu.py" ]; then
     rm -f "$NAUT_EXT_DIR/xworkd_menu.py"
@@ -96,4 +96,5 @@ systemctl --no-pager --lines=25 status "$SERVICE_NAME"
 echo
 echo "部署完成。"
 echo "  查看日志: journalctl -u ${SERVICE_NAME} -f"
-echo "  访问地址: http://<本机IP>:${PORT}/"
+echo "  客户端填写: 服务器地址 <本机IP> / 远程桌面端口 ${PORT} / SSH 端口 22"
+echo "  （服务端不再提供网页，浏览器直接访问只会得到 404）"

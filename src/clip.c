@@ -155,7 +155,6 @@ void clip_init(runtime *rt, int event_base)
     cl->targets_atom = XInternAtom(rt->cap.dpy, "TARGETS", False);
     cl->plain_atom = XInternAtom(rt->cap.dpy, "text/plain", False);
     cl->plain_utf8_atom = XInternAtom(rt->cap.dpy, "text/plain;charset=utf-8", False);
-    cl->uri_list_atom = XInternAtom(rt->cap.dpy, "text/uri-list", False);
     cl->read_prop_atom = XInternAtom(rt->cap.dpy, "XWD_CLIP_DATA", False);
     /* 辅助窗口不映射：剪贴板 selection 的 owner/requestor 窗口无需显示，
      * 未映射也能接收 SelectionRequest/SelectionNotify 事件；映射后会被
@@ -234,114 +233,6 @@ void clip_check(runtime *rt)
     }
 }
 
-/* ---------- 文件剪贴板（text/uri-list）识别 ---------- */
-
-static int hexval(char c)
-{
-    if (c >= '0' && c <= '9')
-        return c - '0';
-    if (c >= 'a' && c <= 'f')
-        return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F')
-        return c - 'A' + 10;
-    return -1;
-}
-
-/* 把 file:// URI 的路径部分（s 为去掉 "file://" 后的串）解码为本地路径 */
-static int fileuri_to_path(const char *s, char *out, size_t outsz)
-{
-    if (!s || outsz < 2)
-        return 0;
-    if (strncmp(s, "//", 2) == 0)
-        s += 2; /* file://host/... -> host/... */
-    /* 跳过 host 段（若有），从首个 '/' 开始才是本地路径 */
-    if (s[0] != '/')
-    {
-        const char *hp = strchr(s, '/');
-        if (!hp)
-            return 0; /* 无路径：不是可落地的文件 */
-        s = hp;
-    }
-    size_t oi = 0;
-    while (*s && oi < outsz - 1)
-    {
-        if (*s == '%' && s[1] && s[2])
-        {
-            int a = hexval(s[1]), b = hexval(s[2]);
-            if (a >= 0 && b >= 0)
-            {
-                out[oi++] = (char)((a << 4) | b);
-                s += 3;
-                continue;
-            }
-        }
-        if (*s == '+')
-            out[oi++] = ' ';
-        else
-            out[oi++] = *s;
-        s++;
-    }
-    out[oi] = 0;
-    return oi > 0;
-}
-
-/* 解析 text/uri-list 内容。返回值：
- *   >0 复制了文件且可推送 → out 填入每行一个 realpath 的列表
- *    0 内容非文件复制（如普通文本应用填的 uri-list）→ 调用方回退文本分支
- *   -1 是文件复制但路径均不在会话用户 home 内（越权）→ 不推送 */
-static int parse_uri_files(runtime *rt, const uint8_t *data, size_t len,
-                           char *out, size_t outsz)
-{
-    out[0] = 0;
-    if (len == 0 || outsz < 2)
-        return 0;
-    char *copy = malloc(len + 1);
-    if (!copy)
-        return 0;
-    memcpy(copy, data, len);
-    copy[len] = 0;
-    int saw_uri = 0, any = 0;
-    size_t used = 0;
-    char *save = NULL;
-    for (char *line = strtok_r(copy, "\n", &save); line;
-         line = strtok_r(NULL, "\n", &save))
-    {
-        size_t ll = strlen(line);
-        while (ll && (line[ll - 1] == '\r' || line[ll - 1] == ' ' ||
-                      line[ll - 1] == '\t'))
-            line[--ll] = 0;
-        if (!ll)
-            continue;
-        if (strncmp(line, "file://", 7) != 0)
-        {
-            free(copy);
-            return 0; /* 出现非 file URI 行：判定为普通文本 */
-        }
-        saw_uri = 1;
-        char dec[4096];
-        if (!fileuri_to_path(line + 7, dec, sizeof dec))
-            continue;
-        char real[4096];
-        if (util_path_in_user_home(rt->user, dec, real, sizeof real))
-        {
-            size_t rl = strlen(real);
-            if (used + rl + 2 < outsz)
-            {
-                if (any)
-                    out[used++] = '\n';
-                memcpy(out + used, real, rl);
-                used += rl;
-                out[used] = 0;
-                any++;
-            }
-        }
-    }
-    free(copy);
-    if (!saw_uri)
-        return 0;
-    return any > 0 ? any : -1;
-}
-
 /* 锁外调用：读取 CLIPBOARD 并推送前端 */
 void clip_read_push(runtime *rt)
 {
@@ -355,39 +246,7 @@ void clip_read_push(runtime *rt)
     rt->clip.last_read_ms = now;
     clip_ctx *cl = &rt->clip;
 
-    /* ① 优先识别文件复制（text/uri-list）：Nautilus/GTK 复制文件时提供 */
-    size_t ulen = 0;
-    uint8_t *uri = clip_read(rt, cl->clip_atom, cl->uri_list_atom, &ulen);
-    char flist[65536];
-    if (uri && ulen > 0)
-    {
-        int fr = parse_uri_files(rt, uri, ulen, flist, sizeof flist);
-        free(uri);
-        if (fr > 0)
-        {
-            size_t bl = strlen(flist);
-            uint64_t h = hash_text((const uint8_t *)flist, bl);
-            if (h == rt->clip.last_hash)
-                return;
-            rt->clip.last_hash = h;
-            uint8_t *out = malloc(1 + bl);
-            if (!out)
-                return;
-            out[0] = MSG_CLIPBOARD_FILES;
-            memcpy(out + 1, flist, bl);
-            conn *c = atomic_load(&rt->conn);
-            if (c)
-                net_push_take(c, out, 1 + bl, 0);
-            else
-                free(out);
-            return;
-        }
-        if (fr < 0)
-            return; /* 复制了文件但路径越权：不推送文本 */
-        /* fr == 0：内容非文件复制，落到文本分支继续 */
-    }
-
-    /* ② 文本剪贴板（UTF8_STRING） */
+    /* ① 文本剪贴板（UTF8_STRING） */
     size_t len = 0;
     uint8_t *text = clip_read(rt, cl->clip_atom, cl->utf8_atom, &len);
     if (!text)

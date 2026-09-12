@@ -204,7 +204,6 @@ void session_on_open(conn *c)
     atomic_init(&rt->crf, 23);
     rt->proc.display = -1;
     pthread_mutex_init(&rt->lock, NULL);
-    util_gen_token(rt->token, sizeof rt->token);
     atomic_store(&c->sess, rt);
 }
 

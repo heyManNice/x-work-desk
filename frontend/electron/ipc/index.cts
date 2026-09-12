@@ -7,7 +7,6 @@
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import { getWin, sendWinFs } from '../window.cjs';
 import { pingHost, clipWriteText, clipPoll } from './system.cjs';
-import { downloadRemoteFiles, uploadLocalFiles } from './transfer.cjs';
 import * as term from '../ssh/terminal.cjs';
 import * as sysmon from '../ssh/sysmon.cjs';
 import * as sftp from '../ssh/sftp.cjs';
@@ -27,12 +26,10 @@ function onSend(channel: string, fn: (arg: any) => void): void {
 }
 
 export function registerIpc(): void {
-    /* ---- 连通性 / 剪贴板 / 文件传输 ---- */
+    /* ---- 连通性 / 剪贴板 ---- */
     onInvoke('xwd:ping', (opt) => pingHost(opt ?? {}));
     onInvoke('xwd:clipWriteText', (text) => clipWriteText(text));
     onInvoke('xwd:clipPoll', () => clipPoll());
-    onInvoke('xwd:download', (opt) => downloadRemoteFiles(opt ?? {}));
-    onInvoke('xwd:upload', (opt) => uploadLocalFiles(opt ?? {}));
 
     /* ---- 窗口控制（自制标题栏：无系统边框） ---- */
     onSend('xwd:winMin', () => { getWin()?.minimize(); });

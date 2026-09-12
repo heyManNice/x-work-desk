@@ -31,7 +31,6 @@ conn *conn_alloc(int fd)
         return NULL;
     c->fd = fd;
     c->refs = 1;
-    c->send_fd = -1; /* 无文件下载；0 会被 ws_flush 误判为 stdin */
     atomic_init(&c->closing, false);
     ws_parser_init(&c->ws, WS_MAX_FRAME_SIZE);
     /* 初始小预算；会话确定分辨率后由 session.c 按帧率/分辨率调整 */
@@ -128,10 +127,8 @@ int net_run(void)
                 continue;
             fds[nfds].fd = c->fd;
             fds[nfds].events = POLLIN;
-            /* send_fd>=0 表示 HTTP 流式文件下载中：socket 缓冲满（sendfile
-             * EAGAIN）时必须持续注册 POLLOUT，否则连接永远不会被唤醒，
-             * 大文件下载会卡住（小文件一次发完不暴露） */
-            if (c->snd || c->send_fd >= 0)
+            /* 出站缓冲未发完时需要持续注册 POLLOUT，否则连接不会被唤醒 */
+            if (c->snd)
                 fds[nfds].events |= POLLOUT;
             fds[nfds].revents = 0;
             c->pindex = nfds;

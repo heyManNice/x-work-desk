@@ -8,13 +8,12 @@
 #include "msgqueue.h"
 #include "ws_parser.h"
 
-/* 本地会话控制接口令牌（http /api/local/* 用；main 启动时生成并写入
+/* 本地会话控制接口令牌（http /api/local/ 用；main 启动时生成并写入
  * /run/xworkd/local.token 供 PAM 守卫等本机调用方读取） */
 extern char g_local_token[64];
 
-/* WS 单帧载荷上限 / 文件下载 sendfile 单块大小（1MB） */
+/* WS 单帧载荷上限（1MB） */
 #define WS_MAX_FRAME_SIZE (1u << 20)
-#define TRANSFER_SEND_CHUNK (1u << 20)
 
 /* 连接结构（net.c/eventloop.c 拥有并管理生命周期，session.c 通过 c->sess 使用） */
 typedef struct conn
@@ -32,15 +31,6 @@ typedef struct conn
     /* ---- HTTP 阶段状态（升级为 WS 后不再使用） ---- */
     int http_done;         /* 1=已解析请求（升级或已响应） */
     int close_after_flush; /* 响应冲刷完毕后关闭连接 */
-
-    /* ---- HTTP POST body 累积（transfer 上传分片） ---- */
-    size_t http_clen;    /* Content-Length */
-    int http_await_body; /* 1=正在等待 body 收满 */
-
-    /* ---- HTTP 流式文件下载（sendfile） ---- */
-    int send_fd;        /* 下载中的文件描述符；-1=无 */
-    off_t send_off;     /* 已发送偏移 */
-    uint64_t send_left; /* 剩余待发字节 */
 
     /* ---- WS 帧解析状态（ws_parser 独立于 I/O，可单测） ---- */
     int is_ws;
@@ -90,8 +80,3 @@ int ws_flush(conn *c);      /* 冲刷出站队列与半发送帧（POLLOUT/唤�
 void session_on_open(conn *c);
 void session_on_message(conn *c, const uint8_t *data, size_t len);
 void session_on_close(conn *c);
-
-/* 文件传输（transfer.c）：按 token 查找会话并推送传输请求 */
-struct runtime *session_by_token(const char *token);
-void session_push_transfer(conn *c, int action, const char *text);
-void session_push_transfer_error(conn *c, const char *text);

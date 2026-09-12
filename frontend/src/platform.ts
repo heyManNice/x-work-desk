@@ -1,26 +1,14 @@
 /* platform.ts —— Electron 桌面壳能力桥（原 Tauri invoke 的替代层）。
- * preload 通过 contextBridge 暴露 window.xwd（主进程实现剪贴板/传输/窗口控制/SSH/SFTP）。
+ * preload 通过 contextBridge 暴露 window.xwd（主进程实现剪贴板/窗口控制/SSH/SFTP）。
+ * 注：文件传输只走 SFTP 面板，不经 HTTP（服务端已不提供传输接口）。
  */
-
-export interface TransferProgress {
-    done: number;
-    total: number;
-    name: string;
-}
 
 interface DesktopBridge {
     platform?: string;
     ping?(opt: { host: string; port?: number }): Promise<number>;
     aboutHostInfo?(opt: SshServerOpt): Promise<{ ok: boolean; msg?: string; os?: string; de?: string; deVersion?: string; shell?: string }>;
     clipWriteText(text: string): Promise<void>;
-    clipPoll(): Promise<{ text: string | null; files: string[] }>;
-    downloadRemoteFiles(opt: {
-        api: string; token: string; paths: string[];
-    }): Promise<{ ok: boolean; msg: string }>;
-    uploadLocalFiles(opt: {
-        api: string; token: string; dir: string; files: string[];
-    }): Promise<{ ok: boolean; msg: string }>;
-    onTransferProgress(cb: (p: TransferProgress) => void): () => void;
+    clipPoll(): Promise<{ text: string | null }>;
     windowControl?: {
         minimize(): void;
         toggleMaximize(): void;
@@ -85,13 +73,6 @@ export function isMac(): boolean {
     return platform() === 'darwin';
 }
 
-/* 订阅传输进度；返回取消函数（桌面壳，渲染层调用一次即可） */
-export function onTransferProgress(cb: (p: TransferProgress) => void): () => void {
-    const b = bridge();
-    if (!b) return () => { /* 无桌面壳：无进度事件 */ };
-    return b.onTransferProgress(cb);
-}
-
 /* ---- 窗口控制（自制标题栏） ---- */
 
 export function winMinimize(): void {
@@ -141,27 +122,9 @@ export async function clipWriteText(text: string): Promise<void> {
     await bridge()?.clipWriteText(text);
 }
 
-/* 读本地剪贴板：文本 + 检测本地复制的文件 */
-export async function clipPoll(): Promise<{ text: string | null; files: string[] }> {
-    return (await bridge()?.clipPoll()) ?? { text: null, files: [] };
-}
-
-/* 自动下载远程文件到系统下载目录（返回 {ok,msg} 给调用方展示） */
-export async function downloadRemoteFiles(opt: {
-    api: string; token: string; paths: string[];
-}): Promise<{ ok: boolean; msg: string }> {
-    const b = bridge();
-    if (!b) return { ok: false, msg: '桌面桥不可用' };
-    return b.downloadRemoteFiles(opt);
-}
-
-/* 自动上传本地文件到远程桌面 */
-export async function uploadLocalFiles(opt: {
-    api: string; token: string; dir: string; files: string[];
-}): Promise<{ ok: boolean; msg: string }> {
-    const b = bridge();
-    if (!b) return { ok: false, msg: '桌面桥不可用' };
-    return b.uploadLocalFiles(opt);
+/* 读本地剪贴板文本 */
+export async function clipPoll(): Promise<{ text: string | null }> {
+    return (await bridge()?.clipPoll()) ?? { text: null };
 }
 
 /* ---- SSH 终端（ssh2 由桌面壳主进程承载） ---- */

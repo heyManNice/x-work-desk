@@ -242,29 +242,6 @@ int util_query_get(const char *q, const char *key, char *out, size_t outn)
     return 0;
 }
 
-int util_path_in_user_home(const char *user, const char *path,
-                           char *resolved, size_t resolved_n)
-{
-    if (!user || !user[0] || !path || path[0] != '/')
-        return 0;
-    struct passwd *pw = getpwnam(user);
-    if (!pw)
-        return 0;
-    size_t hl = strlen(pw->pw_dir);
-    if (strncmp(path, pw->pw_dir, hl) != 0)
-        return 0;
-    if (path[hl] != '/' && path[hl] != 0)
-        return 0; /* 前缀边界（/home/test2 不算 /home/test 内） */
-
-    if (!realpath(path, resolved))
-        return 0;
-    if (strncmp(resolved, pw->pw_dir, hl) != 0)
-        return 0;
-    if (resolved[hl] != '/' && resolved[hl] != 0)
-        return 0;
-    return 1;
-}
-
 void util_gen_token(char *out, size_t n)
 {
     unsigned char r[16];

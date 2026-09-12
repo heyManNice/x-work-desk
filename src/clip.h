@@ -16,7 +16,6 @@ typedef struct clip_ctx
     Atom read_prop_atom;     /* 读取用 property（XWD_CLIP_DATA，缓存） */
     Atom clip_atom, primary_atom, utf8_atom, text_atom, targets_atom,
         plain_atom, plain_utf8_atom; /* text/plain 系 target（GNOME/GTK 兼容） */
-    Atom uri_list_atom;              /* text/uri-list：文件管理器复制文件提供 */
     uint8_t *own_text;               /* 我们作为 owner 提供的内容 */
     size_t own_len;
     int64_t last_own_attempt_ms; /* owner 自动恢复限流（毫秒） */
