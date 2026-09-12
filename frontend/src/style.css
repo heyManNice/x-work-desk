@@ -1137,16 +1137,25 @@ canvas {
     background: rgba(229, 82, 76, 0.12);
 }
 
-/* 本机输入法（联调版）的隐藏输入框：只用来承接本机 IME 的组词，视觉上不可见。
+/* 本机输入法的隐藏输入框：只用来承接本机 IME 的组词，视觉上不可见。
  * left/top 由 core/localim.ts 跟随鼠标/远端插入点实时设置；这里给个屏外初始值。
- * 注意 white-space:nowrap + wrap="off"：组词串**不能换行** —— 框只有 1px 宽，
- * 一旦换行，IME 拿到的"框内插入点"就跑到第二行，候选窗会莫名下移一个行高。 */
+ *
+ * 尺寸**不能是 1px**：Windows 的 IME 通过 Chromium 上报的「组词串文字范围」算候选窗
+ * 位置，而 1px 宽 + overflow:hidden 会让这个范围退化成一条缝，且 Chromium 为了让
+ * 插入点可见会自动横向滚动它（scrollLeft 递增）→ IME 拿到的坐标系失真，表现为
+ * 「拼音越长、候选窗越往左」（Linux 的 ibus 只取插入点原点，所以看不出问题）。
+ * 给足宽度后既不裁剪也不需要滚动；高度保持一行（16px），
+ * 竖直方向才和 localim.ts 的 CARET_LIFT_Y 假设一致。
+ * 注意 white-space:nowrap + wrap="off"：组词串**不能换行**。 */
 .im-soft-input {
     position: fixed;
     left: -9999px;
     top: -9999px;
-    width: 1px;
-    height: 1px;
+    width: 40em;
+    max-width: 90vw;
+    height: 16px;
+    font-size: 13px;
+    line-height: 16px;
     padding: 0;
     border: 0;
     margin: 0;

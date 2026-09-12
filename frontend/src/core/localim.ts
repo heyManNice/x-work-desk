@@ -66,8 +66,9 @@ export class LocalIM {
         ta.setAttribute('autocorrect', 'off');
         ta.setAttribute('spellcheck', 'false');
         ta.setAttribute('aria-hidden', 'true');
-        /* 关键：框内文字绝不能换行 —— 框只有 1px 宽，一旦换行，IME 拿到的
-         * "框内插入点"就跑到第二行，候选窗会莫名下移一个行高（见 syncToCaret） */
+        /* 关键：框内文字决不能换行，也**不能窄到需要横向滚动** ——
+         * 框太窄时 Chromium 会为让插入点可见而横滚它，Windows 的 IME 据此算出的
+         * 候选窗位置会随拼音变长而一路往左漂（见 style.css .im-soft-input） */
         ta.setAttribute('wrap', 'off');
         ta.tabIndex = -1;
         opt.stage.appendChild(ta);
@@ -127,7 +128,9 @@ export class LocalIM {
         });
         on(ta, 'compositionupdate', (e) => {
             const s = (e as CompositionEvent).data ?? '';
-            this.log(`compositionupdate ${JSON.stringify(s)}`);
+            /* scrollLeft 是排查 Windows「越打越往左」的关键指标：
+             * 它一路增大就说明组词串被横滚了（框太窄），IME 拿到的坐标系随之失真。 */
+            this.log(`compositionupdate ${JSON.stringify(s)}（scrollLeft=${this.ta.scrollLeft}）`);
             this.opt.preedit(s, this.charPos());
             /* 这里**不**重新摆框：框内插入点会随组词串自然右移，候选窗就该越打越往右。
              * （曾经减掉 measureText 量出的组词串宽度去「抵消」，结果越打越往左，反了。） */
