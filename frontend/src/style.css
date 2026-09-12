@@ -2340,6 +2340,39 @@ canvas {
     padding: 4px 12px 12px;
 }
 
+/* 字段：label 在输入槽上方 */
+.tun-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.tun-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.tun-label {
+    font-size: 11.5px;
+    color: var(--text-dim);
+}
+
+/* 右侧小字按钮（重置） */
+.tun-reset {
+    border: none;
+    background: none;
+    padding: 0;
+    color: var(--text-dim);
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.tun-reset:hover {
+    color: var(--text);
+}
+
 .tun-row {
     display: flex;
     align-items: center;
@@ -2374,6 +2407,43 @@ canvas {
     color: var(--text-faint);
 }
 
+/* 排除地址：多行（每行一个网段），等宽字体便于对齐 CIDR */
+.tun-textarea {
+    height: auto;
+    min-height: 132px;
+    padding: 7px 10px;
+    line-height: 1.45;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    resize: vertical;
+}
+
+/* 底部动作：左「安装服务」 / 右「启用」，等宽平分且同为强调色（视觉同级） */
+.tun-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.tun-actions>button {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.tun-install,
+.tun-enable {
+    height: 32px;
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: 12.5px;
+    font-weight: 500;
+}
+
+.tun-install:hover,
+.tun-enable:hover {
+    background: var(--accent-hover);
+}
+
 .tun-check {
     flex: 0 0 auto;
     height: 30px;
@@ -2386,19 +2456,6 @@ canvas {
 
 .tun-check:hover {
     background: var(--bg-elev-2);
-}
-
-.tun-enable {
-    height: 32px;
-    border-radius: 8px;
-    background: var(--accent);
-    color: var(--accent-text);
-    font-size: 12.5px;
-    font-weight: 500;
-}
-
-.tun-enable:hover {
-    background: var(--accent-hover);
 }
 
 /* ============================================================
