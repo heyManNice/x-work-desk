@@ -18,6 +18,15 @@
 
 import type { IMCaret } from '../protocol';
 
+/* ===== 候选窗落点校准（本地 CSS px；正 X 右、正 Y 下）=====
+ * 位置偏了只改这三个数，别动下面的定位逻辑。 */
+/** 竖直预扣：本机 IME 把候选窗画在隐藏框「框内插入点」的**下方**，而框顶对齐的是
+ *  远端插入点底边 → 不扣就整体低一个行高（隐藏框内容高实测 16px）。 */
+const CARET_LIFT_Y = 16;
+/** 绝对偏移微调（正常保持 0） */
+const OFF_X = 0;
+const OFF_Y = 0;
+
 export interface LocalIMOpt {
     /** 桌面视图容器（隐藏输入框挂在这里） */
     stage: HTMLElement;
@@ -44,8 +53,6 @@ export class LocalIM {
     private caret: IMCaret | null = null;
     /** 已采用的锚点 y（远端坐标）：同一行内不因上报口径差异而跳动，见 anchorOf() */
     private anchorY: number | null = null;
-    /** 量文字宽度用的 2D 上下文（懒建） */
-    private measureCtx: CanvasRenderingContext2D | null = null;
 
     constructor(opt: LocalIMOpt) {
         this.opt = opt;
@@ -58,7 +65,7 @@ export class LocalIM {
         ta.setAttribute('spellcheck', 'false');
         ta.setAttribute('aria-hidden', 'true');
         /* 关键：框内文字绝不能换行 —— 框只有 1px 宽，一旦换行，IME 拿到的
-         * "框内插入点"就跑到第二行，候选窗会莫名下移一个行高（见 placeAtCaret） */
+         * "框内插入点"就跑到第二行，候选窗会莫名下移一个行高（见 syncToCaret） */
         ta.setAttribute('wrap', 'off');
         ta.tabIndex = -1;
         opt.stage.appendChild(ta);
@@ -79,7 +86,7 @@ export class LocalIM {
         on(window, 'mousemove', (e) => {
             if (this.caret) return;   /* 有远端 caret 就以它为准，别被鼠标拖跑 */
             const ev = e as MouseEvent;
-            this.placeAt(ev.clientX, ev.clientY + 16);
+            this.moveTo(ev.clientX, ev.clientY + 16);   /* 兜底：落在光标下方一行处 */
         });
 
         /* 点击画面后把焦点抢回隐藏输入框，否则本机 IME 会失效 */
@@ -105,17 +112,15 @@ export class LocalIM {
         /* ---- 本机 IME 的组词事件 ---- */
         on(ta, 'compositionstart', () => {
             this.composing = true;
-            this.placeAtCaret();      /* 组合开始就定位：之后不跟随，避免候选窗乱跳 */
+            this.syncToCaret();   /* 组合开始摆一次框；之后框不动，让框内插入点自己走 */
             this.log('compositionstart');
         });
         on(ta, 'compositionupdate', (e) => {
             const s = (e as CompositionEvent).data ?? '';
             this.log(`compositionupdate ${JSON.stringify(s)}`);
             this.opt.preedit(s, this.charPos());
-            /* 组词串变长了 → 框内插入点右移了：必须重新落点把这部分抵消掉。
-             * （只在 compositionstart 落点是不够的：远端应用组词期间往往不再上报
-             *  caret，我们就没有别的机会重新对位，候选窗会跟着往右跑。） */
-            this.placeAtCaret();
+            /* 这里**不**重新摆框：框内插入点会随组词串自然右移，候选窗就该越打越往右。
+             * （曾经减掉 measureText 量出的组词串宽度去「抵消」，结果越打越往左，反了。） */
         });
         on(ta, 'compositionend', (e) => {
             this.composing = false;
@@ -149,7 +154,7 @@ export class LocalIM {
         if (c && (c.w !== 0 || c.h !== 0)) {
             this.caret = c;
             this.log(`remote caret ${c.x},${c.y} ${c.w}x${c.h}`);
-            if (this.composing) this.placeAtCaret();
+            if (this.composing) this.syncToCaret();
         } else if (this.caret !== null) {
             this.caret = null;
             this.anchorY = null; /* 焦点没了：重新开始算锚点 */
@@ -192,40 +197,26 @@ export class LocalIM {
         this.opt.log?.(msg);
     }
 
-    /** 把隐藏输入框摆到本地视图坐标处（IME 会把候选窗画在它的插入点上） */
-    private placeAt(x: number, y: number): void {
+    /** 把隐藏框挪到本地视图坐标（本机 IME 会把候选窗画在框内插入点附近） */
+    private moveTo(x: number, y: number): void {
         this.ta.style.left = `${Math.max(0, Math.min(window.innerWidth - 2, x))}px`;
         this.ta.style.top = `${Math.max(0, Math.min(window.innerHeight - 2, y))}px`;
     }
 
-    /** 定位到远端插入点那一行的下方（有 toLocal 映射且坐标有意义时才做） */
-    private placeAtCaret(): void {
+    /** 按远端插入点摆隐藏框（有 caret 且坐标有意义时才做；拿不到就不动，交给鼠标兜底）。
+     * 只做两件事：x 取插入点左边（组词串从插入点开始画）、y 抬 CARET_LIFT_Y
+     * （抵消候选窗天生长在「框内插入点」下方的那一个行高）。**不**按组词串宽度补偿。 */
+    private syncToCaret(): void {
         const c = this.caret;
         if (!c || !this.opt.toLocal) return;
         if (c.w === 0 && c.h === 0) return;   /* 0,0 是"没有真实插入点"的占位值 */
         const a = this.anchorOf(c);
         const p = this.opt.toLocal(a.x, a.y);
-        /* 本机 IME 的候选窗跟着**隐藏输入框内部的插入点**画，而不是跟着框本身：
-         * 组词串每多一个字，框内插入点就右移一个字的宽度 → 必须抵消掉，
-         * 否则候选窗会跟着往右跑（换行时还会整行下跳）。 */
-        const adv = this.measureAdvance();
-        this.placeAt(p.x - adv, p.y);
-        this.log(`place at remote caret → local ${Math.round(p.x - adv)},${Math.round(p.y)}` +
-            `（锚点 y=${a.y}，框内偏移 ${adv.toFixed(1)}px，内容高 ${this.ta.scrollHeight}px）`);
-    }
-
-    /** 量出当前组词串在隐藏输入框里的显示宽度（CSS px）。
-     * 用同一个字体度量，和 Chromium 的排版一致；另外把内容高一并记日志：
-     * 一旦发生换行 scrollHeight 会翻倍（排查"候选窗下跳一行"的关键指标）。 */
-    private measureAdvance(): number {
-        const s = this.ta.value;
-        if (!s) return 0;
-        if (!this.measureCtx) {
-            const cv = document.createElement('canvas');
-            this.measureCtx = cv.getContext('2d');
-            if (this.measureCtx) this.measureCtx.font = getComputedStyle(this.ta).font;
-        }
-        return this.measureCtx ? this.measureCtx.measureText(s).width : 0;
+        const x = p.x + OFF_X;
+        const y = p.y - CARET_LIFT_Y + OFF_Y;
+        this.moveTo(x, y);
+        this.log(`place → local ${Math.round(x)},${Math.round(y)}` +
+            `（远端锚点 y=${a.y}，上移 ${CARET_LIFT_Y}px，微调 ${OFF_X},${OFF_Y}）`);
     }
 
     focus(): void {
