@@ -20,7 +20,7 @@ import {
     winIsMaximized, onWinMaximizeChange,
     winSetFullScreen, winIsFullScreen, onWinFullScreenChange,
     platform, clipWriteText, pingHost,
-    sshProbeServer, sshStartServer, sshInstallServer, sshOnInstallProgress,
+    sshProbeServer, sshStartServer, sshInstallServer, sshUninstallServer, sshOnInstallProgress,
 } from './platform';
 import { resolveServer, hostEndpoint, normalizeHost, addrPort, type ServerTarget } from './server';
 import { showConfirm } from './modal';
@@ -35,7 +35,7 @@ import { TerminalSession } from './core/termSession';
 import { FileButton, FilePanelHost, fmSessionEnded, fmTabDeactivated, type FmCtx } from './core/filemgr';
 import { activePopup } from './core/popups';
 import { SysCpuButton, SysMemButton, SysCpuPanelHost, SysMemPanelHost } from './core/system';
-import { AboutButton, AboutPanelHost, setAboutHost, setAboutInstall } from './core/about';
+import { AboutButton, AboutPanelHost, setAboutHost, setAboutInstall, setAboutUninstall } from './core/about';
 import { TunButton, TunPanelHost } from './core/tun';
 import {
     NBell, NotifyPanelHost,
@@ -407,6 +407,26 @@ async function installServerWithProgress(opt: { host: string; port: number; user
 
 /* “关于”面板的“更新/重新安装”动作：复用 SSH 一键安装服务端流程 */
 setAboutInstall((c) => installServerWithProgress({
+    host: c.host, port: c.port, user: c.user, pass: c.pass,
+}));
+
+/* “关于”面板的“卸载”动作：远端停服务并删除程序/集成钩子（保留账号与用户数据）。
+ * 经通知中心反馈：卸载没有安装那样的分阶段进度，只有开始/结束两个状态。 */
+async function uninstallServerWithProgress(opt: { host: string; port: number; user: string; pass?: string }) {
+    const id = startTask('正在卸载服务端', '经 SSH 停止服务并清理文件…');
+    try {
+        const r = await sshUninstallServer(opt);
+        if (r.ok) finishTask(id, true, { title: '服务端卸载完成', body: '已停止并移除远端 XWorkDesk 服务端。' });
+        else finishTask(id, false, { title: '服务端卸载失败', body: r.msg || '未知错误' });
+        return r;
+    } catch (e) {
+        const em = e instanceof Error ? e.message : String(e);
+        finishTask(id, false, { title: '服务端卸载失败', body: em });
+        return { ok: false, msg: em };
+    }
+}
+
+setAboutUninstall((c) => uninstallServerWithProgress({
     host: c.host, port: c.port, user: c.user, pass: c.pass,
 }));
 

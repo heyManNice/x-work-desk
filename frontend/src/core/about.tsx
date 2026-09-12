@@ -12,6 +12,7 @@ import { Info, X } from 'lucide-solid';
 import { sshHostAboutInfo } from '../platform';
 import { activePopup, isPopup, togglePopup } from './popups';
 import { notifyError, notifySuccess } from './notify';
+import { showConfirm } from '../modal';
 import { APP_VERSION, BUNDLED_SERVER_VERSION, cmpVer } from './version';
 
 /* ---------------- 对外上下文（由 App 供给） ---------------- */
@@ -33,11 +34,15 @@ const AW = 280; /* 与 CSS .about-panel 宽度保持一致（居中/夹紧换算
 const [pos, setPos] = createSignal({ x: 0, y: 0 });
 const [hostCtx, setHostCtx] = createSignal<AboutCtx | null>(null);
 const [installFn, setInstallFn] = createSignal<((c: AboutCtx) => Promise<InstallResult>) | null>(null);
+const [uninstallFn, setUninstallFn] = createSignal<((c: AboutCtx) => Promise<InstallResult>) | null>(null);
 
 /* App 在激活主机变化/安装处理可用后调用 */
 export function setAboutHost(c: AboutCtx | null): void { setHostCtx(c); }
 export function setAboutInstall(fn: ((c: AboutCtx) => Promise<InstallResult>) | null): void {
     setInstallFn(() => fn); /* 信号存的是函数，用 updater 写法消除重载歧义 */
+}
+export function setAboutUninstall(fn: ((c: AboutCtx) => Promise<InstallResult>) | null): void {
+    setUninstallFn(() => fn);
 }
 
 /* ---------------- 面板数据状态 ---------------- */
@@ -96,6 +101,35 @@ async function runInstall(): Promise<void> {
         }
     } catch (e) {
         notifyError('操作失败', e instanceof Error ? e.message : String(e));
+    } finally {
+        setBusy(false);
+    }
+}
+
+async function runUninstall(): Promise<void> {
+    const c = hostCtx();
+    const fn = uninstallFn();
+    if (!c || !fn || busy()) return;
+    const go = await showConfirm(
+        '卸载服务端',
+        `将从 ${c.host} 移除 XWorkDesk 服务端：\n`
+        + '· 停止并删除 systemd 服务 xworkd\n'
+        + '· 删除 /opt/xworkd、PAM 登录拦截钩子与随包覆盖文件\n'
+        + '· 保留系统账号与用户数据\n\n'
+        + '注意：该主机的远程桌面会立即断开。',
+    );
+    if (!go) return;
+    setBusy(true);
+    try {
+        const r = await fn(c);
+        if (r.ok) {
+            notifySuccess('服务端已卸载', `${c.name} 的 XWorkDesk 服务端已移除。`);
+            setLoadTick((t) => t + 1); /* 刷新服务端状态（将显示为未知） */
+        } else {
+            notifyError('卸载失败', `${r.needSudo ? '远端账号缺少 sudo 权限。\n' : ''}${r.msg || '未知错误'}`);
+        }
+    } catch (e) {
+        notifyError('卸载失败', e instanceof Error ? e.message : String(e));
     } finally {
         setBusy(false);
     }
@@ -180,6 +214,14 @@ export function AboutPanelHost() {
                                             <span class="ab-name">XWorkDesk 服务端</span>
                                             <span class="ab-ver">{serverLabel()}</span>
                                             <span class="ab-fill" />
+                                            <button
+                                                class="ab-action act-danger"
+                                                disabled={busy()}
+                                                onClick={() => void runUninstall()}
+                                                title="经 SSH 卸载远端服务端：停服务并删除程序与集成钩子（保留系统账号与用户数据）"
+                                            >
+                                                卸载
+                                            </button>
                                             <button
                                                 class="ab-action"
                                                 disabled={busy()}

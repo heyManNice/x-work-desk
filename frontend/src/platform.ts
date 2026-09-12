@@ -29,6 +29,7 @@ interface DesktopBridge {
         probe(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; status: string; msg?: string }>;
         startServer(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; needSudo?: boolean; msg?: string }>;
         installServer(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; needSudo?: boolean; msg?: string }>;
+        uninstallServer(opt: { host: string; port: number; user: string; pass?: string }): Promise<{ ok: boolean; needSudo?: boolean; msg?: string }>;
         onInstallProgress?(cb: (p: { stage?: string; pct: number | null; label?: string }) => void): () => void;
     };
     sys?: {
@@ -180,6 +181,13 @@ export async function sshInstallServer(opt: SshServerOpt): Promise<{ ok: boolean
     const b = bridge()?.ssh;
     if (!b) return { ok: false, msg: '桌面壳环境不支持 SSH' };
     return b.installServer(opt);
+}
+
+/* 卸载远端服务端（停服务 + 删程序与集成钩子，保留账号与用户数据） */
+export async function sshUninstallServer(opt: SshServerOpt): Promise<{ ok: boolean; needSudo?: boolean; msg?: string }> {
+    const b = bridge()?.ssh;
+    if (!b || typeof b.uninstallServer !== 'function') return { ok: false, msg: '桌面壳环境不支持 SSH' };
+    return b.uninstallServer(opt);
 }
 
 export interface SshInstallProgress {

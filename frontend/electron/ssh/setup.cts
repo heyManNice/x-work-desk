@@ -138,6 +138,31 @@ export async function sshInstallServer(opt: SshCred): Promise<InstallResult> {
     return { ok, needSudo, msg: ((r.out || '') + (r.err || '')).trim().slice(-1000), code: r.code };
 }
 
+/** 远端卸载：停用并删除 systemd 服务、程序目录、PAM 登录拦截钩子与随包覆盖文件。
+ *  保留系统账号与用户数据；幂等（未安装时也安全返回）。
+ *  注意：会立即停止服务，该主机的远程桌面会话随之中断。 */
+export async function sshUninstallServer(opt: SshCred): Promise<InstallResult> {
+    /* 逐条用 ; 串联，均容错；脚本内避免 $ / 反引号 / 双引号（外层由远端 shell 再解析一次） */
+    const script = [
+        'systemctl disable --now xworkd >/dev/null 2>&1 || true',
+        'rm -f /etc/systemd/system/xworkd.service',
+        'systemctl daemon-reload >/dev/null 2>&1 || true',
+        /* PAM 接入（install-pam.sh 写入的标记行与 pam_exec 行）：按内容删除，幂等 */
+        "if [ -f /etc/pam.d/gdm-password ]; then sed -i '/# --- xworkd:/d; /xworkd-gdm-guard/d' /etc/pam.d/gdm-password; fi",
+        'rm -f /usr/libexec/xworkd-gdm-guard',
+        /* deploy/install.sh 安装的体验覆盖（仅对 xworkd 有意义） */
+        'rm -f /etc/systemd/user/org.gnome.Shell@x11.service.d/force-animations.conf',
+        'rmdir /etc/systemd/user/org.gnome.Shell@x11.service.d 2>/dev/null || true',
+        'rm -f /etc/xdg/wireplumber/wireplumber.conf.d/50-xworkd-vm-audio.conf',
+        'rm -rf /opt/xworkd',
+        'rm -f /tmp/xworkd-server.tar.gz',
+    ].join('; ');
+    const run = `sudo -S -p '' bash -c "${script}"`;
+    const r = await sshExecOnce(opt, run, opt.pass ? String(opt.pass) + '\n' : '');
+    const needSudo = SUDO_ERR_RE.test(r.err || '');
+    return { ok: r.code === 0, needSudo, msg: ((r.out || '') + (r.err || '')).trim().slice(-1000), code: r.code };
+}
+
 /** “关于”：经 SSH 采集远端系统版本 / 桌面环境版本（一次命令，容忍缺失） */
 export async function sshCollectAbout(opt: SshCred): Promise<AboutResult> {
     const cmd = [

@@ -68,6 +68,7 @@ export function registerIpc(): void {
     onInvoke('xwd:ssh:probe', (opt) => setup.sshProbeServer(opt ?? {}));
     onInvoke('xwd:ssh:startServer', (opt) => setup.sshStartServer(opt ?? {}));
     onInvoke('xwd:ssh:installServer', (opt) => setup.sshInstallServer(opt ?? {}));
+    onInvoke('xwd:ssh:uninstallServer', (opt) => setup.sshUninstallServer(opt ?? {}));
     onInvoke('xwd:about:hostinfo', (opt) => setup.sshCollectAbout(opt ?? {}));
 
     /* ---- 系统监控 ---- */

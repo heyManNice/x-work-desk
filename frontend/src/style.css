@@ -2304,6 +2304,15 @@ canvas {
     cursor: not-allowed;
 }
 
+/* 危险动作（卸载）：与相邻的常规按钮同列，仅用颜色区分 */
+.ab-action.act-danger {
+    color: var(--danger);
+}
+
+.ab-action.act-danger:not(:disabled):hover {
+    color: var(--danger-hover);
+}
+
 /* ============================================================
  * Tun 代理弹窗（仅 UI）
  * ============================================================ */

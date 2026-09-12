@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld('xwd', {
         probe: (opt: SshCred): Promise<ProbeResult> => ipcRenderer.invoke('xwd:ssh:probe', opt),
         startServer: (opt: SshCred): Promise<InstallResult> => ipcRenderer.invoke('xwd:ssh:startServer', opt),
         installServer: (opt: SshCred): Promise<InstallResult> => ipcRenderer.invoke('xwd:ssh:installServer', opt),
+        uninstallServer: (opt: SshCred): Promise<InstallResult> => ipcRenderer.invoke('xwd:ssh:uninstallServer', opt),
         onInstallProgress: (cb: (p: InstallProgress) => void): (() => void) => {
             const listener = (_e: IpcRendererEvent, p: InstallProgress): void => cb(p);
             ipcRenderer.on('xwd:ssh:install-progress', listener);
