@@ -9,11 +9,12 @@
 
 import { createSignal, createEffect, Show } from 'solid-js';
 import { Info, X } from 'lucide-solid';
-import { sshHostAboutInfo } from '../platform';
+import { sshHostAboutInfo, logMainEntries, logSaveReport, platform } from '../platform';
 import { activePopup, isPopup, togglePopup } from './popups';
 import { notifyError, notifySuccess } from './notify';
 import { showConfirm } from '../modal';
 import { APP_VERSION, BUNDLED_SERVER_VERSION, cmpVer } from './version';
+import { buildLogReport, clientStartedAt, errText, fmtDateTime, logInfo, logReportName } from './log';
 
 /* ---------------- 对外上下文（由 App 供给） ---------------- */
 
@@ -130,6 +131,55 @@ async function runUninstall(): Promise<void> {
         }
     } catch (e) {
         notifyError('卸载失败', e instanceof Error ? e.message : String(e));
+    } finally {
+        setBusy(false);
+    }
+}
+
+/* ---------------- 客户端启动时间 / 日志报告 ---------------- */
+
+const p2 = (n: number): string => String(n).padStart(2, '0');
+
+/** 面板里的启动时间：今天只显示时分秒，跨天再带上月日 */
+function startLabel(): string {
+    const d = new Date(clientStartedAt());
+    const hm = `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+    const sameDay = d.toDateString() === new Date().toDateString();
+    return sameDay ? hm : `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${hm}`;
+}
+
+function runLabel(): string {
+    const s = Math.floor((Date.now() - clientStartedAt()) / 1000);
+    if (s < 60) return `${s} 秒`;
+    if (s < 3600) return `${Math.floor(s / 60)} 分钟`;
+    return `${Math.floor(s / 3600)} 小时 ${Math.floor((s % 3600) / 60)} 分钟`;
+}
+
+/** 导出日志报告：渲染层内存日志 + 主进程内存日志 → 用户选位置落盘。
+ * 日志不写常规文件（见 core/log.ts），所以这是唯一的留证出口。 */
+async function saveReport(): Promise<void> {
+    if (busy()) return;
+    setBusy(true);
+    logInfo('about', '开始生成日志报告');
+    try {
+        const main = await logMainEntries();
+        const text = buildLogReport({
+            '客户端版本': `v${APP_VERSION}`,
+            '平台': platform() || navigator.platform || '未知',
+            '窗口尺寸': `${window.innerWidth}x${window.innerHeight} @${window.devicePixelRatio}x`,
+            'userAgent': navigator.userAgent,
+        }, main);
+        logInfo('about', `日志报告内容已生成：${text.length} 字符（主进程日志 ${main.length} 条）`);
+        const r = await logSaveReport(logReportName(), text);
+        if (r.ok) {
+            notifySuccess('日志报告已保存', r.path || '');
+        } else if (r.canceled) {
+            logInfo('about', '用户取消了保存日志报告');
+        } else {
+            notifyError('日志报告保存失败', r.msg || '未知错误');
+        }
+    } catch (e) {
+        notifyError('日志报告保存失败', errText(e));
     } finally {
         setBusy(false);
     }
@@ -254,6 +304,22 @@ export function AboutPanelHost() {
                                 </>
                             )}
                         </Show>
+                        {/* 最下方：客户端启动时间 + 日志报告导出（日志只存内存，不写文件） */}
+                        <div class="ab-row">
+                            <span class="ab-name">客户端启动</span>
+                            <span class="ab-ver" title={`启动于 ${fmtDateTime(clientStartedAt())}，已运行 ${runLabel()}`}>
+                                {startLabel()}
+                            </span>
+                            <span class="ab-fill" />
+                            <button
+                                class="ab-action"
+                                disabled={busy()}
+                                onClick={() => void saveReport()}
+                                title="把内存里的运行日志与 JS 报错导出为文本文件（弹窗选择保存位置）"
+                            >
+                                生成日志报告
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

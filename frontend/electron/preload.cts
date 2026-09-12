@@ -16,6 +16,8 @@ import type {
 } from './ssh/sftp.cjs';
 import type { ProbeResult, InstallResult, AboutResult, InstallProgress } from './ssh/setup.cjs';
 import type { TunStatus, TunSpeedResult, TunProxyOpt } from './ssh/tun.cjs';
+import type { MainLogEntry } from './log.cjs';
+import type { SaveLogResult } from './ipc/logreport.cjs';
 
 contextBridge.exposeInMainWorld('xwd', {
     /* 平台：darwin / win32 / linux */
@@ -103,8 +105,9 @@ contextBridge.exposeInMainWorld('xwd', {
         disable: (opt: SshCred): Promise<InstallResult> => ipcRenderer.invoke('xwd:tun:disable', opt),
         speed: (opt: SshCred & { server: string }): Promise<TunSpeedResult> => ipcRenderer.invoke('xwd:tun:speed', opt),
     },
-    /* 本机输入法：只剩联调日志一个通道（输入走会话 WS 的 MSG_IM_*） */
-    im: {
-        log: (msg: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('xwd:im:devlog', msg),
+    /* 日志：主进程内存日志（生成报告时与渲染层日志合并）+ 报告落盘（弹保存框） */
+    log: {
+        entries: (): Promise<MainLogEntry[]> => ipcRenderer.invoke('xwd:log:entries'),
+        save: (name: string, text: string): Promise<SaveLogResult> => ipcRenderer.invoke('xwd:log:save', { name, text }),
     },
 });

@@ -14,11 +14,16 @@
 import { app, BrowserWindow } from 'electron';
 import { registerIpc } from './ipc/index.cjs';
 import { createWindow } from './window.cjs';
+import { installMainLogCapture, mlogInfo } from './log.cjs';
+
+/* 主进程内存日志 + 渲染/子进程异常捕获（不写文件；报告由“关于”面板导出） */
+installMainLogCapture();
 
 /* 远程音频会话登录后即播放，需免除“用户手势才能出声”的自动播放限制 */
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 app.whenReady().then(() => {
+    mlogInfo('app', '应用就绪：注册 IPC 并创建窗口');
     registerIpc();
     createWindow();
     app.on('activate', () => {
@@ -27,5 +32,6 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+    mlogInfo('app', '所有窗口已关闭');
     if (process.platform !== 'darwin') app.quit();
 });

@@ -12,15 +12,35 @@ import * as sysmon from '../ssh/sysmon.cjs';
 import * as sftp from '../ssh/sftp.cjs';
 import * as setup from '../ssh/setup.cjs';
 import * as tun from '../ssh/tun.cjs';
-import { imDevLog } from './imlog.cjs';
+import { mainLogEntries, mlogError, mlogInfo, mlogWarn, merrText } from '../log.cjs';
+import { saveLogReport } from './logreport.cjs';
 
 /* 说明：渲染层数据不可信且没有运行时校验，这里统一以 any 收口，
  * 各 handler 实现内部再逐字段 String()/Number() 收敛。 */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type AnyFn = (arg: any) => any;
 
+/** 失败的 IPC 结果顺手记一条：{ok:false} 是本项目所有操作的统一失败口径，
+ * 集中在这里记就不用去每个 ssh/sftp 模块里散落日志了（用户取消不算失败）。 */
+function logIpcResult(channel: string, r: unknown): void {
+    if (!r || typeof r !== 'object') return;
+    const o = r as { ok?: unknown; canceled?: unknown; msg?: unknown; status?: unknown };
+    if (o.ok !== false || o.canceled === true) return;
+    mlogWarn('ipc', `${channel} 失败：${String(o.msg ?? '')}${o.status ? `（status=${String(o.status)}）` : ''}`);
+}
+
 function onInvoke(channel: string, fn: AnyFn): void {
-    ipcMain.handle(channel, (_e: IpcMainInvokeEvent, arg: any) => fn(arg));
+    ipcMain.handle(channel, async (_e: IpcMainInvokeEvent, arg: any) => {
+        try {
+            const r = await fn(arg);
+            logIpcResult(channel, r);
+            return r;
+        } catch (e) {
+            /* 未预料的异常（handler 自己没 try/catch）：记下来并原样抛给渲染层 */
+            mlogError('ipc', `${channel} 抛出异常：${merrText(e)}`);
+            throw e;
+        }
+    });
 }
 
 function onSend(channel: string, fn: (arg: any) => void): void {
@@ -28,6 +48,8 @@ function onSend(channel: string, fn: (arg: any) => void): void {
 }
 
 export function registerIpc(): void {
+    mlogInfo('ipc', 'IPC 通道注册完成');
+
     /* ---- 连通性 / 剪贴板 ---- */
     onInvoke('xwd:ping', (opt) => pingHost(opt ?? {}));
     onInvoke('xwd:clipWriteText', (text) => clipWriteText(text));
@@ -99,6 +121,7 @@ export function registerIpc(): void {
     onInvoke('xwd:tun:disable', (opt) => tun.tunDisable(opt ?? {}));
     onInvoke('xwd:tun:speed', (opt) => tun.tunSpeedtest(opt ?? {}));
 
-    /* ---- 本机输入法：只剩联调日志（通道已改为会话 WS 的 MSG_IM_*） ---- */
-    onInvoke('xwd:im:devlog', (msg) => imDevLog(String(msg ?? '')));
+    /* ---- 日志：主进程内存日志读取 + 报告落盘（不写常规日志文件） ---- */
+    onInvoke('xwd:log:entries', () => mainLogEntries());
+    onInvoke('xwd:log:save', (p) => saveLogReport(String(p && p.name ? p.name : ''), String(p && p.text ? p.text : '')));
 }

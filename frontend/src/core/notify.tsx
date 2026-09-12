@@ -13,6 +13,7 @@ import { createSignal, Show, For } from 'solid-js';
 import { Bell, CheckCircle2, Info, Loader2, X, XCircle } from 'lucide-solid';
 import { isMac } from '../platform';
 import { activePopup, togglePopup, openPopup } from './popups';
+import { logError, logInfo } from './log';
 
 export type NotifKind = 'info' | 'success' | 'error' | 'progress';
 
@@ -87,17 +88,27 @@ function addToast(t: { kind: Exclude<NotifKind, 'progress'>; title: string; body
 
 /* ---------------- 公共 API ---------------- */
 
+/* 通知是"用户看得见的结果"的统一口径，所以对外 API 处顺手记一条内存日志：
+ * 用户反馈"刚才报错了"时，日志里一定有对应条目（含成功/失败任务）。 */
+
+function brief(title: string, body?: string): string {
+    return `${title}${body ? `：${body.replace(/\n+/g, ' / ')}` : ''}`;
+}
+
 export function notifyInfo(title: string, body?: string): void {
+    logInfo('notify', brief(title, body));
     addNotif({ kind: 'info', title, body });
     addToast({ kind: 'info', title, body });
 }
 
 export function notifySuccess(title: string, body?: string): void {
+    logInfo('notify', brief(title, body));
     addNotif({ kind: 'success', title, body });
     addToast({ kind: 'success', title, body });
 }
 
 export function notifyError(title: string, body?: string): void {
+    logError('notify', brief(title, body));
     addNotif({ kind: 'error', title, body });
     addToast({ kind: 'error', title, body });
 }
@@ -106,6 +117,7 @@ export function notifyError(title: string, body?: string): void {
  * 同步挂一个"进行中"气泡（不自动消失），让后台任务在界面角落可见：
  * patchTask 刷新气泡进度，finishTask 收敛为结果气泡。 */
 export function startTask(title: string, label?: string): number {
+    logInfo('notify', `任务开始：${title}${label ? `（${label}）` : ''}`);
     const rec = addNotif({ kind: 'progress', title, label, pct: 0 });
     setToasts((l) => [...l, { id: rec.id, kind: 'progress', title, label, pct: 0, notifId: rec.id }]);
     return rec.id;
@@ -125,6 +137,10 @@ export function patchTask(id: number, p: { pct?: number | null; label?: string; 
 }
 
 export function finishTask(id: number, ok: boolean, o?: { title?: string; body?: string }): void {
+    /* 任务结果也留一条（成功 info / 失败 error），便于事后对齐"什么任务在什么时候失败了" */
+    const done = o?.title ?? notifs().find((x) => x.id === id)?.title ?? `#${id}`;
+    if (ok) logInfo('notify', `任务完成：${done}${o?.body ? `（${o.body}）` : ''}`);
+    else logError('notify', `任务失败：${done}${o?.body ? `（${o.body}）` : ''}`);
     setNotifs((l) => l.map((x) => {
         if (x.id !== id) return x;
         const title = o?.title ?? x.title;

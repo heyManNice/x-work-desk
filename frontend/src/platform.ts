@@ -55,9 +55,10 @@ interface DesktopBridge {
         disable(opt: SshServerOpt): Promise<TunActionResult>;
         speed(opt: SshServerOpt & { server: string }): Promise<TunSpeedRes>;
     };
-    /* 本机输入法：只剩"联调日志"一个 IPC —— 真正的通道是会话 WS（见 core/localim.ts） */
-    im?: {
-        log(msg: string): Promise<{ ok: boolean }>;
+    /* 日志：主进程内存日志（生成报告时与渲染层合并）+ 报告落盘 */
+    log?: {
+        entries(): Promise<MainLogEntry[]>;
+        save(name: string, text: string): Promise<SaveLogResult>;
     };
 }
 
@@ -403,13 +404,45 @@ export async function tunSpeedtest(opt: SshServerOpt & { server: string }): Prom
     return b.speed(opt);
 }
 
-/* 本机输入法联调日志（只写文件）。
- * 真正的输入通道是会话 WS（见 core/localim.ts）；这里留着只是为了让"本机 IME 到底
- * 有没有接上"这类问题有个可查的落盘线索（/tmp/xworkd-im-ctl.log）。 */
-export function imLog(msg: string): void {
-    const b = bridge()?.im;
-    if (!b || typeof b.log !== 'function') return;
-    void b.log(msg);
+/* 本机输入法的过程日志不再写文件：
+ * 统一进内存环形缓冲（core/log.ts），用户到「关于」面板导出日志报告。
+ * 真正的输入通道是会话 WS（见 core/localim.ts）。 */
+
+/** 主进程内存日志条目（与 core/log.ts 的 LogEntry 同形，便于合并排序） */
+export interface MainLogEntry {
+    seq: number;
+    ts: number;
+    level: 'trace' | 'info' | 'warn' | 'error';
+    scope: string;
+    msg: string;
+}
+
+export interface SaveLogResult {
+    ok: boolean;
+    canceled?: boolean;
+    path?: string;
+    msg?: string;
+}
+
+/** 取主进程内存日志（浏览器环境/桥不可用时返回空数组） */
+export async function logMainEntries(): Promise<MainLogEntry[]> {
+    const b = bridge()?.log;
+    if (!b || typeof b.entries !== 'function') return [];
+    try {
+        const r = await b.entries();
+        return Array.isArray(r) ? r : [];
+    } catch { return []; }
+}
+
+/** 弹系统“另存为”框并写日志报告 */
+export async function logSaveReport(name: string, text: string): Promise<SaveLogResult> {
+    const b = bridge()?.log;
+    if (!b || typeof b.save !== 'function') return { ok: false, msg: '当前环境不支持保存文件' };
+    try {
+        return await b.save(name, text);
+    } catch (e) {
+        return { ok: false, msg: e instanceof Error ? e.message : String(e) };
+    }
 }
 
 

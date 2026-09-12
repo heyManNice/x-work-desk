@@ -26,8 +26,9 @@ import { AudioPlayer } from '../audio';
 import type { ServerTarget } from '../server';
 import { scaleFactor, type HostConfig } from './host';
 import { LocalIM } from './localim';
-import { clipWriteText, clipPoll, imLog } from '../platform';
+import { clipWriteText, clipPoll } from '../platform';
 import { notifyError, notifyInfo } from './notify';
+import { logError, logInfo, logTrace, logWarn } from './log';
 import { showConfirm } from '../modal';
 
 export type SessionState = 'connecting' | 'running' | 'error' | 'closed';
@@ -203,7 +204,8 @@ export class Session {
                 commit: (t) => this.send(msgIMCommit(t)),
                 reset: () => this.send(msgIMReset()),
                 toLocal: (x, y) => this.relay?.remoteToLocal(x, y) ?? { x, y },
-                log: (m) => imLog(m),
+                /* 本机 IME 的过程日志进内存环形缓冲（"关于"面板可导出报告） */
+                log: (m) => logTrace('im', m),
             });
         }
 
@@ -302,12 +304,15 @@ export class Session {
             this.ws = new WebSocket(target.wsUrl);
         } catch {
             this.loginWaiting = false;
+            logError('session', `无法创建连接：地址格式错误（${target.wsUrl}）`);
             this.fail('无法创建连接：地址格式错误');
             return;
         }
         this.ws.binaryType = 'arraybuffer';
+        logInfo('session', `连接会话 ${this.opt.name}：${target.wsUrl}（user=${user}，${w}x${h}）`);
 
         this.ws.onopen = () => {
+            logInfo('session', 'WebSocket 已连接，发送登录请求');
             this.send(msgLogin(user, pass, w, h));
         };
         this.ws.onmessage = (ev) => {
@@ -317,8 +322,10 @@ export class Session {
             if (this.destroyed) return;
             if (this.loginWaiting) {
                 this.loginWaiting = false;
+                logWarn('session', `连接失败（登录前被关闭）：${target.wsUrl}`);
                 this.fail('无法连接到服务器：请检查主机地址与端口');
             } else if (this.status === 'running' || this.status === 'connecting') {
+                logWarn('session', '连接已断开（服务端关闭或网络中断）');
                 this.setStatus('closed', '连接已断开');
                 this.ovText.textContent = '连接已断开';
                 this.ovSpinner.hidden = true;
@@ -385,6 +392,7 @@ export class Session {
 
     destroy(): void {
         this.destroyed = true;
+        logInfo('session', `关闭会话：${this.opt.name}`);
         window.clearInterval(this.hudTimer);
         /* 先告诉服务端关掉本机输入法（服务端会把会话内输入源还回去），再拆本地输入框 */
         if (this.localIM) this.send(msgIMEnable(false));
@@ -502,6 +510,7 @@ export class Session {
             }
             case MSG_CLOSE: {
                 const reason = new TextDecoder().decode(b.subarray(1));
+                logWarn('session', `服务端关闭连接：${reason || '（无原因）'}`);
                 if (this.ws) {
                     this.ws.onclose = null;
                     try { this.ws.close(); } catch { /* 忽略 */ }
@@ -525,9 +534,11 @@ export class Session {
         const r = parseLoginResult(b);
         this.loginWaiting = false;
         if (!r.ok) {
+            logError('session', `登录失败：${r.text}`);
             this.fail(r.text);
             return;
         }
+        logInfo('session', '登录成功，会话进入运行态');
         /* 登录成功：按主机配置下发编码/偏好 */
         const c = this.opt.host;
         this.send(msgSetFps(c.fps));
@@ -674,6 +685,7 @@ export class Session {
                         : '输入法：等待引擎';
         el.textContent = text;
         el.classList.toggle('bad', this.imStatus === IM_STATE_ABSENT || this.imStatus === IM_STATE_DISABLED);
+        logInfo('im', `状态：${text}（state=${this.imStatus}）`);
         /* 不可用要让用户**看得见**：HUD 只在 debug 时显示，所以再发一条通知 */
         if (this.imStatus === IM_STATE_ABSENT) {
             notifyError('本机输入法不可用',

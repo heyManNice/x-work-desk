@@ -1,5 +1,7 @@
 /* core/host.ts —— 已保存连接（主机）的数据模型与 localStorage 持久化 */
 
+import { errText, logWarn } from './log';
+
 export type RatioMode = 'fit' | 'stretch' | 'pixel';
 
 export interface HostConfig {
@@ -62,9 +64,14 @@ export function loadHosts(): HostConfig[] {
         const raw = localStorage.getItem(KEY);
         if (!raw) return [];
         const arr = JSON.parse(raw);
-        if (!Array.isArray(arr)) return [];
+        if (!Array.isArray(arr)) {
+            logWarn('host', `主机列表格式异常（不是数组）：${raw.slice(0, 120)}`);
+            return [];
+        }
         return arr.filter((h) => h && typeof h.id === 'string');
-    } catch {
+    } catch (e) {
+        /* 不静默：读失败等于"主机列表突然空了"，必须留线索 */
+        logWarn('host', `读取主机列表失败：${errText(e)}`);
         return [];
     }
 }
@@ -72,7 +79,10 @@ export function loadHosts(): HostConfig[] {
 export function saveHosts(hosts: HostConfig[]): void {
     try {
         localStorage.setItem(KEY, JSON.stringify(hosts));
-    } catch { /* 忽略：存满等 */ }
+    } catch (e) {
+        /* 配额满/被禁用：用户下次打开发现改动没了，日志里要能对上 */
+        logWarn('host', `保存主机列表失败（${hosts.length} 项）：${errText(e)}`);
+    }
 }
 
 /* 新增/更新：有 id 且命中则替换，否则追加 */

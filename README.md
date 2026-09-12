@@ -226,6 +226,17 @@ sudo pkill -f "Xorg :10"; sudo pkill -u <uid> gnome-keyring-daemon
 曾用别的密码创建，首次需在会话内用 seahorse 改回或删除
 `~/.local/share/keyrings/` 重建。
 
+### 客户端日志在哪里（怎么抓现场）
+
+客户端**不写日志文件**：渲染层与主进程各留一份内存环形缓冲（各最多 2000 条，
+超出丢弃最旧的 1000 条），收录我们自己打的日志（连接/登录/输入法/IPC 失败…）与
+JS 环境报错（`window.onerror`、`unhandledrejection`、`console.error/warn`）。
+需要留证时打开顶栏「关于」面板 → 底部「生成日志报告」，弹保存框选位置，导出一份
+把渲染层与主进程日志按时间合并的文本（含启动时间/平台/Electron 版本/窗口尺寸）。
+
+排查「本机输入法没反应」这类问题时，报告里搜 `[im]` / `[session]`：`place(caret)`
+是按远端插入点摆隐藏输入框、`place(mouse)` 是退回跟随鼠标，一眼能看出走的是哪条路。
+
 ## 目录
 
 ```
