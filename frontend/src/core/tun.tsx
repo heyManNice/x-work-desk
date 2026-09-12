@@ -50,6 +50,54 @@ const [busy, setBusy] = createSignal(false);
 const [stage, setStage] = createSignal('');
 const [speed, setSpeed] = createSignal('');
 
+/* ---------------- 每主机记忆（localStorage） ----------------
+ *
+ *  服务器地址与排除地址都按主机分别记忆：键与 SSH 连接池同口径（用户@主机:SSH 端口），
+ *  这样切标签/重开软件回来还在，换一台主机也不会报错串用别的主机的上游。
+ *  不随「停用 / 卸载」清除——重填一次上游地址太琐碎。 */
+
+const PREF_KEY = 'xwd-tun-v1';
+
+interface TunPref {
+    /** 上游代理地址（socks5:// 或 http:// 前缀可省） */
+    server: string;
+    /** 排除地址多行文本 */
+    exclude: string;
+}
+
+function prefKey(c: FmCtx | null): string {
+    return c ? `${c.user}@${c.host}:${c.port}` : '';
+}
+
+/** 读取本机记忆；没有记录时给出默认值（空地址 + 默认排除列表） */
+function loadPref(c: FmCtx | null): TunPref {
+    const k = prefKey(c);
+    if (k) {
+        try {
+            const all = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') as Record<string, Partial<TunPref> | undefined>;
+            const p = all[k];
+            if (p) {
+                return {
+                    server: typeof p.server === 'string' ? p.server : '',
+                    exclude: typeof p.exclude === 'string' && p.exclude ? p.exclude : DEFAULT_EXCLUDES,
+                };
+            }
+        } catch { /* 忽略：解析失败按未记忆处理 */ }
+    }
+    return { server: '', exclude: DEFAULT_EXCLUDES };
+}
+
+/** 保存当前输入项到本机记忆（输入时调用，值已由 setXxx 同步写入信号） */
+function savePref(c: FmCtx | null): void {
+    const k = prefKey(c);
+    if (!k) return;
+    try {
+        const all = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') as Record<string, TunPref>;
+        all[k] = { server: server(), exclude: exclude() };
+        localStorage.setItem(PREF_KEY, JSON.stringify(all));
+    } catch { /* 忽略：存满等 */ }
+}
+
 /* ---------------- 操作 ---------------- */
 
 /** 主进程 IPC 的凭据（host 已剥成纯地址） */
@@ -229,10 +277,15 @@ export function TunButton(props: { ctx: FmCtx | null }) {
 /* ---------------- 弹窗（App 根部 fixed 渲染） ---------------- */
 
 export function TunPanelHost() {
-    /* 打开面板或切换主机时查询远端状态 */
+    /* 打开面板或切换主机时：先回填本机记忆，再查询远端服务状态 */
     createEffect(() => {
         if (!isPopup('tun')) return;
-        void ctx();
+        const c = ctx();
+        if (c) {
+            const p = loadPref(c);
+            setServer(p.server);
+            setExclude(p.exclude);
+        }
         void refreshStatus();
     });
 
@@ -262,7 +315,7 @@ export function TunPanelHost() {
                                 type="text"
                                 placeholder="socks5://1.2.3.4:1080 或 http://1.2.3.4:8080"
                                 value={server()}
-                                onInput={(e) => setServer(e.currentTarget.value)}
+                                onInput={(e) => { setServer(e.currentTarget.value); savePref(ctx()); }}
                             />
                             <button
                                 class="tun-check"
@@ -279,7 +332,7 @@ export function TunPanelHost() {
                             <span class="tun-label">排除地址</span>
                             <button
                                 class="tun-reset"
-                                onClick={() => setExclude(DEFAULT_EXCLUDES)}
+                                onClick={() => { setExclude(DEFAULT_EXCLUDES); savePref(ctx()); }}
                                 title="恢复为默认的局域网 / 保留地址"
                             >
                                 重置
@@ -291,7 +344,7 @@ export function TunPanelHost() {
                             spellcheck={false}
                             placeholder="每行一个网段，如 10.0.0.0/8"
                             value={exclude()}
-                            onInput={(e) => setExclude(e.currentTarget.value)}
+                            onInput={(e) => { setExclude(e.currentTarget.value); savePref(ctx()); }}
                         />
                     </div>
                     <div class="tun-status" title="远端主机的服务状态">
