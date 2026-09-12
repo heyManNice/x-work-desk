@@ -1,6 +1,7 @@
 # ---- 构建产物 ----
 build/
 frontend/dist/
+frontend/dist-electron/
 node_modules/
 
 # ---- x264 本地构建产物（configure + make 生成，可再生成，不入库）----

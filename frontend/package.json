@@ -5,13 +5,16 @@
     "type": "module",
     "scripts": {
         "prebuild": "node ../tools/check-versions.mjs",
+        "build:main": "tsc -p electron/tsconfig.json",
+        "watch:main": "tsc -p electron/tsconfig.json -w",
         "dev": "vite",
-        "build": "vite build",
+        "build": "npm run build:main && vite build",
         "preview": "vite preview",
-        "desktop": "vite build && electron .",
-        "dist:win": "vite build && electron-builder --win msi"
+        "desktop": "npm run build && electron .",
+        "dist:win": "npm run build && electron-builder --win msi"
     },
     "devDependencies": {
+        "@types/node": "^22.10.0",
         "@types/ssh2": "^1.15.6",
         "electron": "^44.2.0",
         "electron-builder": "^26.15.3",
@@ -19,7 +22,7 @@
         "vite": "^5.4.0",
         "vite-plugin-solid": "^2.11.14"
     },
-    "main": "electron/main.cjs",
+    "main": "dist-electron/main.cjs",
     "description": "XWorkDesk 远程桌面客户端（连接 xworkd 服务器）",
     "author": "heyManNice <heyManNice@users.noreply.github.com>",
     "homepage": "https://github.com/heyManNice/x-work-desk",
@@ -32,7 +35,7 @@
         },
         "files": [
             "dist/**",
-            "electron/**",
+            "dist-electron/**",
             "package.json",
             "server-bundle/**"
         ],

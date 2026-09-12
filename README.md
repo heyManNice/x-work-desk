@@ -199,7 +199,13 @@ sudo pkill -f "Xorg :10"; sudo pkill -u <uid> gnome-keyring-daemon
 ```
 src/                后端 C 源码（meson 管理）
 frontend/           桌面客户端：Vite+SolidJS 前端 + Electron 壳 + core/* 模块
-  electron/         主进程（ssh2 / SFTP / 系统监控 / 窗口控制 IPC）
+  electron/         主进程 TypeScript 源码（.cts，tsc 编译到 dist-electron/）
+    main.cts          入口：应用生命周期；窗口在 window.cts，IPC 契约在 ipc/index.cts
+    window.cts        主窗口单例与向渲染层的推送出口
+    ipc/              通道注册（index）与剪贴板/传输/连通性实现
+    ssh/              连接池(pool)、终端(terminal)、系统监控(sysmon)、SFTP(sftp)、
+                      服务端探测/安装/关于(setup)
+    preload.cts       contextBridge 暴露 window.xwd（类型复用各模块定义）
   src/core/         会话、SSH 终端、SFTP 文件面板、系统监控、通知中心、弹窗协调
   server-bundle/    内置服务端安装包（一键安装用）
   build-resources/  打包图标
@@ -208,6 +214,9 @@ docs/DEPLOYMENT.md  服务端生产部署指南（权限、用户管理、资源
 test/               服务端测试（node WebSocket 客户端、单元测试、冒烟脚本）
 third_party/        内置 x264（系统无 libx264-dev 时使用）
 ```
+
+客户端构建：`cd frontend && npm run build`（先 `tsc -p electron/tsconfig.json` 编译主进程
+到 `dist-electron/`，再 `vite build` 出 `dist/`）；改主进程时可 `npm run watch:main` 增量编译。
 
 生产部署（root + shadow 认证）请先阅读 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)：
 `sudo ./deploy/install.sh` 即可安装为 systemd 服务并开机自启。

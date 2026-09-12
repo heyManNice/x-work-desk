@@ -1,0 +1,27 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "NodeNext",
+        "moduleResolution": "NodeNext",
+        "lib": [
+            "ES2022"
+        ],
+        "types": [
+            "node"
+        ],
+        "strict": true,
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "forceConsistentCasingInFileNames": true,
+        /* 有类型错误就不产出产物，避免半成品 .cjs 被 Electron 加载 */
+        "noEmitOnError": true,
+        "sourceMap": true,
+        "rootDir": ".",
+        "outDir": "../dist-electron"
+    },
+    /* 只编译 .cts：package.json 是 "type":"module"，.cts 才能稳定产出 CJS(.cjs)，
+     * 便于 Electron 主进程/preload 用 require 语义加载。 */
+    "include": [
+        "**/*.cts"
+    ]
+}
