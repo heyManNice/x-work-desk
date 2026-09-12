@@ -86,6 +86,26 @@ if [ -f "$NAUT_EXT_DIR/xworkd_menu.py" ]; then
     fi
 fi
 
+# ---- 输入法中继引擎（可选：构建时缺 libibus-1.0-dev 就没有这个二进制）----
+# 它本身是个 ibus 引擎（"本机输入法"的远端一端），需要：
+#   · 二进制放 /usr/libexec/xworkd/（与组件 XML 的 <exec> 一致）
+#   · 组件 XML 放 /usr/share/ibus/component/（否则 GNOME 输入源里看不到这个名字）
+#   · 运行时依赖 libibus-1.0-5；ibus-daemon 由桌面会话自带（缺了就装 ibus）
+if [[ -x "$REPO_DIR/build/xworkd-im" ]]; then
+    echo "安装输入法中继引擎（xworkd-im）..."
+    mkdir -p /usr/libexec/xworkd
+    install -m 0755 "$REPO_DIR/build/xworkd-im" /usr/libexec/xworkd/xworkd-im
+    install -m 0644 "$REPO_DIR/im/xworkd-im.xml" /usr/share/ibus/component/xworkd-im.xml
+    for pkg in libibus-1.0-5 ibus; do
+        dpkg -s "$pkg" >/dev/null 2>&1 || apt-get install -y "$pkg" >/dev/null 2>&1 || true
+    done
+    # 刷新组件缓存（缺 ibus 命令也不影响：引擎进程自己会 register_component）
+    ibus write-cache >/dev/null 2>&1 || true
+else
+    echo "提示: 未发现 build/xworkd-im，跳过输入法中继引擎（不影响远程桌面本身）"
+    echo "      需要时先 apt install libibus-1.0-dev 再 ninja -C build"
+fi
+
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
 # 接入实体机登录拦截 PAM（幂等；无 GDM 自动跳过）

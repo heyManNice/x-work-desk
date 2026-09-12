@@ -29,6 +29,15 @@
 #define MSG_REQUEST_CONFIG 0x1e  /* 客户端→服务端：请求重发 CONFIG（接管后错过 SPS 时补拉流） */
 #define MSG_KICK_LOCAL 0x1f      /* 客户端→服务端：确认已结束实体机会话（踢出 seat0），继续远程登录 */
 
+/* ---------- 本机输入法中继（IM，见 docs/input-method-local.md §5.2）---------- */
+/* 客户端↔服务端走 WS 帧边界，服务端↔引擎走 src/im_proto.h 的 type+len 帧 */
+#define MSG_IM_ENABLE 0x20  /* 客户端→服务端：开关本机输入法模式 enable(1) */
+#define MSG_IM_PREEDIT 0x21 /* 客户端→服务端：pos(2) + 预编辑串（UTF-8；空串=收起）。pos=串内光标位置（字符数，非字节） */
+#define MSG_IM_COMMIT 0x22  /* 客户端→服务端：提交文本（UTF-8） */
+#define MSG_IM_RESET 0x23   /* 客户端→服务端：丢弃当前组合 */
+#define MSG_IM_CARET 0x24   /* 服务端→客户端：远端插入点矩形 x(2) y(2) w(2) h(2)，各为**有符号** i16，小端 */
+#define MSG_IM_STATE 0x25   /* 服务端→客户端：引擎状态 state(1)：0=就绪 1=被切走 2=引擎不在（见 im_proto.h 的 IM_STATE_*） */
+
 #define VIDEO_FLAG_KEY 0x01    /* MSG_VIDEO flags: 关键帧 */
 #define MOUSE_FLAG_MOTION 0x01 /* MSG_MOUSE flags */
 #define MOUSE_FLAG_BUTTON 0x02

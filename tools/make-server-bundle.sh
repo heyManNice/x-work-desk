@@ -24,6 +24,13 @@ mkdir -p "$STAGE/xworkd-server"
 cp "$BIN" "$STAGE/xworkd-server/xworkd"
 cp "$REPO/deploy/xworkd-gdm-guard" "$STAGE/xworkd-server/xworkd-gdm-guard"
 cp "$REPO/deploy/install-pam.sh" "$STAGE/xworkd-server/install-pam.sh"
+# 输入法中继引擎（可选目标：构建机没装 libibus-1.0-dev 时产物里就没有）
+HAS_IM=0
+if [[ -x "$REPO/build/xworkd-im" && -f "$REPO/im/xworkd-im.xml" ]]; then
+  cp "$REPO/build/xworkd-im" "$STAGE/xworkd-server/xworkd-im"
+  cp "$REPO/im/xworkd-im.xml" "$STAGE/xworkd-server/xworkd-im.xml"
+  HAS_IM=1
+fi
 
 cat > "$STAGE/xworkd-server/install.sh" <<EOF
 #!/usr/bin/env bash
@@ -37,6 +44,17 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y >/dev/null 2>&1 || true
 apt-get install -y xserver-xorg-video-dummy x11-xserver-utils xauth xclip dbus-x11 libopus0 libx11-6 libxext6 libxtst6 libxfixes3 libxrandr2 >/dev/null 2>&1 || true
 install -m 0755 xworkd "\$PREFIX/xworkd"
+# 输入法中继引擎（随包分发则装上；组件 XML 必须进 /usr/share/ibus/component）
+if [[ -f xworkd-im && -f xworkd-im.xml ]]; then
+    echo "[xworkd] 安装输入法中继引擎（xworkd-im）..."
+    mkdir -p /usr/libexec/xworkd
+    install -m 0755 xworkd-im /usr/libexec/xworkd/xworkd-im
+    install -m 0644 xworkd-im.xml /usr/share/ibus/component/xworkd-im.xml
+    for pkg in libibus-1.0-5 ibus; do
+        dpkg -s "\$pkg" >/dev/null 2>&1 || apt-get install -y "\$pkg" >/dev/null 2>&1 || true
+    done
+    ibus write-cache >/dev/null 2>&1 || true
+fi
 cat > /etc/systemd/system/$SERVICE_NAME.service <<UNIT
 [Unit]
 Description=XWorkDesk remote desktop server

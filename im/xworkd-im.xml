@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  xworkd-im —— 输入法中继引擎的 IBus 组件注册文件。
+
+  - <name>  必须与引擎进程 ibus_bus_request_name() 申请的 D-Bus 服务名一致
+  - <exec>  引擎可执行文件路径（deploy/install.sh 会装到该处）
+  - <engines>/<engine>/<name>  就是 `ibus engine xxx` 与 GNOME 输入源里用的引擎名
+  安装位置：/usr/share/ibus/component/xworkd-im.xml
+
+  注意：<homepage> 必须存在（可为空元素）。缺它时 ibus 序列化组件会报
+  "g_variant_new_string: assertion 'string != NULL' failed" 并可能写坏用户组件缓存，
+  表现为 `ibus list-engine` 返回 0 个引擎。系统组件（如 chewing.xml）同样是空元素。
+-->
+<component>
+    <name>org.freedesktop.IBus.XWorkdIM</name>
+    <description>XWorkDesk 输入法中继</description>
+    <exec>/usr/libexec/xworkd/xworkd-im</exec>
+    <version>0.1.0</version>
+    <author>XWorkDesk</author>
+    <license>GPL-3.0-or-later</license>
+    <homepage></homepage>
+    <textdomain>xworkd-im</textdomain>
+    <engines>
+        <engine>
+            <name>xworkd-im</name>
+            <language>zh_CN</language>
+            <license>GPL-3.0-or-later</license>
+            <author>XWorkDesk</author>
+            <layout>us</layout>
+            <longname>XWorkDesk 输入法中继</longname>
+            <description>由本机输入法驱动：预编辑与提交由本机产生，远端应用负责显示</description>
+            <rank>1</rank>
+        </engine>
+    </engines>
+</component>

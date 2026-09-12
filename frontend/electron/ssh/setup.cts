@@ -151,6 +151,11 @@ export async function sshUninstallServer(opt: SshCred): Promise<InstallResult> {
         /* PAM 接入（install-pam.sh 写入的标记行与 pam_exec 行）：按内容删除，幂等 */
         "if [ -f /etc/pam.d/gdm-password ]; then sed -i '/# --- xworkd:/d; /xworkd-gdm-guard/d' /etc/pam.d/gdm-password; fi",
         'rm -f /usr/libexec/xworkd-gdm-guard',
+        /* 输入法中继引擎（引擎二进制 + ibus 组件注册）*/
+        'rm -f /usr/libexec/xworkd/xworkd-im',
+        'rmdir /usr/libexec/xworkd 2>/dev/null || true',
+        'rm -f /usr/share/ibus/component/xworkd-im.xml',
+        'ibus write-cache >/dev/null 2>&1 || true',
         /* deploy/install.sh 安装的体验覆盖（仅对 xworkd 有意义） */
         'rm -f /etc/systemd/user/org.gnome.Shell@x11.service.d/force-animations.conf',
         'rmdir /etc/systemd/user/org.gnome.Shell@x11.service.d 2>/dev/null || true',

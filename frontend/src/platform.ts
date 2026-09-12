@@ -55,6 +55,10 @@ interface DesktopBridge {
         disable(opt: SshServerOpt): Promise<TunActionResult>;
         speed(opt: SshServerOpt & { server: string }): Promise<TunSpeedRes>;
     };
+    /* 本机输入法：只剩"联调日志"一个 IPC —— 真正的通道是会话 WS（见 core/localim.ts） */
+    im?: {
+        log(msg: string): Promise<{ ok: boolean }>;
+    };
 }
 
 function bridge(): DesktopBridge | null {
@@ -398,3 +402,15 @@ export async function tunSpeedtest(opt: SshServerOpt & { server: string }): Prom
     if (!b) return { ok: false, msg: '桌面壳环境不支持' };
     return b.speed(opt);
 }
+
+/* 本机输入法联调日志（只写文件）。
+ * 真正的输入通道是会话 WS（见 core/localim.ts）；这里留着只是为了让"本机 IME 到底
+ * 有没有接上"这类问题有个可查的落盘线索（/tmp/xworkd-im-ctl.log）。 */
+export function imLog(msg: string): void {
+    const b = bridge()?.im;
+    if (!b || typeof b.log !== 'function') return;
+    void b.log(msg);
+}
+
+
+

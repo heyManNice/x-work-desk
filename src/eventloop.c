@@ -98,7 +98,7 @@ int net_run(void)
         size_t need = 2;  /* listen + wake */
         for (conn *c = net_conns; c; c = c->next)
             if (!atomic_load(&c->closing))
-                need++;
+                need += 3; /* 连接自身 + 该会话 IM 通道最多 2 个 fd */
         if (need > fds_cap)
         {
             fds_cap = need + 16;
@@ -133,6 +133,8 @@ int net_run(void)
             fds[nfds].revents = 0;
             c->pindex = nfds;
             nfds++;
+            /* 该会话的 IM 通道（监听 + 引擎连接）跟在连接自己后面 */
+            nfds = session_im_poll(c, fds, nfds);
         }
 
         /* 250ms 周期：及时检测连接断开（缩小刷新重连的竞态窗口），
@@ -253,6 +255,15 @@ int net_run(void)
                 }
             }
             c = nx;
+        }
+
+        /* IM 通道：与连接分开一轮处理，避开上面"有 HUP 就关连接"的逻辑
+         * （引擎断开只影响通道本身，不该关掉远程桌面连接） */
+        for (conn *c = net_conns; c; c = c->next)
+        {
+            if (atomic_load(&c->closing))
+                continue;
+            session_im_events(c, fds);
         }
     }
     free(fds);

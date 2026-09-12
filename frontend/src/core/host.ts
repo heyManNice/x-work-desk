@@ -22,6 +22,9 @@ export interface HostConfig {
     anim: boolean;
     staticSkip: boolean;
     debug: boolean;
+    /** 使用本机输入法：本机 IME 组词，预编辑/提交经会话送到远端引擎上屏
+     * （远端需装 xworkd-im 引擎；见 docs/input-method-local.md） */
+    localIM?: boolean;
 }
 
 const KEY = 'xwd-hosts-v1';
@@ -46,6 +49,7 @@ export function defaultHost(): HostConfig {
         anim: true,
         staticSkip: true,
         debug: false,
+        localIM: false,
     };
 }
 

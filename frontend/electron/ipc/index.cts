@@ -12,6 +12,7 @@ import * as sysmon from '../ssh/sysmon.cjs';
 import * as sftp from '../ssh/sftp.cjs';
 import * as setup from '../ssh/setup.cjs';
 import * as tun from '../ssh/tun.cjs';
+import { imDevLog } from './imlog.cjs';
 
 /* 说明：渲染层数据不可信且没有运行时校验，这里统一以 any 收口，
  * 各 handler 实现内部再逐字段 String()/Number() 收敛。 */
@@ -97,4 +98,7 @@ export function registerIpc(): void {
     onInvoke('xwd:tun:enable', (opt) => tun.tunEnable(opt ?? {}));
     onInvoke('xwd:tun:disable', (opt) => tun.tunDisable(opt ?? {}));
     onInvoke('xwd:tun:speed', (opt) => tun.tunSpeedtest(opt ?? {}));
+
+    /* ---- 本机输入法：只剩联调日志（通道已改为会话 WS 的 MSG_IM_*） ---- */
+    onInvoke('xwd:im:devlog', (msg) => imDevLog(String(msg ?? '')));
 }

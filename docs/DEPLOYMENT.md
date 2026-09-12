@@ -26,6 +26,9 @@
 cd third_party/x264 && ./configure --enable-static --disable-cli --disable-shared && make -j$(nproc)
 
 # 后端
+# 可选：apt install libibus-1.0-dev —— 只有装了这个才会额外构建「本机输入法」的
+#       远端 ibus 中继引擎（im/xworkd-im.c）。它是可选目标：缺开发包时 meson 自动跳过，
+#       不影响远程桌面本身。引擎会随 deploy/install.sh 与服务端包一起分发。
 cd /path/to/x-work-desk && meson setup build && ninja -C build
 
 # 桌面客户端（主进程 TypeScript + 渲染层 Vite）
@@ -34,7 +37,6 @@ cd frontend && npm install && npm run build
 ```
 
 ## 3. 用户管理
-
 每个可登录用户必须是一个**本地系统账号**（暂不支持 LDAP/AD）：
 
 ```bash
@@ -121,6 +123,20 @@ sudo systemctl daemon-reload
 sudo setsid nohup ./build/xworkd --auth shadow --port 5268 \
   </dev/null >>/tmp/xworkd.log 2>&1 &
 ```
+
+### 本机输入法引擎（可选）
+
+构建时若装了 `libibus-1.0-dev`，`deploy/install.sh` 与服务端包会额外安装：
+
+| 文件 | 位置 | 说明 |
+|---|---|---|
+| `xworkd-im` | `/usr/libexec/xworkd/xworkd-im` | ibus 中继引擎（组件 XML 里的 `<exec>` 指到这里） |
+| `xworkd-im.xml` | `/usr/share/ibus/component/xworkd-im.xml` | ibus 组件注册；缺它 GNOME 输入源里看不到该引擎 |
+
+卸载（客户端「关于 → 卸载服务端」也会做这几步）：删这两个文件 + `ibus write-cache`。
+运行时由服务端在**会话内**把它挂成当前 GNOME 输入源（客户端勾选「本机输入法」时），
+关闭/断开时恢复原来的输入源。注意：**同一个用户**的远程会话与本机桌面共用一份 dconf，
+所以勾选期间该用户桌面的输入源也会被切换（关闭即恢复）。
 
 ## 5. 网络与安全
 

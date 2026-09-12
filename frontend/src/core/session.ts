@@ -10,11 +10,14 @@ import {
     MSG_VIDEO, MSG_CONFIG, MSG_LOGIN_RESULT, MSG_CLOSE, MSG_SESSION_EXISTS,
     MSG_LOCAL_IN_USE,
     MSG_CURSOR, MSG_AUDIO, MSG_CLIPBOARD,
-    parseConfig, parseLoginResult, parseCursor,
+    MSG_IM_CARET, MSG_IM_STATE,
+    IM_STATE_READY, IM_STATE_DISABLED, IM_STATE_ABSENT,
+    parseConfig, parseLoginResult, parseCursor, parseIMCaret, parseIMState,
     msgLogin, msgResize, msgKeyframe, msgTakeover, msgTakeoverCancel,
     msgKickLocal,
     msgLogout, msgRequestConfig, msgClipboard, msgSetFps, msgSetCodec,
     msgSetAnimations, msgSetAudio, msgSetClipboard,
+    msgIMEnable, msgIMPreedit, msgIMCommit, msgIMReset,
 } from '../protocol';
 import type { CursorImage } from '../protocol';
 import { VideoRenderer } from '../decoder';
@@ -22,7 +25,9 @@ import { InputRelay } from '../input';
 import { AudioPlayer } from '../audio';
 import type { ServerTarget } from '../server';
 import { scaleFactor, type HostConfig } from './host';
-import { clipWriteText, clipPoll } from '../platform';
+import { LocalIM } from './localim';
+import { clipWriteText, clipPoll, imLog } from '../platform';
+import { notifyError, notifyInfo } from './notify';
 import { showConfirm } from '../modal';
 
 export type SessionState = 'connecting' | 'running' | 'error' | 'closed';
@@ -49,6 +54,9 @@ export class Session {
     private ws: WebSocket | null = null;
     private renderer: VideoRenderer | null = null;
     private relay: InputRelay | null = null;
+    private localIM: LocalIM | null = null;
+    /** 远端引擎状态（见 protocol.ts 的 IM_STATE_*）；-1=还没收到过 */
+    private imStatus = -1;
     private audio = new AudioPlayer();
     private active = false;              /* 该会话是否被用户激活（输入/音频/剪贴板） */
     private loginWaiting = false;
@@ -74,6 +82,7 @@ export class Session {
     private hudLat!: HTMLElement;
     private hudBw!: HTMLElement;
     private hudDec!: HTMLElement;
+    private hudIM: HTMLElement | null = null;
 
     private hudTimer = 0;
     private clipTimer = 0;
@@ -131,6 +140,9 @@ export class Session {
         this.hudLat = mk('sh-lat');
         this.hudBw = mk('sh-bw');
         this.hudDec = mk('sh-dec');
+        /* 本机输入法状态指示（仅勾选了本机输入法的主机才有；随 hud 一起显隐） */
+        this.hudIM = this.opt.host.localIM ? mk('sh-im') : null;
+        if (this.hudIM) this.hudIM.textContent = '输入法：等待引擎';
 
         /* overlay */
         const overlay = document.createElement('div');
@@ -175,11 +187,25 @@ export class Session {
         this.renderer.onError = (m) => { this.ovText.textContent = m; };
         this.renderer.onDecodeTime = (ms) => { this.decSum += ms; this.decCount++; };
 
-        this.relay = new InputRelay(canvas, (d) => this.send(d));
-        this.relay.attach();
+        this.relay = new InputRelay(canvas, (d) => this.send(d)); this.relay.attach();
         this.relay.setActive(false);
         this.relay.setRatio(this.opt.host.ratio);
         this.relay.setSize(this.cfgW, this.cfgH);
+
+        /* 本机输入法：主机配置里勾选后，放一个不可见输入框承接本机 IME 的组词。
+         * 组词串经会话 WS（MSG_IM_PREEDIT/COMMIT）送给远端引擎上屏；
+         * 远端应用上报的插入点（MSG_IM_CARET）用来对齐本机候选窗位置。 */
+        if (this.opt.host.localIM) {
+            this.localIM = new LocalIM({
+                stage,
+                canvas,
+                preedit: (t, p) => this.send(msgIMPreedit(t, p)),
+                commit: (t) => this.send(msgIMCommit(t)),
+                reset: () => this.send(msgIMReset()),
+                toLocal: (x, y) => this.relay?.remoteToLocal(x, y) ?? { x, y },
+                log: (m) => imLog(m),
+            });
+        }
 
         /* 容器尺寸变化（窗口缩放/标签激活等）时重排画布 CSS 显示尺寸 */
         this.ro = new ResizeObserver(() => this.layoutCanvas());
@@ -360,6 +386,10 @@ export class Session {
     destroy(): void {
         this.destroyed = true;
         window.clearInterval(this.hudTimer);
+        /* 先告诉服务端关掉本机输入法（服务端会把会话内输入源还回去），再拆本地输入框 */
+        if (this.localIM) this.send(msgIMEnable(false));
+        this.localIM?.dispose();
+        this.localIM = null;
         this.ro?.disconnect();
         this.ro = null;
         this.releaseClipTimer();
@@ -450,6 +480,14 @@ export class Session {
             case MSG_LOCAL_IN_USE:
                 void this.handleLocalInUse();
                 break;
+            case MSG_IM_CARET:
+                /* 远端插入点：交给本机 IME 对齐候选窗（w=h=0 会被当成"拿不到"） */
+                this.localIM?.setCaret(parseIMCaret(b));
+                break;
+            case MSG_IM_STATE:
+                this.imStatus = parseIMState(b);
+                this.imIndicator();
+                break;
             case MSG_VIDEO: {
                 const flags = b[1];
                 if ((flags & 0x01) !== 0) {
@@ -498,9 +536,21 @@ export class Session {
         this.send(msgSetAudio(!!c.audio));
         this.send(msgSetClipboard(!!c.clipboard));
 
-        this.setStatus('running');
-        this.overlay.classList.remove('show');
+        this.setStatus('running'); this.overlay.classList.remove('show');
         if (this.audioEnabled) this.audio.start();
+
+        /* 本机输入法：告诉服务端可以切到中继引擎了（服务端会在会话内改输入源）。
+         * 引擎真正就绪会以 MSG_IM_STATE=READY 回来；服务端不猜超时，所以客户端自己
+         * 加一道超时提示（否则“看着像能用但打字没反应”最难排查）。 */
+        if (this.localIM) {
+            this.send(msgIMEnable(true));
+            window.setTimeout(() => {
+                if (!this.destroyed && this.imStatus !== IM_STATE_READY) {
+                    this.imStatus = IM_STATE_ABSENT;
+                    this.imIndicator();
+                }
+            }, 4000);
+        }
 
         /* 重连/接管后恢复交互：disconnect 与 MSG_CLOSE 会关闭输入 relay 与
          * 剪贴板轮询，这里按标签激活状态恢复（否则重连后鼠标键盘无响应） */
@@ -613,6 +663,26 @@ export class Session {
 
     /* ---------------- 光标 / hud ---------------- */
 
+    /** 本机输入法状态指示（写进 hud；只有勾选了本机输入法的主机才有这个元素） */
+    private imIndicator(): void {
+        const el = this.hudIM;
+        if (!el) return;
+        const text =
+            this.imStatus === IM_STATE_READY ? '输入法：就绪'
+                : this.imStatus === IM_STATE_DISABLED ? '输入法：被切走'
+                    : this.imStatus === IM_STATE_ABSENT ? '输入法：远端引擎不可用'
+                        : '输入法：等待引擎';
+        el.textContent = text;
+        el.classList.toggle('bad', this.imStatus === IM_STATE_ABSENT || this.imStatus === IM_STATE_DISABLED);
+        /* 不可用要让用户**看得见**：HUD 只在 debug 时显示，所以再发一条通知 */
+        if (this.imStatus === IM_STATE_ABSENT) {
+            notifyError('本机输入法不可用',
+                '远端会话里没有可用的输入法引擎（可能未安装或未被激活）。' +
+                '远端打字请先用远端自己的输入法。');
+        } else if (this.imStatus === IM_STATE_DISABLED) {
+            notifyInfo('本机输入法被切走', '远端会话切到了别的输入源，本机输入法暂时不生效。');
+        }
+    }
     private applyCursor(c: CursorImage): void {
         try {
             const cv = document.createElement('canvas');
@@ -628,8 +698,7 @@ export class Session {
         } catch { /* 忽略 */ }
     }
 
-    /* 每秒刷新 hud 指标（仅 debug 时启用） */
-    private startHudTimer(): void {
+    /* 每秒刷新 hud 指标（仅 debug 时启用） */    private startHudTimer(): void {
         this.hudTimer = window.setInterval(() => {
             this.hudFps.textContent = `${this.frameCount} FPS`;
             this.frameCount = 0;

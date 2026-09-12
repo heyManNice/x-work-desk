@@ -76,9 +76,29 @@ executable('xworkd',
     'src/localsess.c',
     'src/encoder.c',
     'src/input.c',
+    'src/im.c',
   ],
   dependencies: deps,
   install: true)
+
+# ---- 输入法中继引擎 xworkd-im（可选目标）----------------------------------
+# 只在装了 libibus-1.0-dev 时构建：它不是服务端的运行必需件（用户不用本机输入法
+# 就完全用不到），缺开发包时不应挡住主程序构建。详见 docs/input-method-local.md。
+# libibus 只在**引擎进程**里用；xworkd 本体不链接它，两者靠 AF_UNIX 通道通信。
+ibus_dep = dependency('ibus-1.0', required: false)
+if ibus_dep.found()
+  executable('xworkd-im',
+    sources: ['im/xworkd-im.c'],
+    include_directories: include_directories('src'),
+    dependencies: [ibus_dep, dependency('glib-2.0')],
+    install: true,
+    install_dir: get_option('libexecdir') / 'xworkd')
+  install_data('im/xworkd-im.xml',
+    install_dir: get_option('datadir') / 'ibus' / 'component')
+  message('xworkd-im: 已启用（ibus ' + ibus_dep.version() + '）')
+else
+  warning('xworkd-im: 跳过（缺 libibus-1.0-dev，apt install libibus-1.0-dev 后可启用）')
+endif
 
 # ---- 单元测试（纯逻辑模块，不依赖 X，可无头运行） ----
 test_units = [
@@ -86,6 +106,7 @@ test_units = [
   ['test-msgq', ['test/test_msgq.c', 'src/msgqueue.c']],
   ['test-ws', ['test/test_ws.c', 'src/ws_parser.c']],
   ['test-http-util', ['test/test_http_util.c', 'src/util.c']],
+  ['test-im', ['test/test_im.c', 'src/im.c', 'src/util.c']],
 ]
 foreach t : test_units
   test(t[0], executable(t[0], t[1],

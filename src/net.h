@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdatomic.h>
+#include <poll.h>
 #include <sys/types.h>
 #include <pthread.h>
 #include "msgqueue.h"
@@ -80,3 +81,10 @@ int ws_flush(conn *c);      /* 冲刷出站队列与半发送帧（POLLOUT/唤�
 void session_on_open(conn *c);
 void session_on_message(conn *c, const uint8_t *data, size_t len);
 void session_on_close(conn *c);
+
+/* 输入法中继通道的事件循环桥接（session.c 实现：把 conn 映射到 runtime 的 im_ctx）。
+ * eventloop.c 在装配 poll 数组与处理事件时调用；无会话/无通道时是空操作。 */
+int session_im_poll(conn *c, struct pollfd *fds, int nfds);
+void session_im_events(conn *c, const struct pollfd *fds);
+/* 引擎事件回调（session_msg.c 实现）：转成 MSG_IM_* 推给客户端 */
+void session_im_on_engine(void *ud, uint8_t type, const uint8_t *payload, size_t len);

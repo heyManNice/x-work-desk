@@ -9,6 +9,7 @@
 #include "localsess.h"
 #include "audio.h"
 #include "clip.h"
+#include "im_proto.h" /* 引擎帧类型（IM_MSG_*）与文本校验工具 */
 #include "protocol.h"
 #include "config.h"
 #include "auth.h"
@@ -23,6 +24,84 @@
 #include <sys/stat.h>
 
 static int runtime_restart(runtime *rt, int w, int h);
+
+/* ---------------- 本机输入法中继（IM）---------------- */
+
+/* 把引擎状态告诉客户端（同一状态只发一次，避免刷屏）。
+ * 未连客户端时不更新 last_state，否则重连后的 ENABLE 会被误去重。 */
+static void im_push_state(runtime *rt, int state)
+{
+    conn *c;
+    uint8_t buf[2];
+
+    if (rt->im.last_state == state)
+        return;
+    c = atomic_load(&rt->conn);
+    if (c == NULL || atomic_load(&c->closing))
+        return;
+    rt->im.last_state = state;
+    buf[0] = MSG_IM_STATE;
+    buf[1] = (uint8_t)state;
+    net_push(c, buf, sizeof buf, 0);
+    log_info("IM：通知客户端引擎状态 = %d", state);
+}
+
+/* 引擎上报 → 客户端（在事件循环线程里回调，见 im.h） */
+void session_im_on_engine(void *ud, uint8_t type, const uint8_t *payload, size_t len)
+{
+    runtime *rt = ud;
+    conn *c = atomic_load(&rt->conn);
+
+    switch (type)
+    {
+    case IM_MSG_CARET:
+        /* 插入点矩形：客户端用它把本机候选窗对准远端输入框 */
+        if (c == NULL || len < 8)
+            break;
+        {
+            uint8_t buf[1 + 8];
+            buf[0] = MSG_IM_CARET;
+            memcpy(buf + 1, payload, 8);     /* 已是有符号 i16 小端，原样透传 */
+            net_push(c, buf, sizeof buf, 1); /* 可丢：丢一次只是少一次位置校正 */
+        }
+        break;
+    case IM_MSG_STATE:
+        /* 引擎自己被切走/回来：转给客户端提示（不改变 xworkd 侧的开关意愿） */
+        if (len >= 1)
+            im_push_state(rt, payload[0]);
+        break;
+    case IM_MSG_FOCUS:
+        break; /* 暂不需要转发给前端（保留类型便于以后做状态指示） */
+    case IM_EV_ENGINE_UP:
+        if (rt->im.enabled_by_client)
+            im_push_state(rt, IM_STATE_READY);
+        break;
+    case IM_EV_ENGINE_DOWN:
+        if (rt->im.enabled_by_client)
+            im_push_state(rt, IM_STATE_ABSENT);
+        break;
+    default:
+        log_info("IM：未知引擎帧 0x%02x（%zu 字节），忽略", type, len);
+        break;
+    }
+}
+
+/* 客户端 → 引擎：把 WS 消息里的文本拷成 NUL 结尾串（引擎接口要求），并校验 UTF-8。
+ * 返回长度（可为 0=空串）；文本不是合法 UTF-8 时返回 -1——调用方必须**整条丢弃**，
+ * 不能退化成"发空串"（那会让引擎把远端正在显示的组合收掉）。 */
+static int im_take_text(const uint8_t *data, size_t len, char *out, size_t cap)
+{
+    size_t n = len;
+
+    if (n > cap - 1)
+        n = im_utf8_clip((const char *)data, cap - 1);
+    if (n > 0 && !im_utf8_valid((const char *)data, n))
+        return -1;
+    if (n > 0)
+        memcpy(out, data, n);
+    out[n] = '\0';
+    return (int)n;
+}
 
 /* Xvfb 模式的异步分辨率重建任务（避免阻塞事件循环） */
 typedef struct
@@ -635,6 +714,68 @@ void session_on_message(conn *c, const uint8_t *data, size_t len)
          * （早期 Xvfb 环境曾因 owner 被破坏/事件死循环而禁用）。 */
         if (len >= 2)
             atomic_store(&rt->clip_enabled, data[1] ? 1 : 0);
+        break;
+    case MSG_IM_ENABLE:
+        if (!rt_state_is(rt, S_RUNNING))
+            break;
+        if (len >= 2 && data[1])
+        {
+            rt->im.enabled_by_client = 1;
+            rt->im.last_state = -1; /* 允许重新通知（否则会与前一个状态去重掉） */
+            /* 关键：在会话内把引擎挂成当前输入源——不切源的话引擎永远不会被 ibus 拉起 */
+            if (im_session_switch(rt, 1) != 0)
+            {
+                im_push_state(rt, IM_STATE_ABSENT);
+                break;
+            }
+            /* 引擎往往要一会儿才被 ibus 拉起：它连上来时会触发 IM_EV_ENGINE_UP → READY。
+             * 服务端不猜超时，客户端自己加超时提示。 */
+            if (im_engine_ready(&rt->im))
+                im_push_state(rt, IM_STATE_READY);
+        }
+        else
+        {
+            rt->im.enabled_by_client = 0;
+            rt->im.last_state = -1;
+            im_send_reset(&rt->im);   /* 先把远端可能残留的组合收掉 */
+            im_session_switch(rt, 0); /* 再把输入源还给用户原来的 */
+        }
+        break;
+    case MSG_IM_PREEDIT:
+        if (!rt_state_is(rt, S_RUNNING) || len < 3)
+            break;
+        {
+            char txt[IM_PAYLOAD_MAX + 1];
+            unsigned pos = rd_u16(data + 1);
+            int n = im_take_text(data + 3, len - 3, txt, sizeof txt);
+            if (n < 0)
+            {
+                log_info("IM：PREEDIT 文本非法，整条丢弃");
+                break;
+            }
+            if (im_send_preedit(&rt->im, txt, pos) != 0)
+                im_push_state(rt, IM_STATE_ABSENT);
+        }
+        break;
+    case MSG_IM_COMMIT:
+        if (!rt_state_is(rt, S_RUNNING) || len < 2)
+            break;
+        {
+            char txt[IM_PAYLOAD_MAX + 1];
+            int n = im_take_text(data + 1, len - 1, txt, sizeof txt);
+            if (n < 0)
+            {
+                log_info("IM：COMMIT 文本非法，整条丢弃");
+                break;
+            }
+            if (n > 0 && im_send_commit(&rt->im, txt) != 0)
+                im_push_state(rt, IM_STATE_ABSENT);
+        }
+        break;
+    case MSG_IM_RESET:
+        if (!rt_state_is(rt, S_RUNNING))
+            break;
+        im_send_reset(&rt->im);
         break;
     case MSG_CLIPBOARD:
         if (!rt_state_is(rt, S_RUNNING))

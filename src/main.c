@@ -22,8 +22,16 @@ volatile int g_server_shutdown = 0;
 static void init_local_api_token(void)
 {
     util_gen_token(g_local_token, sizeof g_local_token);
-    if (mkdir("/run/xworkd", 0700) != 0 && errno != EEXIST)
-        return; /* /run 异常时忽略（接口校验会因 token 文件缺失而拒绝调用） */
+    /* 目录权限必须是 0711（可穿越、不可列目录）：
+     *   · token 文件与 IM socket 各自 0600，拿到文件名也没用；
+     *   · 但**会话用户**要能 connect() 到自己的 IM socket —— 目录不可穿越时
+     *     引擎会直接 EACCES/ENOENT（踩过：输入法引擎在跑却永远连不上）。 */
+    if (mkdir("/run/xworkd", 0711) != 0 && errno != EEXIST)
+        return; /* /run 异常时忽略（接口校验会因 token 文件缺失而拒绍调用） */
+    /* 已存在时也修一次权限（旧版本建的是 0700，升级后不重启也自愈） */
+    if (chmod("/run/xworkd", 0711) != 0)
+    { /* 忽略 */
+    }
     FILE *f = fopen("/run/xworkd/local.token", "w");
     if (!f)
     {

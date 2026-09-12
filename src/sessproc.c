@@ -504,6 +504,10 @@ static void spawn_session_app(runtime *rt, const char *user)
         setenv("XDG_SESSION_CLASS", "user", 1);
         /* 标记本会话由 xworkd 远程拉起（会话内脚本/工具可据此区分远程与实体机登录） */
         setenv("XWORKD_REMOTE", "1", 1);
+        /* 输入法中继通道的 socket 路径：会话内的 ibus 引擎据此连回 xworkd。
+         * 引擎由 ibus 按组件声明激活，本进程不 fork 它（详见 src/im.h）。 */
+        if (rt->im.path[0] != '\0')
+            setenv("XWORKD_IM_SOCK", rt->im.path, 1);
         /* keyring 解锁策略：shadow 模式密码已验证，可解锁或创建 login keyring；
          * none 模式密码未验证，仅当已存在 login keyring 时才尝试（避免用任意
          * 密码误创建密钥环），且不传密码时保持原行为 */
@@ -777,6 +781,9 @@ int session_bring_up(runtime *rt, const char *user, int w, int h)
     if (init_encoder(rt) != 0)
         return -1;
     ensure_user_systemd(user);
+    /* 输入法通道：socket 必须在会话进程起来前就绪（引擎启动时要用它） */
+    if (im_open(&rt->im, user, rt->proc.display_str) == 0)
+        im_set_handler(&rt->im, session_im_on_engine, rt);
     spawn_session_app(rt, user);
     apply_session_prefs(user);
 
@@ -787,5 +794,374 @@ int session_bring_up(runtime *rt, const char *user, int w, int h)
         log_err("创建抓帧线程失败");
         return -1;
     }
+    return 0;
+}
+
+/* ======================= 输入法中继：会话内激活引擎 =======================
+ *
+ * 为什么激活这一步在 xworkd 里做：引擎不是面板、不能手动拉起来当常驻进程，
+ * 它必须由 ibus/GNOME 作为"当前输入源"激活（详见 docs/input-method-local.md §6）。
+ * 客户端只能发一个开关，真正的动作得在**会话内**做，而只有 xworkd 能以会话用户
+ * 身份、带会话环境执行。
+ *
+ * 实测结论（PoC 踩出来的，别简化）：
+ *   · 只发 `ibus engine xworkd-im` 会被 GNOME 的输入源列表覆盖 → **必须改输入源**；
+ *   · 改完输入源后引擎进程往往还没起来 → 再显式切一次引擎（先切走再切回）能催它。
+ */
+
+/* 安全拷贝（超长则截断）。不用 snprintf 是为了不触发 -Wformat-truncation
+ * 的静态告警——这里的"源头"长度是编译期已知的缓冲区，不是版本号这类真风险。 */
+static void im_copy(char *dst, size_t cap, const char *src)
+{
+    size_t n = strlen(src);
+
+    if (n >= cap)
+        n = cap - 1;
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
+/* 会话用户 uid（非 root 开发场景下会话跑在当前用户身上） */
+static uid_t im_session_uid(const runtime *rt)
+{
+    struct passwd *pw = getpwnam(rt->user);
+    return pw != NULL ? pw->pw_uid : getuid();
+}
+
+/* 会话环境：总线地址与 XDG_RUNTIME_DIR 必须来自**会话自己**。
+ * 为什么不能写死 /run/user/<uid>/bus：会话是 dbus-run-session 起的私有总线，
+ * 那个路径只在 systemd user 实例存在时才等于会话总线（开发/非 root 场景不成立）。 */
+typedef struct
+{
+    char bus[256];
+    char xdg[128];
+} im_session_env;
+
+static int im_find_session_env(const runtime *rt, uid_t uid, im_session_env *env)
+{
+    DIR *d = opendir("/proc");
+    struct dirent *de;
+    int found = 0;
+
+    memset(env, 0, sizeof *env);
+    if (d != NULL)
+    {
+        while ((de = readdir(d)) != NULL && !found)
+        {
+            char path[300], buf[16384];
+            struct stat st;
+            FILE *f;
+            size_t n;
+            char *e, *end;
+            int disp_ok = 0;
+            char bus[sizeof env->bus], xdg[sizeof env->xdg];
+
+            if (de->d_name[0] < '0' || de->d_name[0] > '9')
+                continue;
+            snprintf(path, sizeof path, "/proc/%s", de->d_name);
+            if (stat(path, &st) != 0 || st.st_uid != uid)
+                continue;
+            snprintf(path, sizeof path, "/proc/%s/environ", de->d_name);
+            f = fopen(path, "r");
+            if (f == NULL)
+                continue;
+            n = fread(buf, 1, sizeof buf - 1, f);
+            fclose(f);
+            buf[n] = '\0';
+
+            bus[0] = xdg[0] = '\0';
+            for (e = buf, end = buf + n; e < end && *e != '\0'; e += strlen(e) + 1)
+            {
+                if (strncmp(e, "DISPLAY=", 8) == 0)
+                    disp_ok = strcmp(e + 8, rt->proc.display_str) == 0;
+                else if (strncmp(e, "DBUS_SESSION_BUS_ADDRESS=", 25) == 0)
+                    im_copy(bus, sizeof bus, e + 25);
+                else if (strncmp(e, "XDG_RUNTIME_DIR=", 16) == 0)
+                    im_copy(xdg, sizeof xdg, e + 16);
+            }
+            if (disp_ok && bus[0] != '\0')
+            {
+                im_copy(env->bus, sizeof env->bus, bus);
+                im_copy(env->xdg, sizeof env->xdg, xdg);
+                found = 1;
+            }
+        }
+        closedir(d);
+    }
+    if (found)
+        return 0;
+
+    /* 退路：systemd user 实例的总线 socket */
+    snprintf(env->bus, sizeof env->bus, "unix:path=/run/user/%u/bus", (unsigned)uid);
+    snprintf(env->xdg, sizeof env->xdg, "/run/user/%u", (unsigned)uid);
+    {
+        char probe[64];
+        snprintf(probe, sizeof probe, "/run/user/%u/bus", (unsigned)uid);
+        if (access(probe, F_OK) == 0)
+            return 0;
+    }
+    log_err("IM：找不到会话总线（DISPLAY=%s uid=%u）", rt->proc.display_str, (unsigned)uid);
+    env->bus[0] = '\0';
+    return -1;
+}
+
+/* 子进程侧：套上会话环境并降到会话用户 */
+static void im_child_env(const runtime *rt, const struct passwd *pw, const im_session_env *env)
+{
+    if (pw != NULL && getuid() == 0)
+    {
+        if (initgroups(pw->pw_name, pw->pw_gid) != 0)
+        { /* 忽略 */
+        }
+        if (setgid(pw->pw_gid) != 0)
+        { /* 忽略 */
+        }
+        if (setuid(pw->pw_uid) != 0)
+        { /* 忽略 */
+        }
+    }
+    if (pw != NULL)
+    {
+        setenv("HOME", pw->pw_dir, 1);
+        setenv("USER", pw->pw_name, 1);
+        setenv("LOGNAME", pw->pw_name, 1);
+        setenv("SHELL", pw->pw_shell, 1);
+    }
+    setenv("DISPLAY", rt->proc.display_str, 1);
+    setenv("XAUTHORITY", rt->proc.authfile, 1);
+    setenv("XDG_SESSION_TYPE", "x11", 1);
+    if (env->xdg[0] != '\0')
+        setenv("XDG_RUNTIME_DIR", env->xdg, 1);
+    if (env->bus[0] != '\0')
+        setenv("DBUS_SESSION_BUS_ADDRESS", env->bus, 1);
+}
+
+/* 跑一条命令并取第一行 stdout（可选）。返回退出码。 */
+static int im_run_wait(const runtime *rt, const struct passwd *pw, const im_session_env *env,
+                       char *const argv[], char *out, size_t cap)
+{
+    int pfd[2] = {-1, -1};
+    pid_t pid;
+    int st = 0;
+    size_t got = 0;
+
+    if (out != NULL && cap > 0)
+        out[0] = '\0';
+    if (out != NULL && pipe(pfd) != 0)
+        return -1;
+    pid = fork();
+    if (pid < 0)
+    {
+        if (out != NULL)
+        {
+            close(pfd[0]);
+            close(pfd[1]);
+        }
+        return -1;
+    }
+    if (pid == 0)
+    {
+        if (out != NULL)
+        {
+            close(pfd[0]);
+            dup2(pfd[1], STDOUT_FILENO);
+            close(pfd[1]);
+        }
+        im_child_env(rt, pw, env);
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+    if (out != NULL)
+    {
+        close(pfd[1]);
+        for (;;)
+        {
+            char tmp[256];
+            ssize_t r = read(pfd[0], got + 1 < cap ? out + got : tmp,
+                             got + 1 < cap ? cap - 1 - got : sizeof tmp);
+            if (r <= 0)
+                break;
+            /* 缓冲区满后继续读并丢弃，否则子进程会因管道写阻塞而卡死 */
+            if (got + 1 < cap)
+                got += (size_t)r;
+        }
+        close(pfd[0]);
+        out[got] = '\0';
+        {
+            char *nl = strchr(out, '\n');
+            if (nl != NULL)
+                *nl = '\0';
+        }
+    }
+    while (waitpid(pid, &st, 0) < 0 && errno == EINTR)
+    { /* 重试 */
+    }
+    return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+}
+
+/* 脱离式执行一段 shell（用于"先切走再切回"这种带 sleep 的动作，不能占着事件循环）。
+ * 双 fork：孙进程被 init 收养，不会给我们留僵尸。 */
+static void im_run_detached(const runtime *rt, const struct passwd *pw, const im_session_env *env,
+                            const char *script)
+{
+    pid_t pid = fork();
+    int st;
+
+    if (pid < 0)
+        return;
+    if (pid == 0)
+    {
+        pid_t mid = fork();
+        if (mid != 0)
+            _exit(0); /* 中间进程立即退出，孙进程孤儿化 */
+        setsid();
+        {
+            int dn = open("/dev/null", O_RDWR);
+            if (dn >= 0)
+            {
+                dup2(dn, STDIN_FILENO);
+                dup2(dn, STDOUT_FILENO);
+                dup2(dn, STDERR_FILENO);
+                if (dn > 2)
+                    close(dn);
+            }
+        }
+        im_child_env(rt, pw, env);
+        execl("/bin/sh", "sh", "-c", script, (char *)NULL);
+        _exit(127);
+    }
+    while (waitpid(pid, &st, 0) < 0 && errno == EINTR)
+    { /* 重试 */
+    }
+}
+
+static int im_range_has(const char *s, size_t len, const char *needle)
+{
+    size_t n = strlen(needle), i;
+
+    for (i = 0; i + n <= len; i++)
+    {
+        if (memcmp(s + i, needle, n) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+/* 把 gsettings 的 sources 值转成"以 xworkd-im 打头"的新值；原有的 xworkd-im 项会被去掉
+ * （重复开启要幂等）。输入形如 `[('ibus', 'libpinyin'), ('xkb', 'us')]` 或 `@as []`。 */
+static void im_build_sources(const char *cur, char *out, size_t cap)
+{
+    const char *p = cur ? strchr(cur, '[') : NULL;
+    const char *end = cur ? strrchr(cur, ']') : NULL;
+    size_t n = 0;
+
+    n += (size_t)snprintf(out + n, cap - n, "[('ibus', 'xworkd-im')");
+    if (p != NULL && end != NULL && end > p + 1)
+    {
+        const char *s = p + 1;
+        while (s < end && n + 8 < cap)
+        {
+            const char *sep = strstr(s, "), ");
+            size_t len = sep != NULL ? (size_t)(sep - s) + 1 : (size_t)(end - s);
+            if (len > 0 && !im_range_has(s, len, "xworkd-im"))
+                n += (size_t)snprintf(out + n, cap - n, ", %.*s", (int)len, s);
+            if (sep == NULL)
+                break;
+            s = sep + 3;
+        }
+    }
+    snprintf(out + n, cap - n, "]");
+}
+
+/* 开关本机输入法：enable=1 把 xworkd-im 挂成当前输入源，enable=0 恢复原样。
+ * 返回 0=成功（不代表引擎已经起来，只代表输入源切过去了）。 */
+int im_session_switch(runtime *rt, int enable)
+{
+    struct passwd *pw = getpwnam(rt->user);
+    im_session_env env;
+    char out[600];
+    char val[640];
+    char *argv[8];
+
+    if (im_find_session_env(rt, im_session_uid(rt), &env) != 0)
+        return -1;
+
+    memset(argv, 0, sizeof argv);
+    argv[0] = (char *)"gsettings";
+    argv[2] = (char *)"org.gnome.desktop.input-sources";
+
+    if (enable)
+    {
+        /* 只在第一次记原值：重复 enable 不能把"我们的值"当成原值存下来 */
+        if (!rt->im.saved_valid)
+        {
+            argv[1] = (char *)"get";
+            argv[3] = (char *)"sources";
+            if (im_run_wait(rt, pw, &env, argv, out, sizeof out) == 0 && out[0] != '\0')
+            {
+                /* 空值（无输入源项）要记住是"空"，不能当成一个可以写回的普通值 */
+                rt->im.saved_was_empty = (strchr(out, '(') == NULL);
+                im_copy(rt->im.saved_sources, sizeof rt->im.saved_sources, out);
+                argv[3] = (char *)"current";
+                if (im_run_wait(rt, pw, &env, argv, out, sizeof out) == 0)
+                    im_copy(rt->im.saved_current, sizeof rt->im.saved_current, out);
+                rt->im.saved_valid = 1;
+                log_info("IM：记住原输入源 %s（current=%s%s）", rt->im.saved_sources,
+                         rt->im.saved_current, rt->im.saved_was_empty ? "，原本为空" : "");
+            }
+            else
+                log_err("IM：读不到 GNOME 输入源（会话里没有 gsettings/GNOME？）");
+        }
+
+        im_build_sources(rt->im.saved_valid ? rt->im.saved_sources : "", val, sizeof val);
+        argv[1] = (char *)"set";
+        argv[3] = (char *)"sources";
+        argv[4] = val;
+        if (im_run_wait(rt, pw, &env, argv, NULL, 0) != 0)
+        {
+            log_err("IM：设置输入源失败（%s）", val);
+            return -1;
+        }
+        argv[3] = (char *)"current";
+        argv[4] = (char *)"0";
+        if (im_run_wait(rt, pw, &env, argv, NULL, 0) != 0)
+            log_info("IM：切换 current 失败（源列表已改，GNOME 可能自己会切）");
+
+        /* 引擎进程通常还没起来：显式切一下（先切走再切回）。带 sleep，所以脱离执行。 */
+        im_run_detached(rt, pw, &env,
+                        "ibus engine xkb:us::eng >/dev/null 2>&1; sleep 1; "
+                        "ibus engine xworkd-im >/dev/null 2>&1");
+        log_info("IM：已把 xworkd-im 挂为当前输入源（DISPLAY=%s）", rt->proc.display_str);
+        return 0;
+    }
+
+    if (!rt->im.saved_valid)
+        return 0;
+    if (rt->im.saved_was_empty)
+    {
+        /* 原本就没有输入源（读到的是 schema 默认空值）：用 reset 把键恢复到"未设置"，
+         * 而不是写回空数组——后者会让 GNOME 的输入源列表变空，本机输入法就没了。 */
+        argv[1] = (char *)"reset";
+        argv[3] = (char *)"sources";
+        argv[4] = NULL;
+        if (im_run_wait(rt, pw, &env, argv, NULL, 0) != 0)
+            log_err("IM：reset sources 失败");
+        argv[3] = (char *)"current";
+        im_run_wait(rt, pw, &env, argv, NULL, 0);
+        log_info("IM：原输入源为空，已 reset（交给 GNOME 自己填充）");
+        rt->im.saved_valid = 0;
+        return 0;
+    }
+    argv[1] = (char *)"set";
+    argv[3] = (char *)"sources";
+    argv[4] = rt->im.saved_sources;
+    if (im_run_wait(rt, pw, &env, argv, NULL, 0) != 0)
+        log_err("IM：恢复输入源失败（%s）", rt->im.saved_sources);
+    argv[3] = (char *)"current";
+    argv[4] = rt->im.saved_current[0] != '\0' ? rt->im.saved_current : (char *)"0";
+    if (im_run_wait(rt, pw, &env, argv, NULL, 0) != 0)
+        log_info("IM：恢复 current 失败");
+    log_info("IM：已恢复原输入源 %s", rt->im.saved_sources);
+    rt->im.saved_valid = 0;
     return 0;
 }

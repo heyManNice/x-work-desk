@@ -3,6 +3,7 @@
 #include "clip.h"
 #include "capture.h"
 #include "encoder.h"
+#include "im.h"
 #include "sessproc.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/XShm.h>
@@ -61,6 +62,9 @@ struct runtime
     capture_ctx cap;
     encoder_ctx enc;
     _Atomic int kick_local; /* 实体机占用提示后用户确认踢出（login worker 等待此标志） */
+
+    /* ---- 输入法中继通道（每会话一个 AF_UNIX socket，引擎在会话内接入） ---- */
+    im_ctx im;
 };
 
 /* 由 net.c 调用（session.c / session_msg.c 实现） */

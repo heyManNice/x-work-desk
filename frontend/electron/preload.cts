@@ -103,4 +103,8 @@ contextBridge.exposeInMainWorld('xwd', {
         disable: (opt: SshCred): Promise<InstallResult> => ipcRenderer.invoke('xwd:tun:disable', opt),
         speed: (opt: SshCred & { server: string }): Promise<TunSpeedResult> => ipcRenderer.invoke('xwd:tun:speed', opt),
     },
+    /* 本机输入法：只剩联调日志一个通道（输入走会话 WS 的 MSG_IM_*） */
+    im: {
+        log: (msg: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('xwd:im:devlog', msg),
+    },
 });

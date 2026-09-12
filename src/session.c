@@ -26,6 +26,9 @@ void runtime_ref(runtime *rt) { __sync_add_and_fetch(&rt->refs, 1); }
 /* 停抓帧线程并释放 X/编码/进程资源；幂等，可在会话未完全启动时调用 */
 void runtime_teardown(runtime *rt)
 {
+    /* IM 通道先收：socket 文件跟着会话销毁，否则下次同 display 会话会 bind 到残留路径 */
+    im_close(&rt->im);
+
     audio_stop(rt);
     if (atomic_load(&rt->cap.running))
     {
@@ -203,8 +206,32 @@ void session_on_open(conn *c)
     atomic_init(&rt->bitrate_kbps, 0);
     atomic_init(&rt->crf, 23);
     rt->proc.display = -1;
+    rt->im.lfd = -1;
+    rt->im.efd = -1;
+    rt->im.pidx_l = -1;
+    rt->im.pidx_e = -1;
     pthread_mutex_init(&rt->lock, NULL);
     atomic_store(&c->sess, rt);
+}
+
+/* ---- 输入法中继：事件循环桥接 ---- */
+
+/* 装配 poll 数组时追加本会话 IM 通道的 fd（最多 2 个：监听 + 引擎连接） */
+int session_im_poll(conn *c, struct pollfd *fds, int nfds)
+{
+    runtime *rt = atomic_load(&c->sess);
+    if (rt == NULL)
+        return nfds;
+    return im_poll(&rt->im, fds, nfds);
+}
+
+/* poll 返回后处理 IM 事件（accept / 收引擎上报 / 续发下行） */
+void session_im_events(conn *c, const struct pollfd *fds)
+{
+    runtime *rt = atomic_load(&c->sess);
+    if (rt == NULL)
+        return;
+    im_events(&rt->im, fds);
 }
 
 void session_on_close(conn *c)
@@ -213,6 +240,13 @@ void session_on_close(conn *c)
     atomic_store(&c->sess, NULL);
     if (!rt)
         return;
+    /* 客户端断开时把输入源还给用户原来的：否则会话里留着"不组词"的中继引擎，
+     * 下一次登录/别人接管时会看到"输入法在但打不出字"，像坏了一样。 */
+    if (rt->im.enabled_by_client)
+    {
+        rt->im.enabled_by_client = 0;
+        im_session_switch(rt, 0);
+    }
     pthread_mutex_lock(&rt->lock);
     if (rt->state == S_RUNNING || rt->state == S_RESTARTING)
     {

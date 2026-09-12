@@ -741,6 +741,12 @@ html[data-theme='light'] .host-item.active {
     display: flex;
 }
 
+/* 本机输入法状态（只勾了本机输入法的主机才有这个元素）：不可用时变红，好一眼看出
+ * "能用"与"看着像能用"的差别 */
+.sh-im.bad {
+    color: #ff9a8b;
+}
+
 /* 会话 overlay（连接中 / 错误）：背景用应用主页背景色（随主题） */
 .session-overlay {
     position: absolute;
@@ -1129,6 +1135,27 @@ canvas {
 
 .tab-btn.danger:hover {
     background: rgba(229, 82, 76, 0.12);
+}
+
+/* 本机输入法（联调版）的隐藏输入框：只用来承接本机 IME 的组词，视觉上不可见。
+ * left/top 由 core/localim.ts 跟随鼠标实时设置；这里给个屏外初始值。 */
+.im-soft-input {
+    position: fixed;
+    left: -9999px;
+    top: -9999px;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    border: 0;
+    margin: 0;
+    opacity: 0;
+    background: transparent;
+    color: transparent;
+    resize: none;
+    outline: none;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 2000;
 }
 
 /* lucide 图标默认描边色跟随文本 */

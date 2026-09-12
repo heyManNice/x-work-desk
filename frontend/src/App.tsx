@@ -1093,6 +1093,7 @@ function HostEditor() {
     let rClip!: HTMLInputElement;
     let rAnim!: HTMLInputElement;
     let rStatic!: HTMLInputElement;
+    let rLocalIM!: HTMLInputElement;
     let rDebug!: HTMLInputElement;
     let errEl!: HTMLDivElement;
 
@@ -1132,6 +1133,7 @@ function HostEditor() {
             clipboard: rClip.checked,
             anim: rAnim.checked,
             staticSkip: rStatic.checked,
+            localIM: rLocalIM.checked,
             debug: rDebug.checked,
         };
     };
@@ -1218,6 +1220,7 @@ function HostEditor() {
                                     <label class="chk"><input ref={rClip} type="checkbox" checked={h().clipboard} /> 共享剪贴板</label>
                                     <label class="chk"><input ref={rAnim} type="checkbox" checked={h().anim} /> 桌面动画</label>
                                     <label class="chk"><input ref={rStatic} type="checkbox" checked={h().staticSkip} /> 静态帧优化</label>
+                                    <label class="chk"><input ref={rLocalIM} type="checkbox" checked={h().localIM} /> 本机输入法（用本机词库，文字直接落到远端）</label>
                                     <label class="chk"><input ref={rDebug} type="checkbox" checked={h().debug} /> 显示调试信息</label>
                                 </div>
                             </details>
