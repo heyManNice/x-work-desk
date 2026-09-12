@@ -44,6 +44,8 @@ export class LocalIM {
     private caret: IMCaret | null = null;
     /** 已采用的锚点 y（远端坐标）：同一行内不因上报口径差异而跳动，见 anchorOf() */
     private anchorY: number | null = null;
+    /** 量文字宽度用的 2D 上下文（懒建） */
+    private measureCtx: CanvasRenderingContext2D | null = null;
 
     constructor(opt: LocalIMOpt) {
         this.opt = opt;
@@ -55,6 +57,9 @@ export class LocalIM {
         ta.setAttribute('autocorrect', 'off');
         ta.setAttribute('spellcheck', 'false');
         ta.setAttribute('aria-hidden', 'true');
+        /* 关键：框内文字绝不能换行 —— 框只有 1px 宽，一旦换行，IME 拿到的
+         * "框内插入点"就跑到第二行，候选窗会莫名下移一个行高（见 placeAtCaret） */
+        ta.setAttribute('wrap', 'off');
         ta.tabIndex = -1;
         opt.stage.appendChild(ta);
         this.ta = ta;
@@ -107,6 +112,10 @@ export class LocalIM {
             const s = (e as CompositionEvent).data ?? '';
             this.log(`compositionupdate ${JSON.stringify(s)}`);
             this.opt.preedit(s, this.charPos());
+            /* 组词串变长了 → 框内插入点右移了：必须重新落点把这部分抵消掉。
+             * （只在 compositionstart 落点是不够的：远端应用组词期间往往不再上报
+             *  caret，我们就没有别的机会重新对位，候选窗会跟着往右跑。） */
+            this.placeAtCaret();
         });
         on(ta, 'compositionend', (e) => {
             this.composing = false;
@@ -196,8 +205,27 @@ export class LocalIM {
         if (c.w === 0 && c.h === 0) return;   /* 0,0 是"没有真实插入点"的占位值 */
         const a = this.anchorOf(c);
         const p = this.opt.toLocal(a.x, a.y);
-        this.placeAt(p.x, p.y);
-        this.log(`place at remote caret → local ${Math.round(p.x)},${Math.round(p.y)}（锚点 y=${a.y}）`);
+        /* 本机 IME 的候选窗跟着**隐藏输入框内部的插入点**画，而不是跟着框本身：
+         * 组词串每多一个字，框内插入点就右移一个字的宽度 → 必须抵消掉，
+         * 否则候选窗会跟着往右跑（换行时还会整行下跳）。 */
+        const adv = this.measureAdvance();
+        this.placeAt(p.x - adv, p.y);
+        this.log(`place at remote caret → local ${Math.round(p.x - adv)},${Math.round(p.y)}` +
+            `（锚点 y=${a.y}，框内偏移 ${adv.toFixed(1)}px，内容高 ${this.ta.scrollHeight}px）`);
+    }
+
+    /** 量出当前组词串在隐藏输入框里的显示宽度（CSS px）。
+     * 用同一个字体度量，和 Chromium 的排版一致；另外把内容高一并记日志：
+     * 一旦发生换行 scrollHeight 会翻倍（排查"候选窗下跳一行"的关键指标）。 */
+    private measureAdvance(): number {
+        const s = this.ta.value;
+        if (!s) return 0;
+        if (!this.measureCtx) {
+            const cv = document.createElement('canvas');
+            this.measureCtx = cv.getContext('2d');
+            if (this.measureCtx) this.measureCtx.font = getComputedStyle(this.ta).font;
+        }
+        return this.measureCtx ? this.measureCtx.measureText(s).width : 0;
     }
 
     focus(): void {

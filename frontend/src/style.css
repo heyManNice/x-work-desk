@@ -1138,7 +1138,9 @@ canvas {
 }
 
 /* 本机输入法（联调版）的隐藏输入框：只用来承接本机 IME 的组词，视觉上不可见。
- * left/top 由 core/localim.ts 跟随鼠标实时设置；这里给个屏外初始值。 */
+ * left/top 由 core/localim.ts 跟随鼠标/远端插入点实时设置；这里给个屏外初始值。
+ * 注意 white-space:nowrap + wrap="off"：组词串**不能换行** —— 框只有 1px 宽，
+ * 一旦换行，IME 拿到的"框内插入点"就跑到第二行，候选窗会莫名下移一个行高。 */
 .im-soft-input {
     position: fixed;
     left: -9999px;
@@ -1154,6 +1156,7 @@ canvas {
     resize: none;
     outline: none;
     overflow: hidden;
+    white-space: nowrap;
     pointer-events: none;
     z-index: 2000;
 }
