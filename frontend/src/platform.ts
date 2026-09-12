@@ -47,6 +47,14 @@ interface DesktopBridge {
         download(id: number, path: string): Promise<FmDownRes>;
         close(id: number): Promise<FmSimple>;
     };
+    tun?: {
+        status(opt: SshServerOpt): Promise<TunStatusRes>;
+        install(opt: SshServerOpt): Promise<TunActionResult>;
+        uninstall(opt: SshServerOpt): Promise<TunActionResult>;
+        enable(opt: TunEnableOpt): Promise<TunActionResult>;
+        disable(opt: SshServerOpt): Promise<TunActionResult>;
+        speed(opt: SshServerOpt & { server: string }): Promise<TunSpeedRes>;
+    };
 }
 
 function bridge(): DesktopBridge | null {
@@ -320,4 +328,73 @@ export async function fmClose(id: number): Promise<FmSimple> {
     const b = bridge()?.file;
     if (!b) return { ok: false, msg: '桌面壳环境不支持远程文件' };
     return b.close(id);
+}
+
+/* ---------------- Tun 代理服务（远端 sing-box） ----------------
+ * 服务装在远端并以 systemd 常驻：关掉客户端、断开 SSH 都不影响它运行，且开机自启。 */
+
+export interface TunEnableOpt extends SshServerOpt {
+    /** 上游代理：host:port，可带 socks5:// / http:// 前缀（缺省 socks5） */
+    server: string;
+    /** 直连排除列表：每行一个 CIDR / IP */
+    exclude: string;
+    sshPort: number;
+    rdPort: number;
+}
+
+export interface TunStatusRes {
+    ok: boolean;
+    installed: boolean;
+    running: boolean;
+    version?: string;
+    msg?: string;
+}
+
+export interface TunActionResult {
+    ok: boolean;
+    needSudo?: boolean;
+    msg?: string;
+}
+
+export interface TunSpeedRes {
+    ok: boolean;
+    ms?: number;
+    httpCode?: number;
+    msg?: string;
+}
+
+export async function tunStatus(opt: SshServerOpt): Promise<TunStatusRes> {
+    const b = bridge()?.tun;
+    if (!b) return { ok: false, installed: false, running: false, msg: '桌面壳环境不支持' };
+    return b.status(opt);
+}
+
+export async function tunInstall(opt: SshServerOpt): Promise<TunActionResult> {
+    const b = bridge()?.tun;
+    if (!b) return { ok: false, msg: '桌面壳环境不支持' };
+    return b.install(opt);
+}
+
+export async function tunUninstall(opt: SshServerOpt): Promise<TunActionResult> {
+    const b = bridge()?.tun;
+    if (!b) return { ok: false, msg: '桌面壳环境不支持' };
+    return b.uninstall(opt);
+}
+
+export async function tunEnable(opt: TunEnableOpt): Promise<TunActionResult> {
+    const b = bridge()?.tun;
+    if (!b) return { ok: false, msg: '桌面壳环境不支持' };
+    return b.enable(opt);
+}
+
+export async function tunDisable(opt: SshServerOpt): Promise<TunActionResult> {
+    const b = bridge()?.tun;
+    if (!b) return { ok: false, msg: '桌面壳环境不支持' };
+    return b.disable(opt);
+}
+
+export async function tunSpeedtest(opt: SshServerOpt & { server: string }): Promise<TunSpeedRes> {
+    const b = bridge()?.tun;
+    if (!b) return { ok: false, msg: '桌面壳环境不支持' };
+    return b.speed(opt);
 }

@@ -11,6 +11,7 @@ import * as term from '../ssh/terminal.cjs';
 import * as sysmon from '../ssh/sysmon.cjs';
 import * as sftp from '../ssh/sftp.cjs';
 import * as setup from '../ssh/setup.cjs';
+import * as tun from '../ssh/tun.cjs';
 
 /* 说明：渲染层数据不可信且没有运行时校验，这里统一以 any 收口，
  * 各 handler 实现内部再逐字段 String()/Number() 收敛。 */
@@ -88,4 +89,12 @@ export function registerIpc(): void {
         sftp.sftpClose(Number(id));
         return { ok: true };
     });
+
+    /* ---- Tun 代理服务（远端 sing-box，systemd 常驻） ---- */
+    onInvoke('xwd:tun:status', (opt) => tun.tunStatus(opt ?? {}));
+    onInvoke('xwd:tun:install', (opt) => tun.tunInstall(opt ?? {}));
+    onInvoke('xwd:tun:uninstall', (opt) => tun.tunUninstall(opt ?? {}));
+    onInvoke('xwd:tun:enable', (opt) => tun.tunEnable(opt ?? {}));
+    onInvoke('xwd:tun:disable', (opt) => tun.tunDisable(opt ?? {}));
+    onInvoke('xwd:tun:speed', (opt) => tun.tunSpeedtest(opt ?? {}));
 }

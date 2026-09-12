@@ -15,6 +15,7 @@ import type {
     SftpUploadResult, SftpDownloadResult,
 } from './ssh/sftp.cjs';
 import type { ProbeResult, InstallResult, AboutResult, InstallProgress } from './ssh/setup.cjs';
+import type { TunStatus, TunSpeedResult, TunProxyOpt } from './ssh/tun.cjs';
 
 contextBridge.exposeInMainWorld('xwd', {
     /* 平台：darwin / win32 / linux */
@@ -92,5 +93,14 @@ contextBridge.exposeInMainWorld('xwd', {
         upload: (id: number, dir: string): Promise<SftpUploadResult> => ipcRenderer.invoke('xwd:file:upload', { id, dir } satisfies SftpUploadOpt),
         download: (id: number, path: string): Promise<SftpDownloadResult> => ipcRenderer.invoke('xwd:file:download', { id, path } satisfies SftpPathOpt),
         close: (id: number): Promise<SshResult> => ipcRenderer.invoke('xwd:file:close', id),
+    },
+    /* Tun 代理服务（远端 sing-box，systemd 常驻，与客户端进程无关） */
+    tun: {
+        status: (opt: SshCred): Promise<TunStatus> => ipcRenderer.invoke('xwd:tun:status', opt),
+        install: (opt: SshCred): Promise<InstallResult> => ipcRenderer.invoke('xwd:tun:install', opt),
+        uninstall: (opt: SshCred): Promise<InstallResult> => ipcRenderer.invoke('xwd:tun:uninstall', opt),
+        enable: (opt: TunProxyOpt): Promise<InstallResult> => ipcRenderer.invoke('xwd:tun:enable', opt),
+        disable: (opt: SshCred): Promise<InstallResult> => ipcRenderer.invoke('xwd:tun:disable', opt),
+        speed: (opt: SshCred & { server: string }): Promise<TunSpeedResult> => ipcRenderer.invoke('xwd:tun:speed', opt),
     },
 });

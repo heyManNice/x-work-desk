@@ -89,7 +89,7 @@ export async function sftpPutOnce(opt: SshCred, localFile: string, remoteFile: s
             b.client.sftp((err, sftp) => {
                 if (err) { fin({ ok: false, msg: 'sftp 打开失败: ' + err.message }); return; }
                 sftp.fastPut(localFile, remoteFile, (e) => {
-                    fin(e ? { ok: false, msg: '上传失败: ' + e.message } : { ok: true });
+                    fin(e ? { ok: false, msg: `上传失败: ${e.message}（远端 ${remoteFile}）` } : { ok: true });
                 });
             });
         });
@@ -99,7 +99,8 @@ export async function sftpPutOnce(opt: SshCred, localFile: string, remoteFile: s
     }
 }
 
-const SUDO_ERR_RE = /not in the sudoers file|a password is required|no password was provided|incorrect password|authentication failure/i;
+/** sudo 失败特征（各操作共用：判断是否是缺少 sudo 权限导致） */
+export const SUDO_ERR_RE = /not in the sudoers file|a password is required|no password was provided|incorrect password|authentication failure/i;
 
 /** 探测远端 xworkd 服务状态：running / stopped / not_installed / unreachable */
 export async function sshProbeServer(opt: SshCred): Promise<ProbeResult> {

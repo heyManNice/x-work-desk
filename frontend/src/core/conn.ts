@@ -21,7 +21,7 @@ export function sshHostOf(h: { host: string }): string {
 /** 未做类型强绑定的“进行中连接”记录（App.pendingMap 结构匹配即可） */
 export interface PendingConnLike {
     type: ConnKind;
-    host: { name?: string; host: string };
+    host: { name?: string; host: string; rdPort?: number };
     target: { apiBase: string } | null;
     sshHost?: string;
     sshPort?: number;
@@ -36,6 +36,7 @@ export interface ActiveConn {
     name: string;
     sshHost: string;
     sshPort: number;
+    rdPort: number;   /* 远程桌面（xworkd 服务）端口：Tun 排除规则要用 */
     user: string;
     pass: string;
     apiBase: string; /* 桌面会话的 xworkd 地址；SSH 终端为空 */
@@ -50,6 +51,7 @@ export function resolveActiveConn(tabId: number, p: PendingConnLike | undefined)
         name: (p.host.name || '').trim() || p.host.host || hh || '未命名',
         sshHost: (p.sshHost || '').trim() || hh,
         sshPort: p.sshPort || 22,
+        rdPort: Number(p.host.rdPort) || 5268,
         user: p.user,
         pass: p.pass,
         apiBase: p.target ? p.target.apiBase : '',

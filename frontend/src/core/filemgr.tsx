@@ -23,7 +23,8 @@ import { isPopup, openPopup, closePopup } from './popups';
 export interface FmCtx {
     tabId: number;
     host: string;
-    port: number;
+    port: number;   /* SSH 端口 */
+    rdPort: number; /* 远程桌面（xworkd）端口：Tun 排除规则用 */
     user: string;
     pass?: string;
 }

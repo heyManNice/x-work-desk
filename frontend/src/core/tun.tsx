@@ -1,13 +1,26 @@
 /* core/tun.tsx —— 顶栏“Tun”代理入口 + 弹窗。
  *
- * 目前仅做 UI（未接入实际 TUN 代理）：服务器地址（带“测速”）、排除地址（预填常用
- * 局域网/保留网段，可一键重置）、底部“安装服务 | 启用”。
- * 与其它工具弹出面板一致：走 popups 的互斥“点击式”模型，面板 fixed 渲染在 App 根部。
+ * 实际功能：在**远端主机**上以内置的 sing-box 提供 tun 代理，由 systemd 常驻。
+ *   - 安装服务 / 卸载服务：上传内置包 + 装 systemd 单元（不启动） / 停服务并清理
+ *   - 启用 / 停用：生成配置（含排除规则）→ 推送 → sing-box check → enable --now / disable --now
+ *   - 测速：在远端**经上游代理**访问 Google 的 generate_204，返回耗时，用于先验证上游可用
+ *
+ * 服务是远端 systemd 系统服务，与客户端进程、SSH 会话无关：关掉软件、断开 SSH 都不影响
+ * 代理运行，且开机自启。tun 的 auto_route 是系统级的 —— 该主机所有用户都走同一个上游。
+ *
+ * 上下文取当前激活连接（与文件/监控按钮同口径），无活动连接时两个按钮禁用。
  */
 
-import { createSignal, Show } from 'solid-js';
+import { createSignal, createEffect, Show } from 'solid-js';
 import { Route, X } from 'lucide-solid';
 import { activePopup, isPopup, togglePopup } from './popups';
+import { notifyError, notifyInfo, startTask, patchTask, finishTask } from './notify';
+import { showConfirm } from '../modal';
+import {
+    tunStatus, tunInstall, tunUninstall, tunEnable, tunDisable, tunSpeedtest,
+    sshOnInstallProgress,
+} from '../platform';
+import type { FmCtx } from './filemgr';
 
 const PW = 300; /* 与 CSS .tun-panel 宽度一致（居中/夹紧换算用） */
 
@@ -24,13 +37,169 @@ const DEFAULT_EXCLUDES = [
 ].join('\n');
 
 const [pos, setPos] = createSignal({ x: 0, y: 0 });
-/* 输入项暂存（仅 UI，尚未接入实际代理；重开面板保留上次填写） */
+/* 当前作用的主机（打开面板时由按钮写入） */
+const [ctx, setCtx] = createSignal<FmCtx | null>(null);
+/* 输入项暂存：重开面板保留上次填写 */
 const [server, setServer] = createSignal('');
 const [exclude, setExclude] = createSignal(DEFAULT_EXCLUDES);
+const [installed, setInstalled] = createSignal(false);
+const [running, setRunning] = createSignal(false);
+const [version, setVersion] = createSignal('');
+const [statusErr, setStatusErr] = createSignal('');
+const [busy, setBusy] = createSignal(false);
+const [stage, setStage] = createSignal('');
+const [speed, setSpeed] = createSignal('');
+
+/* ---------------- 操作 ---------------- */
+
+/** 主进程 IPC 的凭据（host 已剥成纯地址） */
+function cred(): { host: string; port: number; user: string; pass?: string } | null {
+    const c = ctx();
+    if (!c) return null;
+    return { host: c.host, port: c.port, user: c.user, pass: c.pass };
+}
+
+async function refreshStatus(): Promise<void> {
+    const o = cred();
+    if (!o) {
+        setInstalled(false);
+        setRunning(false);
+        setVersion('');
+        setStatusErr('');
+        return;
+    }
+    setStage('查询远端状态…');
+    const r = await tunStatus(o);
+    setStage('');
+    if (!r.ok) {
+        setStatusErr(r.msg || '状态查询失败');
+        setInstalled(false);
+        setRunning(false);
+        return;
+    }
+    setStatusErr('');
+    setInstalled(r.installed);
+    setRunning(r.running);
+    setVersion(r.version || '');
+}
+
+/** 统一执行入口：通知中心进度条 + 面板内联状态 + 结果提示 + 状态刷新。
+ *
+ *  长任务（上传 30MB 包等）在通知中心以「进行中」气泡 + 面板列表进度条呈现：
+ *  `taskTitle` 是进行中通知的标题，阶段文案/百分比由主进程的 install-progress
+ *  事件通过 patchTask 实时刷新，结束后 finishTask 收敛为成功/失败通知。 */
+async function run(
+    taskTitle: string,
+    startLabel: string,
+    fn: () => Promise<{ ok: boolean; needSudo?: boolean; msg?: string }>,
+    doneTitle: string,
+): Promise<boolean> {
+    if (busy()) return false;
+    setBusy(true);
+    setStage(startLabel);
+    const id = startTask(taskTitle, startLabel);
+    const off = sshOnInstallProgress((p) => {
+        if (p.label) setStage(p.label);
+        patchTask(id, { pct: p.pct ?? null, label: p.label });
+    });
+    try {
+        const r = await fn();
+        const hint = r.needSudo && !r.ok ? '远端账号缺少 sudo 权限。\n' : '';
+        finishTask(id, r.ok, {
+            title: r.ok ? doneTitle : doneTitle + '失败',
+            body: hint + String(r.msg || (r.ok ? '操作完成' : '未知错误')),
+        });
+        await refreshStatus();
+        return r.ok;
+    } catch (e) {
+        const em = e instanceof Error ? e.message : String(e);
+        finishTask(id, false, { title: doneTitle + '失败', body: em });
+        return false;
+    } finally {
+        off();
+        setStage('');
+        setBusy(false);
+    }
+}
+
+async function doInstall(): Promise<void> {
+    const o = cred();
+    if (!o) return;
+    const go = await showConfirm(
+        '安装 Tun 服务',
+        '将向远端主机上传内置的 sing-box（约 30MB）并安装为 systemd 服务：\n'
+        + '· 安装依赖（nftables、curl）\n'
+        + '· 解包到 /opt/xworkd-tun，写入 xworkd-tun.service\n'
+        + '· 暂不启动（配置与启动由「启用」完成）',
+    );
+    if (!go) return;
+    await run('安装 Tun 服务', '连接远端并上传安装包…', () => tunInstall(o), 'Tun 服务已安装');
+}
+
+async function doUninstall(): Promise<void> {
+    const o = cred();
+    if (!o) return;
+    const go = await showConfirm(
+        '卸载 Tun 服务',
+        '将从远端移除 Tun 代理服务：\n'
+        + '· 停止并删除 systemd 服务 xworkd-tun\n'
+        + '· 删除 /opt/xworkd-tun 与 /etc/xworkd-tun\n\n'
+        + '注意：若代理正在运行，该主机的网络出口会立即恢复直连。',
+    );
+    if (!go) return;
+    await run('卸载 Tun 服务', '停止服务并清理远端文件…', () => tunUninstall(o), 'Tun 服务已卸载');
+}
+
+async function doEnable(): Promise<void> {
+    const o = cred();
+    if (!o) return;
+    if (!server().trim()) {
+        notifyInfo('请先填写服务器地址', '上游代理地址，如 socks5://1.2.3.4:1080');
+        return;
+    }
+    if (!installed()) {
+        notifyInfo('请先安装服务', '先点「安装服务」把 sing-box 装到远端主机');
+        return;
+    }
+    const c = ctx()!;
+    await run('启用 Tun 代理', '按当前填写生成配置…', () => tunEnable({
+        ...o,
+        server: server(),
+        exclude: exclude(),
+        sshPort: c.port,
+        rdPort: c.rdPort,
+    }), 'Tun 已启用');
+}
+
+async function doDisable(): Promise<void> {
+    const o = cred();
+    if (!o) return;
+    const go = await showConfirm(
+        '停用 Tun 代理',
+        '将停止远端代理并取消开机自启（配置保留，下次可直接启用）。\n\n'
+        + '注意：该主机所有用户的网络出口会立即恢复直连。',
+    );
+    if (!go) return;
+    await run('停用 Tun 代理', '停止服务并取消开机自启…', () => tunDisable(o), 'Tun 已停用');
+}
+
+async function doSpeedtest(): Promise<void> {
+    const o = cred();
+    if (!o) return;
+    if (!server().trim()) {
+        notifyInfo('请先填写服务器地址', '上游代理地址，如 socks5://1.2.3.4:1080');
+        return;
+    }
+    setSpeed('测速中…');
+    const r = await tunSpeedtest({ ...o, server: server() });
+    setSpeed(r.ok ? `${r.ms} ms` : '失败');
+    if (!r.ok) notifyError('测速失败', r.msg || '未知错误');
+}
+
 
 /* ---------------- 顶栏按钮 ---------------- */
 
-export function TunButton() {
+export function TunButton(props: { ctx: FmCtx | null }) {
     let btn: HTMLButtonElement | undefined;
     return (
         <button
@@ -38,8 +207,9 @@ export function TunButton() {
             data-popup-trigger="tun"
             class="tab-btn"
             classList={{ active: activePopup() === 'tun' }}
-            title="Tun 代理"
+            title="Tun 代理（在远端主机以 systemd 服务运行 sing-box）"
             onClick={() => {
+                setCtx(props.ctx);
                 const opened = togglePopup('tun');
                 if (!opened || !btn) return;
                 const r = btn.getBoundingClientRect();
@@ -59,6 +229,20 @@ export function TunButton() {
 /* ---------------- 弹窗（App 根部 fixed 渲染） ---------------- */
 
 export function TunPanelHost() {
+    /* 打开面板或切换主机时查询远端状态 */
+    createEffect(() => {
+        if (!isPopup('tun')) return;
+        void ctx();
+        void refreshStatus();
+    });
+
+    const statusText = (): string => {
+        if (!ctx()) return '未连接主机（先在左侧连接一台主机）';
+        if (statusErr()) return statusErr();
+        if (!installed()) return '未安装';
+        return `已安装${version() ? ' v' + version() : ''} · ${running() ? '运行中' : '已停止'}`;
+    };
+
     return (
         <Show when={isPopup('tun')}>
             <div class="tun-panel popup-panel" style={{ left: `${pos().x}px`, top: `${pos().y}px` }}>
@@ -70,16 +254,24 @@ export function TunPanelHost() {
                     <div class="tun-field">
                         <div class="tun-label-row">
                             <span class="tun-label">服务器地址</span>
+                            <Show when={speed()}><span class="tun-speed">{speed()}</span></Show>
                         </div>
                         <div class="tun-row">
                             <input
                                 class="tun-input"
                                 type="text"
-                                placeholder="如 1.2.3.4:1080"
+                                placeholder="socks5://1.2.3.4:1080 或 http://1.2.3.4:8080"
                                 value={server()}
                                 onInput={(e) => setServer(e.currentTarget.value)}
                             />
-                            <button class="tun-check" title="测速（测试服务器连接速度）">测速</button>
+                            <button
+                                class="tun-check"
+                                disabled={busy() || !ctx()}
+                                onClick={() => void doSpeedtest()}
+                                title="经上游代理访问 Google，测量出口延迟"
+                            >
+                                测速
+                            </button>
                         </div>
                     </div>
                     <div class="tun-field">
@@ -102,9 +294,31 @@ export function TunPanelHost() {
                             onInput={(e) => setExclude(e.currentTarget.value)}
                         />
                     </div>
+                    <div class="tun-status" title="远端主机的服务状态">
+                        {stage() || statusText()}
+                    </div>
                     <div class="tun-actions">
-                        <button class="tun-install" title="在远端安装 Tun 代理服务（功能待接入）">安装服务</button>
-                        <button class="tun-enable" title="启用 Tun 代理（功能待接入）">启用</button>
+                        <button
+                            class="tun-install"
+                            classList={{ 'act-danger': installed() }}
+                            disabled={busy() || !ctx()}
+                            onClick={() => { void (installed() ? doUninstall() : doInstall()); }}
+                            title={installed()
+                                ? '停止并删除远端的 XWorkDesk Tun 服务'
+                                : '上传内置 sing-box 并安装为远端 systemd 服务（不启动）'}
+                        >
+                            {installed() ? '卸载服务' : '安装服务'}
+                        </button>
+                        <button
+                            class="tun-enable"
+                            disabled={busy() || !ctx()}
+                            onClick={() => { void (running() ? doDisable() : doEnable()); }}
+                            title={running()
+                                ? '停止代理并取消开机自启（配置保留）'
+                                : '按当前填写生成配置并启动（设置为开机自启）'}
+                        >
+                            {running() ? '停用' : '启用'}
+                        </button>
                     </div>
                 </div>
             </div>

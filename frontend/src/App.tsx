@@ -761,7 +761,7 @@ function TabBar() {
     const fmCtx = (): FmCtx | null => {
         const c = currentConn();
         if (!c) return null;
-        return { tabId: c.tabId, host: c.sshHost, port: c.sshPort, user: c.user, pass: c.pass };
+        return { tabId: c.tabId, host: c.sshHost, port: c.sshPort, rdPort: c.rdPort, user: c.user, pass: c.pass };
     };
     return (
         <div class="tabbar">
@@ -828,7 +828,7 @@ function TextActions(props: { type: ConnKind; fm: FmCtx | null }) {
         <>
             <Show when={props.fm}>{(c) => <SysCpuButton ctx={c()} />}</Show>
             <Show when={props.fm}>{(c) => <SysMemButton ctx={c()} />}</Show>
-            <TunButton />
+            <TunButton ctx={props.fm} />
             <Show when={props.fm}>{(c) => <FileButton ctx={c()} label="文件" />}</Show>
             <Show when={props.type === 'desktop'}>
                 <button class="tab-btn" onClick={toggleFullscreen} title={fsActive() ? '退出全屏' : '全屏显示'}>
@@ -859,7 +859,7 @@ function FullscreenBar() {
     const fm = (): FmCtx | null => {
         const c = currentConn();
         if (!c) return null;
-        return { tabId: c.tabId, host: c.sshHost, port: c.sshPort, user: c.user, pass: c.pass };
+        return { tabId: c.tabId, host: c.sshHost, port: c.sshPort, rdPort: c.rdPort, user: c.user, pass: c.pass };
     };
 
     /* 活动标签非桌面会话时兜底退出全屏 */

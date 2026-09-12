@@ -2429,6 +2429,29 @@ canvas {
     min-width: 0;
 }
 
+/* 状态行：远端安装/运行状态，或操作进度文案 */
+.tun-status {
+    font-size: 11px;
+    color: var(--text-faint);
+    min-height: 15px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 测速结果（服务器地址 label 行右侧） */
+.tun-speed {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+
+.tun-check:disabled,
+.tun-actions>button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .tun-install,
 .tun-enable {
     height: 32px;
@@ -2442,6 +2465,15 @@ canvas {
 .tun-install:hover,
 .tun-enable:hover {
     background: var(--accent-hover);
+}
+
+/* 已安装时左侧按钮变「卸载服务」：用危险色与右侧「启用/停用」区分 */
+.tun-install.act-danger {
+    background: var(--danger);
+}
+
+.tun-install.act-danger:hover {
+    background: var(--danger-hover);
 }
 
 .tun-check {

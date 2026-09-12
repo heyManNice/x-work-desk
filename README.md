@@ -22,8 +22,11 @@
   新建 / 删除 / 搜索，同一连接内记住上次目录。
 - **系统资源监控**：顶栏 CPU、内存两个按钮实时显示远端占用；点开独立面板：
   CPU 占用曲线 / 型号核数 / CPU Top 进程；内存 / 缓存 / Swap / 磁盘占用。
-- **Tun 代理面板**：顶栏 Tun 入口（服务器地址 / 排除地址 / 检查 / 启用）——
-  目前为界面占位，代理功能尚未接入。
+- **Tun 代理**：顶栏 Tun 面板 —— 在**远端主机**上用内置的 sing-box 起一个系统级 tun
+  代理（该机所有用户都走上游），提供「安装服务 / 卸载服务」「启用 / 停用」两个开关，
+  启用即写入配置并设为开机自启；服务由远端 systemd 常驻，**关掉客户端也不影响**。
+  上游支持 HTTP / SOCKS5（无认证），默认带常用局域网 / 保留网段排除，并会自动排除
+  当前 SSH 与远程桌面端口，另有「测速」按钮经上游访问 Google 验证出口延迟。
 - **主机管理**：侧栏保存多台主机（可收起，记忆状态）；每台主机独立标签，可随时
   断开 / 注销。
 - **沉浸全屏**：窗口级全屏 + 顶部悬浮工具栏（鼠标移出自动隐藏）；自定义标题栏
@@ -221,16 +224,20 @@ frontend/           桌面客户端：Vite+SolidJS 前端 + Electron 壳 + core/
     window.cts        主窗口单例与向渲染层的推送出口
     ipc/              通道注册（index）与剪贴板/连通性实现
     ssh/              连接池(pool)、终端(terminal)、系统监控(sysmon)、SFTP(sftp)、
-                      服务端探测/安装/关于(setup)
+                      服务端探测/安装/关于(setup)、Tun 代理(tun)
     preload.cts       contextBridge 暴露 window.xwd（类型复用各模块定义）
   src/core/         会话、SSH 终端、SFTP 文件面板、系统监控、通知中心、弹窗协调
   server-bundle/    内置服务端安装包（一键安装用）
+  tun-bundle/       内置 sing-box 安装包与远端安装脚本（Tun 代理用）
   build-resources/  打包图标
 deploy/             systemd 单元、安装脚本、PAM 守卫、WirePlumber 覆盖
 docs/DEPLOYMENT.md  服务端生产部署指南（权限、用户管理、资源规划、运维）
 test/               服务端测试（node WebSocket 客户端、单元测试、冒烟脚本）
 third_party/        内置 x264（系统无 libx264-dev 时使用）
 ```
+
+> `frontend/tun-bundle/` 内置的是 sing-box v1.14.0（GPLv3，来源与校验值见该目录的
+> `README.md`）；安装时会一并落到远端 `/opt/xworkd-tun/LICENSE`。
 
 客户端构建：`cd frontend && npm run build`（先 `tsc -p electron/tsconfig.json` 编译主进程
 到 `dist-electron/`，再 `vite build` 出 `dist/`）；改主进程时可 `npm run watch:main` 增量编译。

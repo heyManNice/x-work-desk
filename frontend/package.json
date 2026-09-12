@@ -37,7 +37,8 @@
             "dist/**",
             "dist-electron/**",
             "package.json",
-            "server-bundle/**"
+            "server-bundle/**",
+            "tun-bundle/**"
         ],
         "win": {
             "target": [
