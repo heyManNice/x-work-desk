@@ -9,9 +9,13 @@
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-/** 联调日志文件（渲染层 imLog 经 IPC 写到这里） */
-export const IM_DEV_LOG = '/tmp/xworkd-im-ctl.log';
+/** 联调日志文件（渲染层 imLog 经 IPC 写到这里）。
+ * 用 os.tmpdir() 而不是写死 /tmp：Windows 上 /tmp 会被解析成 <当前盘>:\tmp，
+ * 通常不存在 → appendFileSync 抛 ENOENT 被下面吞掉 → **Windows 端完全没日志**。 */
+export const IM_DEV_LOG = path.join(os.tmpdir(), 'xworkd-im-ctl.log');
 
 export async function imDevLog(msg: string): Promise<{ ok: boolean }> {
     try {
