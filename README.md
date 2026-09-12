@@ -1,9 +1,37 @@
-# XWorkDesk — Linux X11 多用户低延迟远程桌面（服务端 + 桌面客户端）
+# XWorkDesk
 
-服务端（C）为每个系统账号在独立虚拟显示器（headless Xorg/Xvfb）上启动 GNOME
-桌面，抓帧 + H.264 编码经 WebSocket 推给客户端；客户端是 **Electron + SolidJS**
-桌面应用（Windows / Linux / macOS），以标签页管理多台主机 —— 远程桌面、SSH
-终端、SFTP 文件面板、系统资源监控等一站完成。
+**Linux 多用户远程桌面** —— 服务端为每个系统账号在独立虚拟显示器（headless
+Xorg/Xvfb）上启动 GNOME 桌面，抓帧 + H.264 编码经 WebSocket 低延迟推流；客户端是
+Electron + SolidJS 桌面应用（Windows / Linux / macOS），以标签页管理多台主机。
+
+![XWorkDesk 客户端：主机列表（延迟检测、一键连桌面 / 连 SSH）](docs/images/hero.png)
+
+## 为什么值得用
+
+| | |
+|---|---|
+| **真·多用户隔离** | 每个系统账号一个独立虚拟显示与 GNOME 会话（shadow 真实密码认证，需 root）；同账号别处登录可「接管」，实体机与远程冲突时先问再踢。 |
+| **低延迟 + 画质可控** | CPU 软件编码 H.264（带静态帧优化）：分辨率（自动跟随窗口 / 预设）× 倍率 `1/4…2`、画面比例、码率、帧率、画质全部可调。 |
+| **本机输入法**（特色） | 用**自己的输入法与词库**：候选窗由本机 IME 显示在远端光标旁，提交的文字直接落进**远端应用自己的输入框**（不需要按键注入），远端无需中文输入法。 |
+| **一个窗口搞定运维** | 远程桌面 / SSH 终端 / SFTP 文件面板 / 系统资源监控 / Tun 代理共用一条 SSH 连接，多主机标签页管理。 |
+| **服务端零运行期依赖** | 自研 HTTP + WebSocket 协议，C + meson 单进程，不依赖 FFmpeg、不需要 Node 或浏览器运行期。 |
+| **日志不落地** | 运行日志只留在内存（渲染层与主进程各 2000 条，含 JS 报错），需要时「关于 → 生成日志报告」导出，**不往磁盘写日志文件**。 |
+
+## 界面速览
+
+| 远程桌面：H.264 低延迟，分辨率 / 倍率 / 画质可调 | **本机输入法**：候选窗贴远端光标，汉字落进远端输入框 |
+|---|---|
+| ![远程桌面](docs/images/desktop-neofetch.png) | ![本机输入法](docs/images/local-ime.png) |
+| **SSH 终端**：内置 xterm，与文件面板 / 监控复用同一连接 | **远程文件（SFTP）**：浏览 / 上传 / 下载 / 重命名 / 删除 |
+| ![SSH 终端](docs/images/ssh-terminal.png) | ![远程文件](docs/images/sftp.png) |
+| **CPU 监控**：占用曲线、型号核数、Top 进程 | **内存监控**：内存 / 缓存 / 交换分区 / 磁盘 |
+| ![CPU 监控](docs/images/system-cpu.png) | ![内存监控](docs/images/system-memory.png) |
+| **Tun 代理**：远端 sing-box 常驻，开机自启 | **沉浸全屏**：顶部悬浮工具栏，鼠标移出即隐藏 |
+| ![Tun 代理](docs/images/tun.png) | ![沉浸全屏](docs/images/fullscreen.png) |
+| **主机配置**：分辨率 / 倍率 / 比例 / 码率 / 帧率 / 画质 / 本机输入法 | **关于与日志报告**：版本、客户端启动时间、一键更新 / 卸载服务端 |
+| ![主机配置](docs/images/host-config.png) | ![关于面板](docs/images/about.png) |
+
+> 详细功能、架构与二进制协议、构建与部署见下文。
 
 ## 功能总览
 
@@ -36,6 +64,8 @@
   开启时服务端会在会话内把引擎挂成当前 GNOME 输入源，关闭/断开时恢复原样。
   需远端装有该引擎（服务端包已内置 `xworkd-im` 与组件 XML）；构建期依赖
   `libibus-1.0-dev`（缺失则自动跳过引擎构建）。详见 [docs/input-method-local.md](docs/input-method-local.md)。
+
+  ![本机输入法：候选窗贴在远端终端的光标处，汉字直接落进远端输入框](docs/images/local-ime.png)
 - **关于面板与日志报告**：顶栏「关于」显示客户端/服务端版本（可经 SSH 一键更新或卸载
   服务端）、远端系统与桌面环境版本、客户端启动时间；底部「生成日志报告」把**内存里的
   运行日志**导出为文本（渲染层 + 主进程按时间合并，含 JS 报错）。客户端**不写日志文件**。
@@ -293,6 +323,7 @@ frontend/           桌面客户端：Vite+SolidJS 前端 + Electron 壳 + core/
   build-resources/  打包图标
 deploy/             systemd 单元、安装脚本、PAM 守卫、WirePlumber 覆盖
 docs/               文档：DEPLOYMENT.md（生产部署）、input-method-local.md（本机输入法）
+docs/images/        README 截图（界面速览 / 面板 / 本机输入法候选窗）
 test/               服务端测试（协议/通道单测 + node WebSocket 客户端与冒烟脚本）
 tools/              维护脚本：服务端包打包（make-server-bundle）、本机输入法联调（im-dev/）、
                     版本校验、会话诊断与接管/注销回归测试
