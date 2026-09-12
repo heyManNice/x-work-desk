@@ -46,8 +46,10 @@ html[data-theme='light'] {
     --bg-elev-3: #e2e5ea;
     --sidebar-bg: #e7eaee;
     --border: #d8dce2;
-    /* 输入槽背景：比所在面板更暗形成凹陷 */
-    --field-bg: #e1e5ea;
+    /* 输入槽背景：比所在面板更暗形成凹陷。
+     * 注意要同时区别于 --bg-elev-2(#eef0f3) 与弹窗面板 --bg-elev-3(#e2e5ea)，
+     * 否则浅色下输入框会“糊”在弹窗背景里。 */
+    --field-bg: #ccd3db;
     --chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2357606a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     --text: #1f2328;
     --text-dim: #57606a;
