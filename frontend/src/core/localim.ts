@@ -53,6 +53,8 @@ export class LocalIM {
     private caret: IMCaret | null = null;
     /** 已采用的锚点 y（远端坐标）：同一行内不因上报口径差异而跳动，见 anchorOf() */
     private anchorY: number | null = null;
+    /** 鼠标兜底落点的日志限流（mousemove 太密） */
+    private mouseLogAt = 0;
 
     constructor(opt: LocalIMOpt) {
         this.opt = opt;
@@ -86,7 +88,15 @@ export class LocalIM {
         on(window, 'mousemove', (e) => {
             if (this.caret) return;   /* 有远端 caret 就以它为准，别被鼠标拖跑 */
             const ev = e as MouseEvent;
-            this.moveTo(ev.clientX, ev.clientY + 16);   /* 兜底：落在光标下方一行处 */
+            const x = ev.clientX;
+            const y = ev.clientY + 16;   /* 兜底：落在光标下方一行处 */
+            this.moveTo(x, y);
+            /* 鼠标兜底很密集 → 日志限流；但必须留痕，否则排查时看不出
+             * "候选窗到底是跟着远端插入点还是跟着鼠标"（曾经整段日志没一条 place） */
+            if (Date.now() - this.mouseLogAt > 1000) {
+                this.mouseLogAt = Date.now();
+                this.log(`place(mouse) → local ${Math.round(x)},${Math.round(y)}`);
+            }
         });
 
         /* 点击画面后把焦点抢回隐藏输入框，否则本机 IME 会失效 */
@@ -144,7 +154,7 @@ export class LocalIM {
         /* 窗口失焦：把组合收掉，别让远端一直挂着一段没人管的 preedit */
         on(window, 'blur', () => { if (this.composing) this.opt.reset(); });
 
-        this.log('LocalIM ready');
+        this.log(`LocalIM ready（${/Windows/i.test(navigator.userAgent) ? 'win32' : 'linux/x11'}）`);
         this.focus();
     }
 
@@ -152,9 +162,14 @@ export class LocalIM {
      * w=h=0 是“没有真实插入点”的占位值（应用失焦/自绘控件），此时退回跟随鼠标。 */
     setCaret(c: IMCaret | null): void {
         if (c && (c.w !== 0 || c.h !== 0)) {
+            const changed = !this.caret || this.caret.x !== c.x || this.caret.y !== c.y;
             this.caret = c;
             this.log(`remote caret ${c.x},${c.y} ${c.w}x${c.h}`);
-            if (this.composing) this.syncToCaret();
+            /* 只要 caret 变了就重摆，**不再限定"组词中"**：
+             * Windows 上远端组词期间往往一次 caret 都不上报（实测 caret 紧跟在
+             * compositionend 后面），如果只在组词中重摆，那组词开始时用的是一早
+             * 收到的旧位置，甚至是一直没拿到 caret 而停在鼠标兜底的位置。 */
+            if (changed) this.syncToCaret();
         } else if (this.caret !== null) {
             this.caret = null;
             this.anchorY = null; /* 焦点没了：重新开始算锚点 */
@@ -208,14 +223,21 @@ export class LocalIM {
      * （抵消候选窗天生长在「框内插入点」下方的那一个行高）。**不**按组词串宽度补偿。 */
     private syncToCaret(): void {
         const c = this.caret;
-        if (!c || !this.opt.toLocal) return;
-        if (c.w === 0 && c.h === 0) return;   /* 0,0 是"没有真实插入点"的占位值 */
+        if (!c || !this.opt.toLocal) {
+            this.log('place(caret) 跳过：还没拿到远端插入点（此刻框停在鼠标兜底的位置）');
+            return;
+        }
+        if (c.w === 0 && c.h === 0) {
+            /* 0,0 是"没有真实插入点"的占位值 */
+            this.log('place(caret) 跳过：插入点是 0x0 占位值');
+            return;
+        }
         const a = this.anchorOf(c);
         const p = this.opt.toLocal(a.x, a.y);
         const x = p.x + OFF_X;
         const y = p.y - CARET_LIFT_Y + OFF_Y;
         this.moveTo(x, y);
-        this.log(`place → local ${Math.round(x)},${Math.round(y)}` +
+        this.log(`place(caret) → local ${Math.round(x)},${Math.round(y)}` +
             `（远端锚点 y=${a.y}，上移 ${CARET_LIFT_Y}px，微调 ${OFF_X},${OFF_Y}）`);
     }
 
